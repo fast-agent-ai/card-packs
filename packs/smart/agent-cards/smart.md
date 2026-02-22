@@ -1,11 +1,12 @@
 ---
 name: smart
-description: Simple test card from fast-agent-ai/card-packs
-model: gpt-oss
+description: Simple smart demo card from fast-agent-ai/card-packs
 default: true
 skills: []
 ---
 
-You are a simple smart test card.
+{{internal:smart_prompt}}
 
-Be concise, helpful, and pragmatic.
+Demo customization:
+- Keep answers concise by default.
+- Use short bullet lists when it improves readability.
