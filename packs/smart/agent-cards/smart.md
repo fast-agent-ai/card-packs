@@ -1,5 +1,5 @@
 ---
-name: smart
+type: smart
 description: Simple smart demo card from fast-agent-ai/card-packs
 default: true
 skills: []
