@@ -1,0 +1,12 @@
+{
+  "entries": [
+    {
+      "name": "smart",
+      "description": "Simple smart test card pack",
+      "kind": "card",
+      "repo_url": "https://github.com/fast-agent-ai/card-packs",
+      "repo_ref": "main",
+      "repo_path": "packs/smart"
+    }
+  ]
+}

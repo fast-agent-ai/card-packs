@@ -1,0 +1,9 @@
+schema_version: 1
+name: smart
+kind: card
+version: 0.1.0
+install:
+  agent_cards:
+    - agent-cards/smart.md
+  tool_cards: []
+  files: []
