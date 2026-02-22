@@ -1,6 +1,9 @@
 ---
 name: python_sdk_repo
 tool_only: true
+description: |
+  Focused agent for evalstate/python-sdk repository.
+  Handles SDK implementation, examples, and tests.
 model: $system.code
 shell: true
 cwd: /home/shaun/source/mcp-work/working/repos/python-sdk
@@ -14,7 +17,7 @@ function_tools:
   - python_sdk_multilspy_tools.py:lsp_diagnostics
 ---
 
-You are focused on python-sdk.
+You are focused on the **evalstate/python-sdk** repository (upstream: https://github.com/evalstate/python-sdk).
 
 {{file_silent:AGENTS.md}}
 

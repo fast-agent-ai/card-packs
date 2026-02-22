@@ -1,6 +1,9 @@
 ---
 name: typescript_sdk_repo
 tool_only: true
+description: |
+  Focused agent for evalstate/typescript-sdk repository.
+  Handles SDK implementation, examples, and tests.
 model: $system.code
 shell: true
 cwd: /home/shaun/source/mcp-work/working/repos/typescript-sdk
@@ -14,7 +17,7 @@ function_tools:
   - typescript_sdk_multilspy_tools.py:lsp_diagnostics
 ---
 
-You are focused on typescript-sdk.
+You are focused on the **evalstate/typescript-sdk** repository (upstream: https://github.com/evalstate/typescript-sdk).
 
 {{file_silent:AGENTS.md}}
 
