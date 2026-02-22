@@ -7,6 +7,14 @@
       "repo_url": "https://github.com/fast-agent-ai/card-packs",
       "repo_ref": "main",
       "repo_path": "packs/smart"
+    },
+    {
+      "name": "mcp-working",
+      "description": "Cross-repo MCP workspace conductor bundle (spec + WG + python-sdk + typescript-sdk)",
+      "kind": "bundle",
+      "repo_url": "https://github.com/fast-agent-ai/card-packs",
+      "repo_ref": "main",
+      "repo_path": "packs/mcp-working"
     }
   ]
 }

@@ -1,0 +1,17 @@
+schema_version: 1
+name: mcp-working
+kind: bundle
+version: 0.1.0
+install:
+  agent_cards:
+    - agent-cards/mcp.md
+    - agent-cards/spec_repo.md
+    - agent-cards/wg_repo.md
+    - agent-cards/python_sdk_repo.md
+    - agent-cards/typescript_sdk_repo.md
+    - agent-cards/ripgrep_search.md
+  tool_cards: []
+  files:
+    - agent-cards/python_sdk_multilspy_tools.py
+    - agent-cards/typescript_sdk_multilspy_tools.py
+    - hooks/fix_ripgrep_tool_calls.py
