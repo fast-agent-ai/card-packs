@@ -4,6 +4,7 @@ Registry and reference card packs for `fast-agent`.
 
 ## Available packs
 
+- `dev` — developer-focused smart card pack with LSP tools and rg-first search helper.
 - `smart` — a minimal single-card test pack.
 - `mcp-working` — cross-repo MCP workspace conductor bundle (spec + WG + python-sdk + typescript-sdk).
 
@@ -11,6 +12,7 @@ Registry and reference card packs for `fast-agent`.
 
 ```bash
 fast-agent cards --registry https://github.com/fast-agent-ai/card-packs add smart
+fast-agent cards --registry https://github.com/fast-agent-ai/card-packs add dev
 fast-agent cards --registry https://github.com/fast-agent-ai/card-packs add mcp-working
 ```
 
@@ -19,4 +21,5 @@ fast-agent cards --registry https://github.com/fast-agent-ai/card-packs add mcp-
 ```text
 /cards registry https://github.com/fast-agent-ai/card-packs
 /cards add smart
+/cards add dev
 ```

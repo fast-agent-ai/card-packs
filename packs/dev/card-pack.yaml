@@ -1,0 +1,11 @@
+schema_version: 1
+name: dev
+kind: card
+install:
+  agent_cards:
+    - agent-cards/dev.md
+  tool_cards:
+    - tool-cards/ripgrep-search.md
+  files:
+    - agent-cards/multilspy_tools.py
+    - hooks/ripgrep_loop_guard.py
