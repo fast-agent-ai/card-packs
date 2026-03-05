@@ -8,6 +8,7 @@ Includes:
 - LSP function tools helper (`agent-cards/multilspy_tools.py`)
 - `ripgrep_search` tool card (`tool-cards/ripgrep-search.md`)
 - Search guard hook (`hooks/ripgrep_loop_guard.py`)
+- Default config (`fastagent.config.yaml`) with GitHub MCP bearer auth via `${GITHUB_TOKEN}`
 
 ## Publish target
 

@@ -9,3 +9,4 @@ install:
   files:
     - agent-cards/multilspy_tools.py
     - hooks/ripgrep_loop_guard.py
+    - fastagent.config.yaml

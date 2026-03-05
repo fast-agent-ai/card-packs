@@ -1,0 +1,25 @@
+# Minimal fast-agent configuration for .devclean
+
+# Default model using the $system.default alias
+default_model: "$system.default"
+
+# Namespaced model aliases
+model_aliases:
+  system:
+    #    default: "qwen35"
+    fast: "gpt-oss"
+
+# Default MCP Servers - these appear in the /connect menu
+mcp:
+  targets:
+    - name: huggingface
+      target: "https://huggingface.co/mcp"
+    - name: huggingface_docs
+      target: "https://huggingface.co/mcp?bouquet=docs"
+    - name: github
+      target: "https://api.githubcopilot.com/mcp/"
+      headers:
+        Authorization: "Bearer ${GITHUB_TOKEN}"
+    - name: openai
+      target: "https://developers.openai.com/mcp"
+
