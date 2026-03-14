@@ -3,8 +3,7 @@
 # Default model using the $system.default alias
 default_model: "$system.default"
 
-# Namespaced model aliases
-model_aliases:
+model_references:
   system:
     #    default: "qwen35"
     fast: "gpt-oss"
