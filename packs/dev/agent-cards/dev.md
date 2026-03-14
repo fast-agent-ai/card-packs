@@ -4,13 +4,13 @@ name: dev
 shell: true
 model: $system.default
 default: true
-# function_tools:
-#   - multilspy_tools.py:lsp_hover
-#   - multilspy_tools.py:lsp_definition
-#   - multilspy_tools.py:lsp_references
-#   - multilspy_tools.py:lsp_document_symbols
-#   - multilspy_tools.py:lsp_workspace_symbols
-#   - multilspy_tools.py:lsp_diagnostics
+function_tools:
+  - multilspy_tools.py:lsp_hover
+  - multilspy_tools.py:lsp_definition
+  - multilspy_tools.py:lsp_references
+  - multilspy_tools.py:lsp_document_symbols
+  - multilspy_tools.py:lsp_workspace_symbols
+  - multilspy_tools.py:lsp_diagnostics
 #tool_hooks:
 #  before_llm_call: dev_hooks.py:before_llm_call
 ---

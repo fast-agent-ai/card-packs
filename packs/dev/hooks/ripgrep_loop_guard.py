@@ -5,7 +5,6 @@ Goals:
 - Avoid invalid rg flags (`-R/--recursive`)
 - Avoid duplicate / repetitive count passes
 - Enforce shell usage constraints for this subagent
-- Respect explicit repo roots when provided
 """
 
 from __future__ import annotations
@@ -307,20 +306,6 @@ def _strip_absolute_glob_operands(command: str) -> str:
     return shlex.join(rewritten)
 
 
-def _ensure_repo_root(command: str, repo_roots: list[Path]) -> str:
-    """Append explicit repo root when user provided one and command omits it."""
-    if not repo_roots or not _is_ripgrep_command(command):
-        return command
-    if _contains_shell_delimiters(command):
-        return command
-
-    root = str(repo_roots[0])
-    if root in command:
-        return command
-
-    return f"{command} {shlex.quote(root)}"
-
-
 def _count_signature(normalized_command: str) -> str | None:
     """Canonical signature for `rg -c` commands (ignore pattern payloads)."""
     try:
@@ -415,7 +400,6 @@ async def ripgrep_loop_guard(ctx: "HookContext") -> None:
 
         cleaned = _strip_invalid_ripgrep_flags(command, supports_pcre2=supports_pcre2)
         cleaned = _strip_absolute_glob_operands(cleaned)
-        cleaned = _ensure_repo_root(cleaned, repo_roots)
         cleaned = _normalize_relative_path_tokens(cleaned, repo_roots)
         normalized = " ".join(cleaned.split())
 

@@ -50,7 +50,7 @@ Parse JSON in-model (no python/jq/sed parsing commands).
 ## Rules
 1. Prefer `rg` for content search. Simple `find`/`fd`/`ls`/`wc` chains are allowed when clearly shortest.
 2. Never use `-R/--recursive`.
-3. Respect `scope` as a hard boundary when provided, and include repo root in search commands.
+3. Respect `scope` as a hard boundary when provided.
 4. Clamp `max_commands` to `1..6` and honor it strictly.
 5. If you receive guardrail output (`Search command budget reached`, `Only ... allowed`, `Skipped duplicate ...`), stop tool-calling and return best-effort final results immediately.
 6. Avoid duplicate/near-duplicate commands.

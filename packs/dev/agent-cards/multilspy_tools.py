@@ -19,7 +19,7 @@ from multilspy.multilspy_exceptions import MultilspyException
 from multilspy.multilspy_logger import MultilspyLogger
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_ALLOWED_DIRS = {"src", "tests", "test", "examples"}
+_ALLOWED_DIRS = {"src", "tests", "test", "examples", "publish"}
 
 _server_lock = asyncio.Lock()
 _server_stack: AsyncExitStack | None = None

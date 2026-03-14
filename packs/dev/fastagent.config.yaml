@@ -5,7 +5,7 @@ default_model: "$system.default"
 
 model_references:
   system:
-    #    default: "qwen35"
+#    default: "codexplan"
     fast: "gpt-oss"
 
 # Default MCP Servers - these appear in the /connect menu
