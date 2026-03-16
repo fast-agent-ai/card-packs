@@ -1,0 +1,11 @@
+schema_version: 1
+name: codex
+kind: card
+install:
+  agent_cards:
+    - agent-cards/dev.md
+  tool_cards:
+    - tool-cards/ripgrep_spark.md
+  files:
+    - agent-cards/multilspy_tools.py
+    - hooks/ripgrep_readonly_guard.py
