@@ -18,5 +18,5 @@ mcp:
     #   headers:
     #     Authorization: "Bearer ${GITHUB_TOKEN}"
     - name: openai
-        target: "https://developers.openai.com/mcp"
+      target: "https://developers.openai.com/mcp"
 
