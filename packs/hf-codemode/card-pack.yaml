@@ -1,0 +1,30 @@
+schema_version: 1
+name: hf-codemode
+kind: card
+install:
+  agent_cards:
+    - agent-cards/hub_search.md
+    - agent-cards/hub_search_normal.md
+    - agent-cards/hub_search_selectable.md
+  files:
+    - agent-cards/shared/_monty_codegen_shared.md
+    - fastagent.config.yaml
+    - monty_api/__init__.py
+    - monty_api/aliases.py
+    - monty_api/constants.py
+    - monty_api/context_types.py
+    - monty_api/helpers/__init__.py
+    - monty_api/helpers/activity.py
+    - monty_api/helpers/collections.py
+    - monty_api/helpers/common.py
+    - monty_api/helpers/introspection.py
+    - monty_api/helpers/profiles.py
+    - monty_api/helpers/repos.py
+    - monty_api/http_runtime.py
+    - monty_api/query_entrypoints.py
+    - monty_api/registry.py
+    - monty_api/runtime_context.py
+    - monty_api/runtime_envelopes.py
+    - monty_api/runtime_filtering.py
+    - monty_api/tool_entrypoints.py
+    - monty_api/validation.py
