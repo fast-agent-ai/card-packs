@@ -8,6 +8,7 @@ Registry and reference card packs for `fast-agent`.
 - `codex` — `dev` smart card plus the `ripgrep_spark` codex search subagent.
 - `smart` — a minimal single-card test pack.
 - `mcp-working` — cross-repo MCP workspace conductor bundle (spec + WG + python-sdk + typescript-sdk).
+- `hf-codemode` — production-style Hugging Face Hub codemode pack with normal, raw, and selectable passthrough variants.
 
 ## Install with CLI
 
@@ -16,6 +17,7 @@ fast-agent cards --registry https://github.com/fast-agent-ai/card-packs add smar
 fast-agent cards --registry https://github.com/fast-agent-ai/card-packs add dev
 fast-agent cards --registry https://github.com/fast-agent-ai/card-packs add codex
 fast-agent cards --registry https://github.com/fast-agent-ai/card-packs add mcp-working
+fast-agent cards --registry https://github.com/fast-agent-ai/card-packs add hf-codemode
 ```
 
 ## Install in interactive mode
@@ -25,4 +27,5 @@ fast-agent cards --registry https://github.com/fast-agent-ai/card-packs add mcp-
 /cards add smart
 /cards add dev
 /cards add codex
+/cards add hf-codemode
 ```
