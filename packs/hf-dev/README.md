@@ -1,19 +1,13 @@
 # hf-dev
 
-Developer-focused card pack for the HF/GPT-OSS path.
+Develop with Hugging Face Inference providers.
 
-Includes:
+## Next Steps
 
-- `dev` smart card (`agent-cards/dev.md`)
-- LSP function tools helper (`agent-cards/multilspy_tools.py`)
-- `ripgrep_search` tool card (`tool-cards/ripgrep-search.md`)
-- Search guard hook (`hooks/fix_ripgrep_tool_calls.py`)
-- Default config (`fastagent.config.yaml`) with GitHub MCP bearer auth via `${GITHUB_TOKEN}`
-
-Search model:
-
-- `ripgrep_search` uses `$system.fast`
-
-## Publish target
-
-Intended marketplace repo path: `packs/hf-dev` in `https://github.com/fast-agent-ai/card-packs`.
+- Make sure you have an `HF_TOKEN` set (or use `hf auth login`).
+- Update the System Prompt in `.fast-agent/agent-cards/dev.md`
+- Start with `fast-agent go` 
+- Ask your agent to configure LSP for this workspace.
+- Run `fast-agent models llamacpp` to configure and use local models
+- Use `/skills` to add and manage skills.
+- Use `/connect` to connect to MCP Servers (Hugging Face preconfigured)

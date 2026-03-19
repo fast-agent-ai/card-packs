@@ -3,8 +3,7 @@ name: ripgrep_search
 tool_only: true
 description: |
   Structured rg-first repository search helper with bounded commands and
-  concise output. Best for multi-step filename discovery, implementation/test
-  mapping, and grouped file counts.
+  concise output. Best for multi-step filename discovery, implementation/test mapping, and grouped file counts.
 shell: true
 model: $system.fast
 use_history: false

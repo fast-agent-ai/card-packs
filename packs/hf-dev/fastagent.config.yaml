@@ -1,24 +1,22 @@
-# Minimal fast-agent configuration for .devclean
-
 # Default model using the $system.default alias
 default_model: "$system.default"
 
 model_references:
   system:
-#    default: "codexplan"
+#   default: "qwen35"
     fast: "gpt-oss"
-
+    last_used: "qwen35"
 # Default MCP Servers - these appear in the /connect menu
 mcp:
   targets:
-    - name: huggingface
+    - name: hf
       target: "https://huggingface.co/mcp"
-    - name: huggingface_docs
+    - name: hf_docs_only
       target: "https://huggingface.co/mcp?bouquet=docs"
-    - name: github
-      target: "https://api.githubcopilot.com/mcp/"
-      headers:
-        Authorization: "Bearer ${GITHUB_TOKEN}"
+    # - name: github
+    #   target: "https://api.githubcopilot.com/mcp/"
+    #   headers:
+    #     Authorization: "Bearer ${GITHUB_TOKEN}"
     - name: openai
-      target: "https://developers.openai.com/mcp"
+        target: "https://developers.openai.com/mcp"
 
