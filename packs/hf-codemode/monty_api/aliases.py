@@ -78,6 +78,8 @@ REPO_FIELD_ALIASES: dict[str, str] = {
     "trendingscore": "trending_score",
     "libraryname": "library_name",
     "paperswithcodeid": "paperswithcode_id",
+    "runtimestage": "runtime_stage",
+    "runtimestatus": "runtime_stage",
 }
 
 COLLECTION_FIELD_ALIASES: dict[str, str] = {

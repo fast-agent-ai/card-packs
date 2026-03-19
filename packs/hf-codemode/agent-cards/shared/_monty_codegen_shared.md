@@ -258,7 +258,7 @@ await hf_whoami()
 ## Canonical row keys
 Use canonical names in generated code and `fields=[...]`.
 
-- Repo rows: `repo_id`, `repo_type`, `author`, `likes`, `downloads`, `created_at`, `last_modified`, `pipeline_tag`, `num_params`, `library_name`, `description`, `paperswithcode_id`, `sdk`, `models`, `datasets`, `subdomain`, `trending_rank`, `trending_score`, `repo_url`, `tags`
+- Repo rows: `repo_id`, `repo_type`, `author`, `likes`, `downloads`, `created_at`, `last_modified`, `pipeline_tag`, `num_params`, `library_name`, `description`, `paperswithcode_id`, `sdk`, `models`, `datasets`, `subdomain`, `runtime_stage`, `runtime`, `trending_rank`, `trending_score`, `repo_url`, `tags`
 - Daily paper rows: `paper_id`, `title`, `published_at`, `authors`, `organization`, `repo_id`, `rank`
 - User likes rows: `liked_at`, `repo_id`, `repo_type`, `repo_author`, `repo_likes`, `repo_downloads`, `repo_url`
 - User graph/member rows: `username`, `fullname`, `isPro`, `role`, `type`

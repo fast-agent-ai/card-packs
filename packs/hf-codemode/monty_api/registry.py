@@ -106,6 +106,7 @@ REPO_SEARCH_DEFAULT_EXPAND: dict[str, list[str]] = {
         "likes",
         "models",
         "private",
+        "runtime",
         "sdk",
         "sha",
         "subdomain",

@@ -71,6 +71,8 @@ REPO_CANONICAL_FIELDS: tuple[str, ...] = (
     "models",
     "datasets",
     "subdomain",
+    "runtime_stage",
+    "runtime",
 )
 
 USER_CANONICAL_FIELDS: tuple[str, ...] = (

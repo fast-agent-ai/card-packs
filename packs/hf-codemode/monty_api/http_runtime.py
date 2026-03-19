@@ -13,7 +13,7 @@ from .aliases import REPO_SORT_KEYS, SORT_KEY_ALIASES
 from .constants import (
     DEFAULT_TIMEOUT_SEC,
 )
-from .registry import REPO_API_ADAPTERS
+from .registry import REPO_API_ADAPTERS, REPO_SEARCH_DEFAULT_EXPAND
 from .validation import _endpoint_allowed, _normalize_endpoint, _sanitize_params
 
 
@@ -111,6 +111,8 @@ def _repo_list_call(api: HfApi, repo_type: str, **kwargs: Any) -> list[Any]:
 def _repo_detail_call(api: HfApi, repo_type: str, repo_id: str) -> Any:
     adapter = _repo_api_adapter(repo_type)
     method = getattr(api, adapter.detail_method_name)
+    if _canonical_repo_type(repo_type) == "space":
+        return method(repo_id, expand=list(REPO_SEARCH_DEFAULT_EXPAND["space"]))
     return method(repo_id)
 
 
@@ -136,6 +138,43 @@ def _optional_str_list(value: Any) -> list[str] | None:
         out = [str(v).strip() for v in value if str(v).strip()]
         return out or None
     return None
+
+
+def _space_runtime_to_dict(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+
+    if isinstance(value, dict):
+        raw = value
+        hardware = raw.get("hardware")
+        current_hardware = (
+            hardware.get("current") if isinstance(hardware, dict) else hardware
+        )
+        requested_hardware = (
+            hardware.get("requested")
+            if isinstance(hardware, dict)
+            else raw.get("requested_hardware") or raw.get("requestedHardware")
+        )
+        sleep_time = _as_int(
+            raw.get("gcTimeout")
+            if raw.get("gcTimeout") is not None
+            else raw.get("sleep_time") or raw.get("sleepTime")
+        )
+        out = {
+            "stage": raw.get("stage"),
+            "hardware": current_hardware,
+            "requested_hardware": requested_hardware,
+            "sleep_time": sleep_time,
+        }
+        return {key: val for key, val in out.items() if val is not None} or None
+
+    out = {
+        "stage": getattr(value, "stage", None),
+        "hardware": getattr(value, "hardware", None),
+        "requested_hardware": getattr(value, "requested_hardware", None),
+        "sleep_time": _as_int(getattr(value, "sleep_time", None)),
+    }
+    return {key: val for key, val in out.items() if val is not None} or None
 
 
 def _extract_num_params(num_params: Any = None, safetensors: Any = None) -> int | None:
@@ -242,6 +281,8 @@ def _build_repo_row(
     models: Any = None,
     datasets: Any = None,
     subdomain: Any = None,
+    runtime: Any = None,
+    runtime_stage: Any = None,
 ) -> dict[str, Any]:
     rt = _canonical_repo_type(repo_type)
     author_value = author
@@ -251,6 +292,15 @@ def _build_repo_row(
         and "/" in repo_id
     ):
         author_value = repo_id.split("/", 1)[0]
+
+    runtime_payload = _space_runtime_to_dict(runtime)
+    resolved_runtime_stage = (
+        runtime_stage
+        if runtime_stage is not None
+        else runtime_payload.get("stage")
+        if isinstance(runtime_payload, dict)
+        else None
+    )
 
     return {
         "id": repo_id,
@@ -279,6 +329,8 @@ def _build_repo_row(
         "models": _optional_str_list(models),
         "datasets": _optional_str_list(datasets),
         "subdomain": subdomain,
+        "runtime_stage": resolved_runtime_stage,
+        "runtime": runtime_payload,
     }
 
 
@@ -307,6 +359,7 @@ def _normalize_repo_search_row(row: Any, repo_type: str) -> dict[str, Any]:
         models=getattr(row, "models", None),
         datasets=getattr(row, "datasets", None),
         subdomain=getattr(row, "subdomain", None),
+        runtime=getattr(row, "runtime", None),
     )
 
 
@@ -352,6 +405,8 @@ def _normalize_trending_row(
         models=repo.get("models"),
         datasets=repo.get("datasets"),
         subdomain=repo.get("subdomain"),
+        runtime=repo.get("runtime"),
+        runtime_stage=repo.get("runtime_stage") or repo.get("runtimeStage"),
     )
     if rank is not None:
         row["trending_rank"] = rank
@@ -430,6 +485,8 @@ def _normalize_collection_repo_item(row: dict[str, Any]) -> dict[str, Any] | Non
         models=row.get("models"),
         datasets=row.get("datasets"),
         subdomain=row.get("subdomain"),
+        runtime=row.get("runtime"),
+        runtime_stage=row.get("runtime_stage") or row.get("runtimeStage"),
     )
 
 
