@@ -7,6 +7,5 @@ install:
   tool_cards:
     - tool-cards/ripgrep-search.md
   files:
-    - agent-cards/multilspy_tools.py
     - hooks/fix_ripgrep_tool_calls.py
     - fastagent.config.yaml
