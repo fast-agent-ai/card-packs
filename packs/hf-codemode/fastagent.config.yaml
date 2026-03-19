@@ -1,0 +1,9 @@
+logger:
+  truncate_tools: false
+
+model_references:
+  system:
+    default: hf.openai/gpt-oss-120b:sambanova
+    raw: hf.openai/gpt-oss-120b:sambanova
+    codegen: hf.openai/gpt-oss-120b:sambanova
+    last_used: hf.openai/gpt-oss-120b:sambanova

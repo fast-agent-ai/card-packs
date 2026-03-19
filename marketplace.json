@@ -31,6 +31,14 @@
       "repo_url": "https://github.com/fast-agent-ai/card-packs",
       "repo_ref": "main",
       "repo_path": "packs/smart"
+    },
+    {
+      "name": "hf-codemode",
+      "description": "Production-style Hugging Face Hub codemode pack with normal, raw, and selectable passthrough variants",
+      "kind": "card",
+      "repo_url": "https://github.com/fast-agent-ai/card-packs",
+      "repo_ref": "main",
+      "repo_path": "packs/hf-codemode"
     }
   ]
 }
