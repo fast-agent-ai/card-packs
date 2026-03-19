@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
 _ROOT_DIR = _PACKAGE_DIR.parent
@@ -21,12 +22,32 @@ from monty_api import (  # noqa: E402
 )
 
 
-async def hf_hub_query(*args, **kwargs):
-    return await _hf_hub_query(*args, **kwargs)
+async def hf_hub_query(
+    query: str,
+    code: str,
+    max_calls: int | None = None,
+    timeout_sec: int | None = None,
+) -> dict[str, Any]:
+    return await _hf_hub_query(
+        query=query,
+        code=code,
+        max_calls=max_calls,
+        timeout_sec=timeout_sec,
+    )
 
 
-async def hf_hub_query_raw(*args, **kwargs):
-    return await _hf_hub_query_raw(*args, **kwargs)
+async def hf_hub_query_raw(
+    query: str,
+    code: str,
+    max_calls: int | None = None,
+    timeout_sec: int | None = None,
+) -> Any:
+    return await _hf_hub_query_raw(
+        query=query,
+        code=code,
+        max_calls=max_calls,
+        timeout_sec=timeout_sec,
+    )
 
 __all__ = [
     "HELPER_EXTERNALS",
