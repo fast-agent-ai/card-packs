@@ -29,6 +29,7 @@ await solve(query, max_calls)
 These are high-priority rules. Do not guess helper arguments.
 
 - `hf_repo_search(...)` uses `limit`, **not** `return_limit`, and does **not** accept `count_only`.
+- In `hf_repo_search(...)`, `filters` means upstream Hugging Face repo/tag filters, while `where` means local predicates over returned normalized row fields.
 - `hf_trending(...)` uses `limit`, **not** `return_limit`.
 - `hf_daily_papers(...)` uses `limit`, **not** `return_limit`.
 - `hf_repo_discussions(...)` uses `limit`, **not** `return_limit`, and does **not** accept `fields`.
@@ -94,6 +95,11 @@ await hf_repo_search(
   fields: list[str] | None = None,
   advanced: dict | None = None,
 )
+# hf_repo_search contract:
+# - filters: upstream HF search/tag filters only (not arbitrary returned row fields)
+# - where: local predicate over returned normalized row fields
+# - fields: select which normalized row fields are returned
+# - for Space runtime status, use where={"runtime_stage": ...}, not filters=["state:..."]
 
 await hf_repo_details(
   repo_id: str | None = None,
@@ -202,6 +208,15 @@ await hf_whoami()
   - dataset: `author`, `cardData`, `citation`, `createdAt`, `description`, `disabled`, `downloads`, `downloadsAllTime`, `gated`, `lastModified`, `likes`, `paperswithcode_id`, `private`, `resourceGroup`, `sha`, `siblings`, `tags`, `trendingScore`, `usedStorage`
   - space: `author`, `cardData`, `createdAt`, `datasets`, `disabled`, `lastModified`, `likes`, `models`, `private`, `resourceGroup`, `runtime`, `sdk`, `sha`, `siblings`, `subdomain`, `tags`, `trendingScore`, `usedStorage`
 - If a specific expanded field matters to the answer, request it explicitly in `advanced["expand"]`. Do not rely on implicit defaults.
+- `filters` and `where` are **not** interchangeable:
+  - `filters` passes upstream HF filter/tag arguments into the Hub client
+  - `where` filters the normalized rows returned by this runtime
+  - if the user asks for a returned field such as Space runtime state/status, prefer `where` over `filters`
+- For Space runtime state/status questions:
+  - the canonical returned field is `runtime_stage`
+  - friendly wording like "state" or "status" refers to `runtime_stage`
+  - values such as `BUILD_ERROR`, `RUNTIME_ERROR`, `RUNNING`, and `SLEEPING` are runtime stages
+  - plain `"ERROR"` is not a canonical stage value; if the user says "error state", treat that as `BUILD_ERROR` and `RUNTIME_ERROR`
 
 ## Routing guide
 

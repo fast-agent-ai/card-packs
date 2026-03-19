@@ -153,6 +153,23 @@ async def hf_runtime_capabilities(
             ],
         },
         "repo_search": {
+            "parameter_contract": {
+                "filters": {
+                    "meaning": "Upstream Hugging Face repo/tag filter arguments passed into the Hub client.",
+                    "not_for": [
+                        "arbitrary normalized row fields",
+                        "local-only derived/runtime fields",
+                    ],
+                },
+                "where": {
+                    "meaning": "Local predicate applied to normalized returned rows after runtime normalization.",
+                    "uses_field_aliases": True,
+                },
+                "fields": {
+                    "meaning": "Select which normalized row fields are returned to the caller.",
+                    "uses_field_aliases": True,
+                },
+            },
             "sort_keys": {
                 repo_type: sorted(keys)
                 for repo_type, keys in sorted(REPO_SORT_KEYS.items())
@@ -160,6 +177,34 @@ async def hf_runtime_capabilities(
             "extra_args": {
                 repo_type: sorted(args)
                 for repo_type, args in sorted(REPO_SEARCH_EXTRA_ARGS.items())
+            },
+            "space_runtime_contract": {
+                "returned_field": "runtime_stage",
+                "full_runtime_field": "runtime",
+                "preferred_filter_channel": "where",
+                "not_recommended_filter_channel": "filters",
+                "error_family_values": ["BUILD_ERROR", "RUNTIME_ERROR"],
+                "example": {
+                    "correct": {
+                        "repo_type": "space",
+                        "where": {
+                            "runtime_stage": {
+                                "in": ["BUILD_ERROR", "RUNTIME_ERROR"]
+                            }
+                        },
+                        "fields": [
+                            "repo_id",
+                            "author",
+                            "runtime_stage",
+                            "repo_url",
+                        ],
+                    },
+                    "incorrect": {
+                        "repo_type": "space",
+                        "filters": ["state:ERROR"],
+                        "fields": ["repo_id", "author", "state", "repo_url"],
+                    },
+                },
             },
         },
     }
