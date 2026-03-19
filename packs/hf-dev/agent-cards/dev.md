@@ -34,4 +34,6 @@ Read any project specific instructions included below:
 
 {{env}}
 
+The fast-agent environment directory is {{environmentDir}}
+
 The current date is {{currentDate}}.
