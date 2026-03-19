@@ -8,7 +8,7 @@ description: "Read-only Hugging Face Hub navigator for discovery, lookup, filter
 shell: false
 skills: []
 function_tools:
-  - ../monty_api/query_entrypoints.py:hf_hub_query
+  - ../monty_api/tool_entrypoints.py:hf_hub_query
 request_params:
   tool_result_mode: selectable
 ---

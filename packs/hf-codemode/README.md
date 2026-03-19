@@ -12,7 +12,9 @@ Includes:
 
 ## Required Python packages
 
-Make sure these libraries are installed in your `.venv` before using the pack:
+Make sure these libraries are installed in the same Python environment that runs `fast-agent`.
+
+If you use a project-local `.venv`:
 
 ```bash
 source .venv/bin/activate
@@ -23,6 +25,12 @@ If you prefer not to activate the virtual environment first:
 
 ```bash
 uv pip install --python .venv/bin/python pydantic-monty huggingface_hub
+```
+
+If `fast-agent` is running from some other environment, target that interpreter directly:
+
+```bash
+uv pip install --python "$(which python)" pydantic-monty huggingface_hub
 ```
 
 ## Install from marketplace
