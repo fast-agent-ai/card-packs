@@ -2,19 +2,19 @@
   "entries": [
     {
       "name": "codex",
-      "description": "Developer-focused dev card pack with the codex ripgrep_spark search subagent",
+      "description": "Developer-focused codex card pack with codexspark-backed ripgrep search",
       "kind": "card",
       "repo_url": "https://github.com/fast-agent-ai/card-packs",
       "repo_ref": "main",
       "repo_path": "packs/codex"
     },
     {
-      "name": "dev",
-      "description": "Developer-focused smart card pack with LSP navigation and rg-first search helper",
+      "name": "hf-dev",
+      "description": "Developer-focused HF/GPT-OSS card pack with LSP navigation and $system.fast ripgrep search",
       "kind": "card",
       "repo_url": "https://github.com/fast-agent-ai/card-packs",
       "repo_ref": "main",
-      "repo_path": "packs/dev"
+      "repo_path": "packs/hf-dev"
     },
     {
       "name": "mcp-working",

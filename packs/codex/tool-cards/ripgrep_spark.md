@@ -17,7 +17,9 @@ model: codexspark
 use_history: false
 skills: []
 request_params:
-  max_iterations: 6
+  # Leave slack above max_commands so a guard-injected STOP/printf tool turn
+  # still allows one final LLM synthesis pass instead of ending as []/No Content.
+  max_iterations: 8
 tool_input_schema:
   type: object
   properties:

@@ -1,5 +1,5 @@
 schema_version: 1
-name: dev
+name: hf-dev
 kind: card
 install:
   agent_cards:
@@ -8,5 +8,5 @@ install:
     - tool-cards/ripgrep-search.md
   files:
     - agent-cards/multilspy_tools.py
-    - hooks/ripgrep_loop_guard.py
+    - hooks/fix_ripgrep_tool_calls.py
     - fastagent.config.yaml

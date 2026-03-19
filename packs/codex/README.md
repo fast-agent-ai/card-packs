@@ -1,7 +1,7 @@
 # codex
 
-Developer-focused card pack built from our current `dev.md`, paired with the
-`ripgrep_spark` codex search subagent.
+Developer-focused codex card pack paired with the `ripgrep_spark`
+codex search subagent.
 
 Includes:
 
@@ -9,6 +9,10 @@ Includes:
 - LSP function tools helper (`agent-cards/multilspy_tools.py`)
 - `ripgrep_spark` tool card (`tool-cards/ripgrep_spark.md`)
 - Read-only search guard hook (`hooks/ripgrep_readonly_guard.py`)
+
+Search model:
+
+- `ripgrep_spark` uses `codexspark`
 
 ## Publish target
 
