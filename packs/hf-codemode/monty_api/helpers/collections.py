@@ -4,8 +4,11 @@ from __future__ import annotations
 from functools import partial
 from typing import Any, Callable
 
-from ..aliases import COLLECTION_FIELD_ALIASES, REPO_FIELD_ALIASES
-from ..constants import OUTPUT_ITEMS_TRUNCATION_LIMIT
+from ..constants import (
+    COLLECTION_CANONICAL_FIELDS,
+    OUTPUT_ITEMS_TRUNCATION_LIMIT,
+    REPO_CANONICAL_FIELDS,
+)
 from ..context_types import HelperRuntimeContext
 
 
@@ -13,25 +16,29 @@ async def hf_collections_search(
     ctx: HelperRuntimeContext,
     query: str | None = None,
     owner: str | None = None,
-    return_limit: int = 20,
+    limit: int = 20,
     count_only: bool = False,
     where: dict[str, Any] | None = None,
     fields: list[str] | None = None,
 ) -> dict[str, Any]:
     start_calls = ctx.call_count["n"]
-    default_return = ctx._policy_int("hf_collections_search", "default_return", 20)
-    max_return = ctx._policy_int(
-        "hf_collections_search", "max_return", OUTPUT_ITEMS_TRUNCATION_LIMIT
+    default_limit = ctx._policy_int("hf_collections_search", "default_limit", 20)
+    max_limit = ctx._policy_int(
+        "hf_collections_search", "max_limit", OUTPUT_ITEMS_TRUNCATION_LIMIT
     )
     if count_only:
-        return_limit = 0
-    lim = ctx._clamp_int(
-        return_limit, default=default_return, minimum=0, maximum=max_return
+        limit = 0
+    applied_limit = ctx._clamp_int(
+        limit,
+        default=default_limit,
+        minimum=0,
+        maximum=max_limit,
     )
     owner_clean = str(owner or "").strip() or None
-    fetch_lim = max_return if lim == 0 or owner_clean else lim
+    owner_casefold = owner_clean.casefold() if owner_clean is not None else None
+    fetch_limit = max_limit if applied_limit == 0 or owner_clean else applied_limit
     if owner_clean:
-        fetch_lim = min(fetch_lim, 100)
+        fetch_limit = min(fetch_limit, 100)
     term = str(query or "").strip()
     if not term and owner_clean:
         term = owner_clean
@@ -41,7 +48,7 @@ async def hf_collections_search(
             source="/api/collections",
             error="query or owner is required",
         )
-    params: dict[str, Any] = {"limit": fetch_lim}
+    params: dict[str, Any] = {"limit": fetch_limit}
     if term:
         params["q"] = term
     if owner_clean:
@@ -54,8 +61,43 @@ async def hf_collections_search(
             error=resp.get("error") or "collections fetch failed",
         )
     payload = resp.get("data") if isinstance(resp.get("data"), list) else []
+
+    def _row_owner_matches_owner(row: Any) -> bool:
+        if owner_casefold is None or not isinstance(row, dict):
+            return owner_casefold is None
+        row_owner = ctx._author_from_any(row.get("owner")) or ctx._author_from_any(
+            row.get("ownerData")
+        )
+        if (
+            not row_owner
+            and isinstance(row.get("slug"), str)
+            and "/" in str(row.get("slug"))
+        ):
+            row_owner = str(row.get("slug")).split("/", 1)[0]
+        if not isinstance(row_owner, str) or not row_owner:
+            return False
+        return row_owner.casefold() == owner_casefold
+
+    owner_fallback_used = False
+    if owner_casefold is not None and not any(
+        _row_owner_matches_owner(row) for row in payload
+    ):
+        fallback_params: dict[str, Any] = {"limit": fetch_limit}
+        if term:
+            fallback_params["q"] = term
+        fallback_resp = ctx._host_raw_call("/api/collections", params=fallback_params)
+        if fallback_resp.get("ok"):
+            fallback_payload = (
+                fallback_resp.get("data")
+                if isinstance(fallback_resp.get("data"), list)
+                else []
+            )
+            if any(_row_owner_matches_owner(row) for row in fallback_payload):
+                payload = fallback_payload
+                owner_fallback_used = True
+
     items: list[dict[str, Any]] = []
-    for row in payload[:fetch_lim]:
+    for row in payload[:fetch_limit]:
         if not isinstance(row, dict):
             continue
         row_owner = ctx._author_from_any(row.get("owner")) or ctx._author_from_any(
@@ -67,7 +109,9 @@ async def hf_collections_search(
             and "/" in str(row.get("slug"))
         ):
             row_owner = str(row.get("slug")).split("/", 1)[0]
-        if owner_clean is not None and row_owner != owner_clean:
+        if owner_casefold is not None and (
+            not isinstance(row_owner, str) or row_owner.casefold() != owner_casefold
+        ):
             continue
         owner_payload = row.get("owner") if isinstance(row.get("owner"), dict) else {}
         collection_items = (
@@ -89,12 +133,29 @@ async def hf_collections_search(
                 "item_count": len(collection_items),
             }
         )
-    items = ctx._apply_where(items, where, aliases=COLLECTION_FIELD_ALIASES)
+    try:
+        items = ctx._apply_where(
+            items, where, allowed_fields=COLLECTION_CANONICAL_FIELDS
+        )
+    except ValueError as exc:
+        return ctx._helper_error(
+            start_calls=start_calls,
+            source="/api/collections",
+            error=exc,
+        )
     total_matched = len(items)
-    items = items[:lim]
-    items = ctx._project_collection_items(items, fields)
+    items = items[:applied_limit]
+    try:
+        items = ctx._project_collection_items(items, fields)
+    except ValueError as exc:
+        return ctx._helper_error(
+            start_calls=start_calls,
+            source="/api/collections",
+            error=exc,
+        )
     truncated = (
-        lim > 0 and total_matched > lim or (lim == 0 and len(payload) >= fetch_lim)
+        applied_limit > 0 and total_matched > applied_limit
+        or (applied_limit == 0 and len(payload) >= fetch_limit)
     )
     return ctx._helper_success(
         start_calls=start_calls,
@@ -110,6 +171,7 @@ async def hf_collections_search(
         complete=not truncated,
         query=term,
         owner=owner_clean,
+        owner_case_insensitive_fallback=owner_fallback_used,
     )
 
 
@@ -117,15 +179,15 @@ async def hf_collection_items(
     ctx: HelperRuntimeContext,
     collection_id: str,
     repo_types: list[str] | None = None,
-    return_limit: int = 100,
+    limit: int = 100,
     count_only: bool = False,
     where: dict[str, Any] | None = None,
     fields: list[str] | None = None,
 ) -> dict[str, Any]:
     start_calls = ctx.call_count["n"]
-    default_return = ctx._policy_int("hf_collection_items", "default_return", 100)
-    max_return = ctx._policy_int(
-        "hf_collection_items", "max_return", OUTPUT_ITEMS_TRUNCATION_LIMIT
+    default_limit = ctx._policy_int("hf_collection_items", "default_limit", 100)
+    max_limit = ctx._policy_int(
+        "hf_collection_items", "max_limit", OUTPUT_ITEMS_TRUNCATION_LIMIT
     )
     cid = str(collection_id or "").strip()
     if not cid:
@@ -135,9 +197,12 @@ async def hf_collection_items(
             error="collection_id is required",
         )
     if count_only:
-        return_limit = 0
-    lim = ctx._clamp_int(
-        return_limit, default=default_return, minimum=0, maximum=max_return
+        limit = 0
+    applied_limit = ctx._clamp_int(
+        limit,
+        default=default_limit,
+        minimum=0,
+        maximum=max_limit,
     )
     allowed_repo_types: set[str] | None = None
     try:
@@ -180,7 +245,17 @@ async def hf_collection_items(
     )
     if owner is None and "/" in cid:
         owner = cid.split("/", 1)[0]
-    normalized_where = ctx._normalize_where(where, aliases=REPO_FIELD_ALIASES)
+    try:
+        normalized_where = ctx._normalize_where(
+            where, allowed_fields=REPO_CANONICAL_FIELDS
+        )
+    except ValueError as exc:
+        return ctx._helper_error(
+            start_calls=start_calls,
+            source=endpoint,
+            error=exc,
+            collection_id=cid,
+        )
     normalized: list[dict[str, Any]] = []
     for row in raw_items:
         if not isinstance(row, dict):
@@ -195,9 +270,17 @@ async def hf_collection_items(
             continue
         normalized.append(item)
     total_matched = len(normalized)
-    items = [] if count_only else normalized[:lim]
-    items = ctx._project_repo_items(items, fields)
-    truncated = lim > 0 and total_matched > lim
+    items = [] if count_only else normalized[:applied_limit]
+    try:
+        items = ctx._project_repo_items(items, fields)
+    except ValueError as exc:
+        return ctx._helper_error(
+            start_calls=start_calls,
+            source=endpoint,
+            error=exc,
+            collection_id=cid,
+        )
+    truncated = applied_limit > 0 and total_matched > applied_limit
     return ctx._helper_success(
         start_calls=start_calls,
         source=endpoint,

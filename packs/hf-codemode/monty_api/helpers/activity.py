@@ -4,8 +4,8 @@ from __future__ import annotations
 from functools import partial
 from typing import Any, Callable
 
-from ..aliases import ACTIVITY_FIELD_ALIASES
 from ..constants import (
+    ACTIVITY_CANONICAL_FIELDS,
     EXHAUSTIVE_HELPER_RETURN_HARD_CAP,
     RECENT_ACTIVITY_PAGE_SIZE,
     RECENT_ACTIVITY_SCAN_MAX_PAGES,
@@ -19,7 +19,7 @@ async def hf_recent_activity(
     entity: str | None = None,
     activity_types: list[str] | None = None,
     repo_types: list[str] | None = None,
-    return_limit: int | None = None,
+    limit: int | None = None,
     max_pages: int | None = None,
     start_cursor: str | None = None,
     count_only: bool = False,
@@ -27,7 +27,7 @@ async def hf_recent_activity(
     fields: list[str] | None = None,
 ) -> dict[str, Any]:
     start_calls = ctx.call_count["n"]
-    default_return = ctx._policy_int("hf_recent_activity", "default_return", 100)
+    default_limit = ctx._policy_int("hf_recent_activity", "default_limit", 100)
     page_cap = ctx._policy_int(
         "hf_recent_activity", "page_limit", RECENT_ACTIVITY_PAGE_SIZE
     )
@@ -56,12 +56,12 @@ async def hf_recent_activity(
             error="entity is required",
         )
     limit_plan = ctx._resolve_exhaustive_limits(
-        return_limit=return_limit,
+        limit=limit,
         count_only=count_only,
-        default_return=default_return,
-        max_return=EXHAUSTIVE_HELPER_RETURN_HARD_CAP,
+        default_limit=default_limit,
+        max_limit=EXHAUSTIVE_HELPER_RETURN_HARD_CAP,
     )
-    ret_lim = int(limit_plan["applied_return_limit"])
+    applied_limit = int(limit_plan["applied_limit"])
     page_lim = page_cap
     pages_lim = ctx._clamp_int(
         requested_max_pages, default=pages_cap, minimum=1, maximum=pages_cap
@@ -85,8 +85,17 @@ async def hf_recent_activity(
     pages = 0
     exhausted_feed = False
     stopped_for_budget = False
-    normalized_where = ctx._normalize_where(where, aliases=ACTIVITY_FIELD_ALIASES)
-    while pages < pages_lim and (ret_lim == 0 or len(items) < ret_lim):
+    try:
+        normalized_where = ctx._normalize_where(
+            where, allowed_fields=ACTIVITY_CANONICAL_FIELDS
+        )
+    except ValueError as exc:
+        return ctx._helper_error(
+            start_calls=start_calls,
+            source="/api/recent-activity",
+            error=exc,
+        )
+    while pages < pages_lim and (applied_limit == 0 or len(items) < applied_limit):
         if ctx._budget_remaining() <= 0:
             stopped_for_budget = True
             break
@@ -147,15 +156,22 @@ async def hf_recent_activity(
             if not ctx._item_matches_where(item, normalized_where):
                 continue
             matched += 1
-            if len(items) < ret_lim:
+            if len(items) < applied_limit:
                 items.append(item)
         if not next_cursor:
             exhausted_feed = True
             break
-    items = ctx._project_activity_items(items, fields)
+    try:
+        items = ctx._project_activity_items(items, fields)
+    except ValueError as exc:
+        return ctx._helper_error(
+            start_calls=start_calls,
+            source="/api/recent-activity",
+            error=exc,
+        )
     exact_count = exhausted_feed and (not stopped_for_budget)
     sample_complete = (
-        exact_count and ret_lim >= matched and (not count_only or matched == 0)
+        exact_count and applied_limit >= matched and (not count_only or matched == 0)
     )
     page_limit_hit = (
         next_cursor is not None and pages >= pages_lim and (not exhausted_feed)

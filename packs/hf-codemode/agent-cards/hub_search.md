@@ -4,7 +4,7 @@ name: hub_search
 model: $system.raw
 use_history: false
 default: false
-description: "Read-only Hugging Face Hub navigator for discovery, lookup, filtering, ranking, counts, field-constrained extraction, and relationship questions across users, orgs, models, datasets, spaces, collections, discussions, daily papers, recent activity, followers/following, likes, and likers. Good for structured raw outputs and compact results. Generated helper calls can explicitly bound return_limit, scan_limit, and max_pages for brevity or broader coverage, and the tool can also be asked about its supported helpers, fields, aliases, defaults, and coverage behavior."
+description: "Read-only Hugging Face Hub navigator for discovery, lookup, filtering, ranking, counts, field-constrained extraction, and relationship questions across users, orgs, models, datasets, spaces, collections, discussions, daily papers, recent activity, followers/following, likes, and likers. Good for structured raw outputs and compact results. Generated helper calls can explicitly bound limit, scan_limit, and max_pages for brevity or broader coverage, and the tool can also be asked about its supported helpers, canonical fields, defaults, and coverage behavior."
 shell: false
 skills: []
 function_tools:

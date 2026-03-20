@@ -2,40 +2,48 @@ from __future__ import annotations
 
 from typing import Any
 
-from .aliases import (
-    ACTIVITY_FIELD_ALIASES,
-    ACTOR_FIELD_ALIASES,
-    COLLECTION_FIELD_ALIASES,
-    DAILY_PAPER_FIELD_ALIASES,
-    REPO_FIELD_ALIASES,
-    USER_FIELD_ALIASES,
-    USER_LIKES_FIELD_ALIASES,
+from .constants import (
+    ACTIVITY_CANONICAL_FIELDS,
+    ACTOR_CANONICAL_FIELDS,
+    COLLECTION_CANONICAL_FIELDS,
+    DAILY_PAPER_CANONICAL_FIELDS,
+    DISCUSSION_CANONICAL_FIELDS,
+    DISCUSSION_DETAIL_CANONICAL_FIELDS,
+    REPO_CANONICAL_FIELDS,
+    USER_CANONICAL_FIELDS,
+    USER_LIKES_CANONICAL_FIELDS,
 )
 from .http_runtime import _as_int
+
+
+def _allowed_field_set(allowed_fields: tuple[str, ...] | list[str] | set[str]) -> set[str]:
+    return {str(field).strip() for field in allowed_fields if str(field).strip()}
 
 
 def _project_items(
     self: Any,
     items: list[dict[str, Any]],
     fields: list[str] | None,
-    aliases: dict[str, str] | None = None,
+    *,
+    allowed_fields: tuple[str, ...] | list[str] | set[str] | None = None,
 ) -> list[dict[str, Any]]:
     if not isinstance(fields, list) or not fields:
         return items
     wanted = [str(field).strip() for field in fields if str(field).strip()]
     if not wanted:
         return items
-    alias_map = {
-        str(key).strip().lower(): str(value).strip()
-        for key, value in (aliases or {}).items()
-        if str(key).strip() and str(value).strip()
-    }
+    if allowed_fields is not None:
+        allowed = _allowed_field_set(allowed_fields)
+        invalid = sorted(field for field in wanted if field not in allowed)
+        if invalid:
+            raise ValueError(
+                f"Unsupported fields {invalid}. Allowed fields: {sorted(allowed)}"
+            )
     projected: list[dict[str, Any]] = []
     for row in items:
         out: dict[str, Any] = {}
         for key in wanted:
-            source_key = alias_map.get(key.lower(), key)
-            value = row.get(source_key)
+            value = row.get(key)
             if value is None:
                 continue
             out[key] = value
@@ -46,63 +54,88 @@ def _project_items(
 def _project_repo_items(
     self: Any, items: list[dict[str, Any]], fields: list[str] | None
 ) -> list[dict[str, Any]]:
-    return _project_items(self, items, fields, aliases=REPO_FIELD_ALIASES)
+    return _project_items(self, items, fields, allowed_fields=REPO_CANONICAL_FIELDS)
 
 
 def _project_collection_items(
     self: Any, items: list[dict[str, Any]], fields: list[str] | None
 ) -> list[dict[str, Any]]:
-    return _project_items(self, items, fields, aliases=COLLECTION_FIELD_ALIASES)
+    return _project_items(
+        self, items, fields, allowed_fields=COLLECTION_CANONICAL_FIELDS
+    )
 
 
 def _project_daily_paper_items(
     self: Any, items: list[dict[str, Any]], fields: list[str] | None
 ) -> list[dict[str, Any]]:
-    return _project_items(self, items, fields, aliases=DAILY_PAPER_FIELD_ALIASES)
+    return _project_items(
+        self, items, fields, allowed_fields=DAILY_PAPER_CANONICAL_FIELDS
+    )
 
 
 def _project_user_items(
     self: Any, items: list[dict[str, Any]], fields: list[str] | None
 ) -> list[dict[str, Any]]:
-    return _project_items(self, items, fields, aliases=USER_FIELD_ALIASES)
+    return _project_items(self, items, fields, allowed_fields=USER_CANONICAL_FIELDS)
 
 
 def _project_actor_items(
     self: Any, items: list[dict[str, Any]], fields: list[str] | None
 ) -> list[dict[str, Any]]:
-    return _project_items(self, items, fields, aliases=ACTOR_FIELD_ALIASES)
+    return _project_items(self, items, fields, allowed_fields=ACTOR_CANONICAL_FIELDS)
 
 
 def _project_user_like_items(
     self: Any, items: list[dict[str, Any]], fields: list[str] | None
 ) -> list[dict[str, Any]]:
-    return _project_items(self, items, fields, aliases=USER_LIKES_FIELD_ALIASES)
+    return _project_items(
+        self, items, fields, allowed_fields=USER_LIKES_CANONICAL_FIELDS
+    )
 
 
 def _project_activity_items(
     self: Any, items: list[dict[str, Any]], fields: list[str] | None
 ) -> list[dict[str, Any]]:
-    return _project_items(self, items, fields, aliases=ACTIVITY_FIELD_ALIASES)
+    return _project_items(
+        self, items, fields, allowed_fields=ACTIVITY_CANONICAL_FIELDS
+    )
+
+
+def _project_discussion_items(
+    self: Any, items: list[dict[str, Any]], fields: list[str] | None
+) -> list[dict[str, Any]]:
+    return _project_items(
+        self, items, fields, allowed_fields=DISCUSSION_CANONICAL_FIELDS
+    )
+
+
+def _project_discussion_detail_items(
+    self: Any, items: list[dict[str, Any]], fields: list[str] | None
+) -> list[dict[str, Any]]:
+    return _project_items(
+        self, items, fields, allowed_fields=DISCUSSION_DETAIL_CANONICAL_FIELDS
+    )
 
 
 def _normalize_where(
     self: Any,
     where: dict[str, Any] | None,
-    aliases: dict[str, str] | None = None,
+    *,
+    allowed_fields: tuple[str, ...] | list[str] | set[str] | None = None,
 ) -> dict[str, Any] | None:
     if not isinstance(where, dict) or not where:
         return where
-    alias_map = {
-        str(key).strip().lower(): str(value).strip()
-        for key, value in (aliases or {}).items()
-        if str(key).strip() and str(value).strip()
-    }
+    allowed = _allowed_field_set(allowed_fields) if allowed_fields is not None else None
     normalized: dict[str, Any] = {}
     for key, value in where.items():
         raw_key = str(key).strip()
         if not raw_key:
             continue
-        normalized[alias_map.get(raw_key.lower(), raw_key)] = value
+        if allowed is not None and raw_key not in allowed:
+            raise ValueError(
+                f"Unsupported filter fields {[raw_key]}. Allowed fields: {sorted(allowed)}"
+            )
+        normalized[raw_key] = value
     return normalized
 
 
@@ -161,9 +194,9 @@ def _apply_where(
     items: list[dict[str, Any]],
     where: dict[str, Any] | None,
     *,
-    aliases: dict[str, str] | None = None,
+    allowed_fields: tuple[str, ...] | list[str] | set[str] | None = None,
 ) -> list[dict[str, Any]]:
-    normalized_where = _normalize_where(self, where, aliases=aliases)
+    normalized_where = _normalize_where(self, where, allowed_fields=allowed_fields)
     if not isinstance(normalized_where, dict) or not normalized_where:
         return items
     return [row for row in items if _item_matches_where(self, row, normalized_where)]

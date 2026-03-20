@@ -8,6 +8,8 @@ from .constants import (
     ACTOR_CANONICAL_FIELDS,
     COLLECTION_CANONICAL_FIELDS,
     DAILY_PAPER_CANONICAL_FIELDS,
+    DISCUSSION_CANONICAL_FIELDS,
+    DISCUSSION_DETAIL_CANONICAL_FIELDS,
     GRAPH_SCAN_LIMIT_CAP,
     LIKES_ENRICHMENT_MAX_REPOS,
     LIKES_RANKING_WINDOW_DEFAULT,
@@ -18,6 +20,7 @@ from .constants import (
     RECENT_ACTIVITY_SCAN_MAX_PAGES,
     REPO_CANONICAL_FIELDS,
     TRENDING_ENDPOINT_MAX_LIMIT,
+    USER_LIKES_CANONICAL_FIELDS,
 )
 
 
@@ -39,7 +42,6 @@ REPO_SEARCH_EXTRA_ARGS: dict[str, set[str]] = {
         "benchmark",
         "dataset_name",
         "expand",
-        "filter",
         "full",
         "gated",
         "language",
@@ -52,11 +54,9 @@ REPO_SEARCH_EXTRA_ARGS: dict[str, set[str]] = {
     "model": {
         "apps",
         "cardData",
-        "card_data",
         "emissions_thresholds",
         "expand",
         "fetch_config",
-        "filter",
         "full",
         "gated",
         "inference",
@@ -65,7 +65,7 @@ REPO_SEARCH_EXTRA_ARGS: dict[str, set[str]] = {
         "pipeline_tag",
         "trained_dataset",
     },
-    "space": {"datasets", "expand", "filter", "full", "linked", "models"},
+    "space": {"datasets", "expand", "full", "linked", "models"},
 }
 
 REPO_SEARCH_DEFAULT_EXPAND: dict[str, list[str]] = {
@@ -115,13 +115,97 @@ REPO_SEARCH_DEFAULT_EXPAND: dict[str, list[str]] = {
     ],
 }
 
+# NOTE:
+# The huggingface_hub client type literals currently advertise a few expand values
+# that the live Hub API rejects (`childrenModelCount`, `usedStorage`) and omits a
+# few that the API now accepts (`xetEnabled`, `gitalyUid`). Keep this allowlist in
+# sync with the live API error contract rather than the client typing surface so we
+# can sanitize generated requests before they hit the network.
+REPO_SEARCH_ALLOWED_EXPAND: dict[str, list[str]] = {
+    "dataset": [
+        "author",
+        "cardData",
+        "citation",
+        "createdAt",
+        "description",
+        "disabled",
+        "downloads",
+        "downloadsAllTime",
+        "gated",
+        "lastModified",
+        "likes",
+        "paperswithcode_id",
+        "private",
+        "resourceGroup",
+        "sha",
+        "siblings",
+        "tags",
+        "trendingScore",
+        "xetEnabled",
+        "gitalyUid",
+    ],
+    "model": [
+        "author",
+        "baseModels",
+        "cardData",
+        "config",
+        "createdAt",
+        "disabled",
+        "downloads",
+        "downloadsAllTime",
+        "evalResults",
+        "gated",
+        "gguf",
+        "inference",
+        "inferenceProviderMapping",
+        "lastModified",
+        "library_name",
+        "likes",
+        "mask_token",
+        "model-index",
+        "pipeline_tag",
+        "private",
+        "resourceGroup",
+        "safetensors",
+        "sha",
+        "siblings",
+        "spaces",
+        "tags",
+        "transformersInfo",
+        "trendingScore",
+        "widgetData",
+        "xetEnabled",
+        "gitalyUid",
+    ],
+    "space": [
+        "author",
+        "cardData",
+        "createdAt",
+        "datasets",
+        "disabled",
+        "lastModified",
+        "likes",
+        "models",
+        "private",
+        "resourceGroup",
+        "runtime",
+        "sdk",
+        "sha",
+        "siblings",
+        "subdomain",
+        "tags",
+        "trendingScore",
+        "xetEnabled",
+        "gitalyUid",
+    ],
+}
+
 RUNTIME_CAPABILITY_FIELDS = [
     "allowed_sections",
     "overview",
     "helpers",
     "helper_defaults",
     "fields",
-    "aliases",
     "limits",
     "repo_search",
 ]
@@ -221,7 +305,7 @@ HELPER_CONFIGS: dict[str, HelperConfig] = {
         "hf_whoami",
         endpoint_patterns=(r"^/api/whoami-v2$",),
         default_metadata=_metadata(
-            default_fields=["username", "fullname", "isPro"],
+            default_fields=["username", "fullname", "is_pro"],
             guaranteed_fields=["username"],
             notes="Returns the current authenticated user when a request token is available.",
         ),
@@ -255,7 +339,55 @@ HELPER_CONFIGS: dict[str, HelperConfig] = {
             max_limit=GRAPH_SCAN_LIMIT_CAP,
             notes="Returns organization member summary rows.",
         ),
-        pagination={"default_return": 1_000, "scan_max": GRAPH_SCAN_LIMIT_CAP},
+        pagination={"default_limit": 1_000, "scan_max": GRAPH_SCAN_LIMIT_CAP},
+    ),
+    "hf_models_search": _config(
+        "hf_models_search",
+        endpoint_patterns=(r"^/api/models$",),
+        default_metadata=_metadata(
+            default_fields=REPO_SUMMARY_FIELDS,
+            guaranteed_fields=["repo_id", "repo_type", "author", "repo_url"],
+            optional_fields=REPO_SUMMARY_OPTIONAL_FIELDS,
+            default_limit=20,
+            max_limit=5_000,
+            notes=(
+                "Thin model-search wrapper around the Hub list_models path. Prefer this "
+                "over hf_repo_search for model-only queries."
+            ),
+        ),
+        pagination={"default_limit": 20, "max_limit": 5_000},
+    ),
+    "hf_datasets_search": _config(
+        "hf_datasets_search",
+        endpoint_patterns=(r"^/api/datasets$",),
+        default_metadata=_metadata(
+            default_fields=REPO_SUMMARY_FIELDS,
+            guaranteed_fields=["repo_id", "repo_type", "author", "repo_url"],
+            optional_fields=REPO_SUMMARY_OPTIONAL_FIELDS,
+            default_limit=20,
+            max_limit=5_000,
+            notes=(
+                "Thin dataset-search wrapper around the Hub list_datasets path. Prefer "
+                "this over hf_repo_search for dataset-only queries."
+            ),
+        ),
+        pagination={"default_limit": 20, "max_limit": 5_000},
+    ),
+    "hf_spaces_search": _config(
+        "hf_spaces_search",
+        endpoint_patterns=(r"^/api/spaces$",),
+        default_metadata=_metadata(
+            default_fields=REPO_SUMMARY_FIELDS,
+            guaranteed_fields=["repo_id", "repo_type", "author", "repo_url"],
+            optional_fields=REPO_SUMMARY_OPTIONAL_FIELDS,
+            default_limit=20,
+            max_limit=5_000,
+            notes=(
+                "Thin space-search wrapper around the Hub list_spaces path. Prefer this "
+                "over hf_repo_search for space-only queries."
+            ),
+        ),
+        pagination={"default_limit": 20, "max_limit": 5_000},
     ),
     "hf_repo_search": _config(
         "hf_repo_search",
@@ -267,11 +399,12 @@ HELPER_CONFIGS: dict[str, HelperConfig] = {
             default_limit=20,
             max_limit=5_000,
             notes=(
-                "Cheap summary helper. Uses list-endpoint expansion only; model rows expose "
-                "num_params when upstream metadata provides it."
+                "Small generic repo-search helper. Prefer hf_models_search, "
+                "hf_datasets_search, or hf_spaces_search for single-type queries; use "
+                "hf_repo_search for intentionally cross-type search."
             ),
         ),
-        pagination={"default_return": 20, "max_return": 5_000},
+        pagination={"default_limit": 20, "max_limit": 5_000},
     ),
     "hf_user_graph": _config(
         "hf_user_graph",
@@ -288,8 +421,8 @@ HELPER_CONFIGS: dict[str, HelperConfig] = {
             notes="Returns followers/following summary rows.",
         ),
         pagination={
-            "default_return": 1_000,
-            "max_return": GRAPH_SCAN_LIMIT_CAP,
+            "default_limit": 1_000,
+            "max_limit": GRAPH_SCAN_LIMIT_CAP,
             "scan_max": GRAPH_SCAN_LIMIT_CAP,
         },
     ),
@@ -305,21 +438,13 @@ HELPER_CONFIGS: dict[str, HelperConfig] = {
             default_limit=1_000,
             notes="Returns users who liked a repo.",
         ),
-        pagination={"default_return": 1_000},
+        pagination={"default_limit": 1_000},
     ),
     "hf_user_likes": _config(
         "hf_user_likes",
         endpoint_patterns=(r"^/api/users/[^/]+/likes$",),
         default_metadata=_metadata(
-            default_fields=[
-                "liked_at",
-                "repo_id",
-                "repo_type",
-                "repo_author",
-                "repo_likes",
-                "repo_downloads",
-                "repo_url",
-            ],
+            default_fields=list(USER_LIKES_CANONICAL_FIELDS),
             guaranteed_fields=["liked_at", "repo_id", "repo_type"],
             optional_fields=["repo_author", "repo_likes", "repo_downloads", "repo_url"],
             default_limit=100,
@@ -332,7 +457,7 @@ HELPER_CONFIGS: dict[str, HelperConfig] = {
             ),
         ),
         pagination={
-            "default_return": 100,
+            "default_limit": 100,
             "enrich_max": LIKES_ENRICHMENT_MAX_REPOS,
             "ranking_default": LIKES_RANKING_WINDOW_DEFAULT,
             "scan_max": LIKES_SCAN_LIMIT_CAP,
@@ -351,7 +476,7 @@ HELPER_CONFIGS: dict[str, HelperConfig] = {
             notes="Activity helper may fetch multiple pages when requested coverage exceeds one page.",
         ),
         pagination={
-            "default_return": 100,
+            "default_limit": 100,
             "max_pages": RECENT_ACTIVITY_SCAN_MAX_PAGES,
             "page_limit": RECENT_ACTIVITY_PAGE_SIZE,
         },
@@ -360,18 +485,9 @@ HELPER_CONFIGS: dict[str, HelperConfig] = {
         "hf_repo_discussions",
         endpoint_patterns=(r"^/api/(models|datasets|spaces)/[^/]+/[^/]+/discussions$",),
         default_metadata=_metadata(
-            default_fields=[
-                "num",
-                "title",
-                "author",
-                "status",
-                "createdAt",
-                "repo_id",
-                "repo_type",
-                "url",
-            ],
+            default_fields=list(DISCUSSION_CANONICAL_FIELDS),
             guaranteed_fields=["num", "title", "author", "status"],
-            optional_fields=["createdAt", "repo_id", "repo_type", "url"],
+            optional_fields=["repo_id", "repo_type", "created_at", "url"],
             default_limit=20,
             max_limit=200,
             notes="Discussion summary helper.",
@@ -383,39 +499,13 @@ HELPER_CONFIGS: dict[str, HelperConfig] = {
             r"^/api/(models|datasets|spaces)/[^/]+/[^/]+/discussions/\d+$",
         ),
         default_metadata=_metadata(
-            default_fields=[
-                "number",
-                "discussionNum",
-                "id",
-                "repo_id",
-                "repo_type",
-                "title",
-                "author",
-                "createdAt",
-                "status",
-                "url",
-                "commentCount",
-                "latestCommentAuthor",
-                "latestCommentCreatedAt",
-                "latestCommentText",
-                "latestCommentHtml",
-                "latest_comment_author",
-                "latest_comment_created_at",
-                "latest_comment_text",
-                "latest_comment_html",
-            ],
+            default_fields=list(DISCUSSION_DETAIL_CANONICAL_FIELDS),
             guaranteed_fields=["repo_id", "repo_type", "title", "author", "status"],
             optional_fields=[
-                "number",
-                "discussionNum",
-                "id",
-                "createdAt",
+                "num",
+                "created_at",
                 "url",
-                "commentCount",
-                "latestCommentAuthor",
-                "latestCommentCreatedAt",
-                "latestCommentText",
-                "latestCommentHtml",
+                "comment_count",
                 "latest_comment_author",
                 "latest_comment_created_at",
                 "latest_comment_text",
@@ -452,7 +542,7 @@ HELPER_CONFIGS: dict[str, HelperConfig] = {
             max_limit=TRENDING_ENDPOINT_MAX_LIMIT,
             notes="Returns ordered trending summary rows only. Use hf_repo_details for exact repo metadata.",
         ),
-        pagination={"default_return": 20, "max_return": TRENDING_ENDPOINT_MAX_LIMIT},
+        pagination={"default_limit": 20, "max_limit": TRENDING_ENDPOINT_MAX_LIMIT},
     ),
     "hf_daily_papers": _config(
         "hf_daily_papers",
@@ -465,7 +555,7 @@ HELPER_CONFIGS: dict[str, HelperConfig] = {
             max_limit=OUTPUT_ITEMS_TRUNCATION_LIMIT,
             notes="Returns daily paper summary rows. repo_id is omitted unless the upstream payload provides it.",
         ),
-        pagination={"default_return": 20, "max_return": OUTPUT_ITEMS_TRUNCATION_LIMIT},
+        pagination={"default_limit": 20, "max_limit": OUTPUT_ITEMS_TRUNCATION_LIMIT},
     ),
     "hf_collections_search": _config(
         "hf_collections_search",
@@ -478,7 +568,7 @@ HELPER_CONFIGS: dict[str, HelperConfig] = {
             max_limit=OUTPUT_ITEMS_TRUNCATION_LIMIT,
             notes="Collection summary helper.",
         ),
-        pagination={"default_return": 20, "max_return": OUTPUT_ITEMS_TRUNCATION_LIMIT},
+        pagination={"default_limit": 20, "max_limit": OUTPUT_ITEMS_TRUNCATION_LIMIT},
     ),
     "hf_collection_items": _config(
         "hf_collection_items",
@@ -498,7 +588,7 @@ HELPER_CONFIGS: dict[str, HelperConfig] = {
             max_limit=OUTPUT_ITEMS_TRUNCATION_LIMIT,
             notes="Returns repos inside one collection as summary rows.",
         ),
-        pagination={"default_return": 100, "max_return": OUTPUT_ITEMS_TRUNCATION_LIMIT},
+        pagination={"default_limit": 100, "max_limit": OUTPUT_ITEMS_TRUNCATION_LIMIT},
     ),
 }
 

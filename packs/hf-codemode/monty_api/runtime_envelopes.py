@@ -21,8 +21,8 @@ def _helper_meta(
 def _derive_limit_metadata(
     self: Any,
     *,
-    requested_return_limit: int | None,
-    applied_return_limit: int,
+    requested_limit: int | None,
+    applied_limit: int,
     default_limit_used: bool,
     requested_scan_limit: int | None = None,
     applied_scan_limit: int | None = None,
@@ -30,8 +30,8 @@ def _derive_limit_metadata(
     applied_max_pages: int | None = None,
 ) -> dict[str, Any]:
     meta: dict[str, Any] = {
-        "requested_return_limit": requested_return_limit,
-        "applied_return_limit": applied_return_limit,
+        "requested_limit": requested_limit,
+        "applied_limit": applied_limit,
         "default_limit_used": default_limit_used,
     }
     if requested_scan_limit is not None or applied_scan_limit is not None:
@@ -42,8 +42,8 @@ def _derive_limit_metadata(
         meta["requested_max_pages"] = requested_max_pages
         meta["applied_max_pages"] = applied_max_pages
         meta["page_limit_applied"] = requested_max_pages != applied_max_pages
-    if requested_return_limit is not None:
-        meta["hard_cap_applied"] = applied_return_limit < requested_return_limit
+    if requested_limit is not None:
+        meta["hard_cap_applied"] = applied_limit < requested_limit
     return meta
 
 
@@ -68,9 +68,9 @@ def _derive_truncated_by(
     hard_cap: bool = False,
     scan_limit_hit: bool = False,
     page_limit_hit: bool = False,
-    return_limit_hit: bool = False,
+    limit_hit: bool = False,
 ) -> str:
-    causes = [hard_cap, scan_limit_hit, page_limit_hit, return_limit_hit]
+    causes = [hard_cap, scan_limit_hit, page_limit_hit, limit_hit]
     if sum(1 for cause in causes if cause) > 1:
         return "multiple"
     if hard_cap:
@@ -79,8 +79,8 @@ def _derive_truncated_by(
         return "scan_limit"
     if page_limit_hit:
         return "page_limit"
-    if return_limit_hit:
-        return "return_limit"
+    if limit_hit:
+        return "limit"
     return "none"
 
 
@@ -89,7 +89,7 @@ def _derive_can_request_more(
 ) -> bool:
     if sample_complete:
         return False
-    return truncated_by in {"return_limit", "scan_limit", "page_limit", "multiple"}
+    return truncated_by in {"limit", "scan_limit", "page_limit", "multiple"}
 
 
 def _derive_next_request_hint(
@@ -97,12 +97,12 @@ def _derive_next_request_hint(
     *,
     truncated_by: str,
     more_available: bool | str,
-    applied_return_limit: int,
+    applied_limit: int,
     applied_scan_limit: int | None = None,
     applied_max_pages: int | None = None,
 ) -> str:
-    if truncated_by == "return_limit":
-        return f"Ask for return_limit>{applied_return_limit} to see more rows"
+    if truncated_by == "limit":
+        return f"Ask for limit>{applied_limit} to see more rows"
     if truncated_by == "scan_limit" and applied_scan_limit is not None:
         return f"Increase scan_limit above {applied_scan_limit} for broader coverage"
     if truncated_by == "page_limit" and applied_max_pages is not None:
@@ -121,28 +121,27 @@ def _derive_next_request_hint(
 def _resolve_exhaustive_limits(
     self: Any,
     *,
-    return_limit: int | None,
+    limit: int | None,
     count_only: bool,
-    default_return: int,
-    max_return: int,
+    default_limit: int,
+    max_limit: int,
     scan_limit: int | None = None,
     scan_cap: int | None = None,
 ) -> dict[str, Any]:
-    requested_return_limit = None if count_only else return_limit
-    effective_requested_return_limit = 0 if count_only else requested_return_limit
+    requested_limit = None if count_only else limit
+    effective_requested_limit = 0 if count_only else requested_limit
     out: dict[str, Any] = {
-        "requested_return_limit": requested_return_limit,
-        "applied_return_limit": _clamp_int(
-            effective_requested_return_limit,
-            default=default_return,
+        "requested_limit": requested_limit,
+        "applied_limit": _clamp_int(
+            effective_requested_limit,
+            default=default_limit,
             minimum=0,
-            maximum=max_return,
+            maximum=max_limit,
         ),
-        "default_limit_used": requested_return_limit is None and not count_only,
+        "default_limit_used": requested_limit is None and not count_only,
     }
     out["hard_cap_applied"] = (
-        requested_return_limit is not None
-        and out["applied_return_limit"] < requested_return_limit
+        requested_limit is not None and out["applied_limit"] < requested_limit
     )
     if scan_cap is not None:
         out["requested_scan_limit"] = scan_limit
@@ -168,7 +167,7 @@ def _build_exhaustive_meta(
     applied_max_pages: int | None = None,
 ) -> dict[str, Any]:
     meta = dict(base_meta)
-    applied_return_limit = int(limit_plan["applied_return_limit"])
+    applied_limit = int(limit_plan["applied_limit"])
     applied_scan_limit = limit_plan.get("applied_scan_limit")
     meta.update(
         {
@@ -186,7 +185,7 @@ def _build_exhaustive_meta(
                 self,
                 truncated_by=truncated_by,
                 more_available=more_available,
-                applied_return_limit=applied_return_limit,
+                applied_limit=applied_limit,
                 applied_scan_limit=applied_scan_limit
                 if isinstance(applied_scan_limit, int)
                 else None,
@@ -197,8 +196,8 @@ def _build_exhaustive_meta(
     meta.update(
         _derive_limit_metadata(
             self,
-            requested_return_limit=limit_plan["requested_return_limit"],
-            applied_return_limit=applied_return_limit,
+            requested_limit=limit_plan["requested_limit"],
+            applied_limit=applied_limit,
             default_limit_used=bool(limit_plan["default_limit_used"]),
             requested_scan_limit=limit_plan.get("requested_scan_limit"),
             applied_scan_limit=applied_scan_limit
@@ -263,26 +262,26 @@ def _build_exhaustive_result_meta(
     requested_max_pages: int | None = None,
     applied_max_pages: int | None = None,
 ) -> dict[str, Any]:
-    applied_return_limit = int(limit_plan["applied_return_limit"])
+    applied_limit = int(limit_plan["applied_limit"])
     if count_only:
         effective_sample_complete = exact_count
     else:
         effective_sample_complete = (
             sample_complete
             if isinstance(sample_complete, bool)
-            else exact_count and matched_count <= applied_return_limit
+            else exact_count and matched_count <= applied_limit
         )
-    return_limit_hit = (
+    limit_hit = (
         False
         if count_only
-        else (applied_return_limit > 0 and matched_count > applied_return_limit)
+        else (applied_limit > 0 and matched_count > applied_limit)
     )
     truncated_by = _derive_truncated_by(
         self,
         hard_cap=bool(limit_plan.get("hard_cap_applied")),
         scan_limit_hit=scan_limit_hit,
         page_limit_hit=page_limit_hit,
-        return_limit_hit=return_limit_hit,
+        limit_hit=limit_hit,
     )
     truncated = truncated_by != "none" or truncated_extra
     total_value = _as_int(base_meta.get("total"))

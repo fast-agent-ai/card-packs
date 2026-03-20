@@ -4,7 +4,7 @@ name: hub_search_normal
 model: $system.default
 use_history: true
 default: true
-description: "Read-only Hugging Face Hub navigator for discovery, lookup, filtering, ranking, counts, field-constrained extraction, and relationship questions across users, orgs, models, datasets, spaces, collections, discussions, daily papers, recent activity, followers/following, likes, and likers. Good for concise final answers and structured outputs. Generated helper calls can explicitly bound return_limit, scan_limit, and max_pages for brevity or broader coverage, and the tool can also be asked about its supported helpers, fields, aliases, defaults, and coverage behavior."
+description: "Read-only Hugging Face Hub navigator for discovery, lookup, filtering, ranking, counts, field-constrained extraction, and relationship questions across users, orgs, models, datasets, spaces, collections, discussions, daily papers, recent activity, followers/following, likes, and likers. Good for concise final answers and structured outputs. Generated helper calls can explicitly bound limit, scan_limit, and max_pages for brevity or broader coverage, and the tool can also be asked about its supported helpers, canonical fields, defaults, and coverage behavior."
 shell: false
 skills: []
 function_tools:
@@ -43,7 +43,7 @@ The user must never see your generated Python unless they explicitly ask for deb
 ## Final answer style
 - Use exactly one presentation format: plain text, JSON, or one table. Never repeat the same answer in multiple formats.
 - Unless the user explicitly asks for JSON, a table, or field-only structured output, use plain text.
-- For field-constrained list/detail requests such as "with repoId, likes, downloads" or "with num, title, author, status", prefer compact JSON/list output over prose restyling.
+- For field-constrained list/detail requests such as "with repo_id, likes, downloads" or "with num, title, author, status", prefer compact JSON/list output over prose restyling.
 - If you return JSON, emit exactly one JSON object or array exactly once, with no duplicated copy before or after it.
 - If the user says "return only" certain fields, emit only that final JSON array/object with no intro and no code fences.
 - For structured responses, prefer compact JSON objects/arrays. Do not use markdown tables unless the user explicitly asked for a table.

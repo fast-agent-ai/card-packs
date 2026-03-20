@@ -9,7 +9,7 @@ from urllib.request import Request, urlopen
 
 from huggingface_hub import HfApi
 
-from .aliases import REPO_SORT_KEYS, SORT_KEY_ALIASES
+from .aliases import REPO_SORT_KEYS
 from .constants import (
     DEFAULT_TIMEOUT_SEC,
 )
@@ -78,10 +78,14 @@ def _normalize_repo_sort_key(
     if not raw:
         return None, None
 
-    key = SORT_KEY_ALIASES.get(raw.lower().replace(" ", "").replace("__", "_"))
-    if key is None:
-        key = SORT_KEY_ALIASES.get(raw.lower())
-    if key is None:
+    key = raw
+    if key not in {
+        "created_at",
+        "downloads",
+        "last_modified",
+        "likes",
+        "trending_score",
+    }:
         return None, f"Invalid sort key '{raw}'"
 
     rt = _canonical_repo_type(repo_type)

@@ -155,8 +155,8 @@ def _summarize_limit_hit(helper_name: str, result: Any) -> dict[str, Any] | None
         "truncated": meta.get("truncated"),
         "truncated_by": meta.get("truncated_by"),
         "more_available": meta.get("more_available"),
-        "requested_return_limit": meta.get("requested_return_limit"),
-        "applied_return_limit": meta.get("applied_return_limit"),
+        "requested_limit": meta.get("requested_limit"),
+        "applied_limit": meta.get("applied_limit"),
         "next_request_hint": meta.get("next_request_hint"),
     }
     if meta.get("scan_limit") is not None:

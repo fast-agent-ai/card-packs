@@ -5,11 +5,8 @@ from itertools import islice
 import re
 from typing import Any, Callable
 from ..context_types import HelperRuntimeContext
-from ..aliases import (
-    ACTOR_FIELD_ALIASES,
-    USER_FIELD_ALIASES,
-)
 from ..constants import (
+    ACTOR_CANONICAL_FIELDS,
     EXHAUSTIVE_HELPER_RETURN_HARD_CAP,
     GRAPH_SCAN_LIMIT_CAP,
     OUTPUT_ITEMS_TRUNCATION_LIMIT,
@@ -74,7 +71,7 @@ async def hf_whoami(ctx: HelperRuntimeContext) -> dict[str, Any]:
     item = {
         "username": username,
         "fullname": payload.get("fullname"),
-        "isPro": payload.get("isPro"),
+        "is_pro": payload.get("isPro"),
     }
     items = [item] if isinstance(username, str) and username else []
     return ctx._helper_success(
@@ -148,16 +145,16 @@ async def _hf_user_overview(ctx: HelperRuntimeContext, username: str) -> dict[st
         "username": obj.username or u,
         "fullname": obj.fullname,
         "bio": getattr(obj, "details", None),
-        "avatarUrl": obj.avatar_url,
-        "websiteUrl": getattr(obj, "websiteUrl", None),
+        "avatar_url": obj.avatar_url,
+        "website_url": getattr(obj, "websiteUrl", None),
         "twitter": _social_url("twitter", twitter_handle),
         "github": _social_url("github", github_handle),
         "linkedin": _social_url("linkedin", linkedin_handle),
         "bluesky": _social_url("bluesky", bluesky_handle),
-        "twitterHandle": twitter_handle,
-        "githubHandle": github_handle,
-        "linkedinHandle": linkedin_handle,
-        "blueskyHandle": bluesky_handle,
+        "twitter_handle": twitter_handle,
+        "github_handle": github_handle,
+        "linkedin_handle": linkedin_handle,
+        "bluesky_handle": bluesky_handle,
         "followers": ctx._as_int(obj.num_followers),
         "following": ctx._as_int(obj.num_following),
         "likes": ctx._as_int(obj.num_likes),
@@ -168,7 +165,7 @@ async def _hf_user_overview(ctx: HelperRuntimeContext, username: str) -> dict[st
         "papers": ctx._as_int(getattr(obj, "num_papers", None)),
         "upvotes": ctx._as_int(getattr(obj, "num_upvotes", None)),
         "orgs": org_names,
-        "isPro": obj.is_pro,
+        "is_pro": obj.is_pro,
     }
     return ctx._helper_success(
         start_calls=start_calls,
@@ -202,10 +199,10 @@ async def _hf_org_overview(
         return ctx._helper_error(start_calls=start_calls, source=endpoint, error=e)
     item = {
         "organization": obj.name or org,
-        "displayName": obj.fullname,
-        "avatarUrl": obj.avatar_url,
+        "display_name": obj.fullname,
+        "avatar_url": obj.avatar_url,
         "description": obj.details,
-        "websiteUrl": getattr(obj, "websiteUrl", None),
+        "website_url": getattr(obj, "websiteUrl", None),
         "followers": ctx._as_int(obj.num_followers),
         "members": ctx._as_int(obj.num_users),
         "models": ctx._as_int(getattr(obj, "num_models", None)),
@@ -226,7 +223,7 @@ async def _hf_org_overview(
 async def hf_org_members(
     ctx: HelperRuntimeContext,
     organization: str,
-    return_limit: int | None = None,
+    limit: int | None = None,
     scan_limit: int | None = None,
     count_only: bool = False,
     where: dict[str, Any] | None = None,
@@ -240,17 +237,17 @@ async def hf_org_members(
             source="/api/organizations/<o>/members",
             error="organization is required",
         )
-    default_return = ctx._policy_int("hf_org_members", "default_return", 100)
+    default_limit = ctx._policy_int("hf_org_members", "default_limit", 100)
     scan_cap = ctx._policy_int("hf_org_members", "scan_max", GRAPH_SCAN_LIMIT_CAP)
     limit_plan = ctx._resolve_exhaustive_limits(
-        return_limit=return_limit,
+        limit=limit,
         count_only=count_only,
-        default_return=default_return,
-        max_return=EXHAUSTIVE_HELPER_RETURN_HARD_CAP,
+        default_limit=default_limit,
+        max_limit=EXHAUSTIVE_HELPER_RETURN_HARD_CAP,
         scan_limit=scan_limit,
         scan_cap=scan_cap,
     )
-    ret_lim = int(limit_plan["applied_return_limit"])
+    applied_limit = int(limit_plan["applied_limit"])
     scan_lim = int(limit_plan["applied_scan_limit"])
     has_where = isinstance(where, dict) and bool(where)
     overview_total: int | None = None
@@ -299,11 +296,21 @@ async def hf_org_members(
         item = {
             "username": handle,
             "fullname": getattr(row, "fullname", None),
-            "isPro": getattr(row, "is_pro", None),
+            "is_pro": getattr(row, "is_pro", None),
             "role": getattr(row, "role", None),
         }
         normalized.append(item)
-    normalized = ctx._apply_where(normalized, where, aliases=ACTOR_FIELD_ALIASES)
+    try:
+        normalized = ctx._apply_where(
+            normalized, where, allowed_fields=ACTOR_CANONICAL_FIELDS
+        )
+    except ValueError as exc:
+        return ctx._helper_error(
+            start_calls=start_calls,
+            source=endpoint,
+            error=exc,
+            organization=org,
+        )
     observed_total = len(rows)
     scan_exhaustive = observed_total < scan_lim
     overview_list_mismatch = (
@@ -324,14 +331,14 @@ async def hf_org_members(
         total = observed_total
         total_matched = observed_total
     total_available = overview_total if overview_total is not None else observed_total
-    items = normalized[:ret_lim]
+    items = normalized[:applied_limit]
     scan_limit_hit = not exact_count and observed_total >= scan_lim
     count_source = (
         "overview" if overview_total is not None and (not has_where) else "scan"
     )
     sample_complete = (
         exact_count
-        and len(normalized) <= ret_lim
+        and len(normalized) <= applied_limit
         and (not count_only or len(normalized) == 0)
     )
     more_available = ctx._derive_more_available(
@@ -342,7 +349,15 @@ async def hf_org_members(
     )
     if not exact_count and scan_limit_hit:
         more_available = "unknown" if has_where else True
-    items = ctx._project_user_items(items, fields)
+    try:
+        items = ctx._project_actor_items(items, fields)
+    except ValueError as exc:
+        return ctx._helper_error(
+            start_calls=start_calls,
+            source=endpoint,
+            error=exc,
+            organization=org,
+        )
     meta = ctx._build_exhaustive_result_meta(
         base_meta={
             "scanned": observed_total,
@@ -375,7 +390,7 @@ async def _user_graph_helper(
     kind: str,
     username: str,
     pro_only: bool | None,
-    return_limit: int | None,
+    limit: int | None,
     scan_limit: int | None,
     count_only: bool,
     where: dict[str, Any] | None,
@@ -384,10 +399,10 @@ async def _user_graph_helper(
     helper_name: str,
 ) -> dict[str, Any]:
     start_calls = ctx.call_count["n"]
-    default_return = ctx._policy_int(helper_name, "default_return", 100)
+    default_limit = ctx._policy_int(helper_name, "default_limit", 100)
     scan_cap = ctx._policy_int(helper_name, "scan_max", GRAPH_SCAN_LIMIT_CAP)
-    max_return = ctx._policy_int(
-        helper_name, "max_return", EXHAUSTIVE_HELPER_RETURN_HARD_CAP
+    max_limit = ctx._policy_int(
+        helper_name, "max_limit", EXHAUSTIVE_HELPER_RETURN_HARD_CAP
     )
     u = str(username or "").strip()
     if not u:
@@ -397,14 +412,14 @@ async def _user_graph_helper(
             error="username is required",
         )
     limit_plan = ctx._resolve_exhaustive_limits(
-        return_limit=return_limit,
+        limit=limit,
         count_only=count_only,
-        default_return=default_return,
-        max_return=max_return,
+        default_limit=default_limit,
+        max_limit=max_limit,
         scan_limit=scan_limit,
         scan_cap=scan_cap,
     )
-    ret_lim = int(limit_plan["applied_return_limit"])
+    applied_limit = int(limit_plan["applied_limit"])
     scan_lim = int(limit_plan["applied_scan_limit"])
     has_where = isinstance(where, dict) and bool(where)
     filtered = pro_only is not None or has_where
@@ -509,14 +524,28 @@ async def _user_graph_helper(
         item = {
             "username": handle,
             "fullname": getattr(row, "fullname", None),
-            "isPro": getattr(row, "is_pro", None),
+            "is_pro": getattr(row, "is_pro", None),
         }
-        if pro_only is True and item.get("isPro") is not True:
+        if pro_only is True and item.get("is_pro") is not True:
             continue
-        if pro_only is False and item.get("isPro") is True:
+        if pro_only is False and item.get("is_pro") is True:
             continue
         normalized.append(item)
-    normalized = ctx._apply_where(normalized, where, aliases=USER_FIELD_ALIASES)
+    try:
+        normalized = ctx._apply_where(
+            normalized, where, allowed_fields=ACTOR_CANONICAL_FIELDS
+        )
+    except ValueError as exc:
+        return ctx._helper_error(
+            start_calls=start_calls,
+            source=endpoint,
+            error=exc,
+            relation=kind,
+            username=u,
+            entity=u,
+            entity_type=entity_type,
+            organization=u if entity_type == "organization" else None,
+        )
     observed_total = len(rows)
     scan_exhaustive = observed_total < scan_lim
     overview_list_mismatch = (
@@ -537,14 +566,14 @@ async def _user_graph_helper(
         total = observed_total
         total_matched = observed_total
     total_available = overview_total if overview_total is not None else observed_total
-    items = normalized[:ret_lim]
+    items = normalized[:applied_limit]
     scan_limit_hit = not exact_count and observed_total >= scan_lim
     count_source = (
         "overview" if overview_total is not None and (not filtered) else "scan"
     )
     sample_complete = (
         exact_count
-        and len(normalized) <= ret_lim
+        and len(normalized) <= applied_limit
         and (not count_only or len(normalized) == 0)
     )
     more_available = ctx._derive_more_available(
@@ -555,7 +584,19 @@ async def _user_graph_helper(
     )
     if not exact_count and scan_limit_hit:
         more_available = "unknown" if filtered else True
-    items = ctx._project_user_items(items, fields)
+    try:
+        items = ctx._project_actor_items(items, fields)
+    except ValueError as exc:
+        return ctx._helper_error(
+            start_calls=start_calls,
+            source=endpoint,
+            error=exc,
+            relation=kind,
+            username=u,
+            entity=u,
+            entity_type=entity_type,
+            organization=u if entity_type == "organization" else None,
+        )
     meta = ctx._build_exhaustive_result_meta(
         base_meta={
             "scanned": observed_total,
@@ -645,8 +686,8 @@ async def hf_profile_summary(
             "display_name": overview_item.get("fullname")
             or str(overview_item.get("username") or resolved_handle),
             "bio": overview_item.get("bio"),
-            "avatar_url": overview_item.get("avatarUrl"),
-            "website_url": overview_item.get("websiteUrl"),
+            "avatar_url": overview_item.get("avatar_url"),
+            "website_url": overview_item.get("website_url"),
             "twitter_url": overview_item.get("twitter"),
             "github_url": overview_item.get("github"),
             "linkedin_url": overview_item.get("linkedin"),
@@ -661,13 +702,13 @@ async def hf_profile_summary(
             "papers_count": ctx._overview_count(overview_item, "papers"),
             "upvotes_count": ctx._overview_count(overview_item, "upvotes"),
             "organizations": overview_item.get("orgs"),
-            "is_pro": overview_item.get("isPro"),
+            "is_pro": overview_item.get("is_pro"),
         }
         if "likes" in requested_sections:
             likes = await ctx.call_helper(
                 "hf_user_likes",
                 username=resolved_handle,
-                return_limit=likes_lim,
+                limit=likes_lim,
                 scan_limit=USER_SUMMARY_LIKES_SCAN_LIMIT,
                 count_only=likes_lim == 0,
                 sort="liked_at",
@@ -689,7 +730,7 @@ async def hf_profile_summary(
                 "hf_recent_activity",
                 feed_type="user",
                 entity=resolved_handle,
-                return_limit=activity_lim,
+                limit=activity_lim,
                 max_pages=USER_SUMMARY_ACTIVITY_MAX_PAGES,
                 count_only=activity_lim == 0,
                 fields=["timestamp", "event_type", "repo_type", "repo_id"],
@@ -724,11 +765,11 @@ async def hf_profile_summary(
         item = {
             "handle": str(overview_item.get("organization") or resolved_handle),
             "entity_type": "organization",
-            "display_name": overview_item.get("displayName")
+            "display_name": overview_item.get("display_name")
             or str(overview_item.get("organization") or resolved_handle),
             "description": overview_item.get("description"),
-            "avatar_url": overview_item.get("avatarUrl"),
-            "website_url": overview_item.get("websiteUrl"),
+            "avatar_url": overview_item.get("avatar_url"),
+            "website_url": overview_item.get("website_url"),
             "followers_count": ctx._overview_count(overview_item, "followers"),
             "members_count": ctx._overview_count(overview_item, "members"),
             "models_count": ctx._overview_count(overview_item, "models"),
@@ -765,7 +806,7 @@ async def hf_user_graph(
     ctx: HelperRuntimeContext,
     username: str | None = None,
     relation: str = "followers",
-    return_limit: int | None = None,
+    limit: int | None = None,
     scan_limit: int | None = None,
     count_only: bool = False,
     pro_only: bool | None = None,
@@ -800,7 +841,7 @@ async def hf_user_graph(
         rel,
         resolved_username,
         pro_only,
-        return_limit,
+        limit,
         scan_limit,
         count_only,
         where,

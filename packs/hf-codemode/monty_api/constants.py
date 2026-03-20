@@ -79,7 +79,7 @@ USER_CANONICAL_FIELDS: tuple[str, ...] = (
     "username",
     "fullname",
     "bio",
-    "websiteUrl",
+    "website_url",
     "twitter",
     "github",
     "linkedin",
@@ -87,7 +87,7 @@ USER_CANONICAL_FIELDS: tuple[str, ...] = (
     "followers",
     "following",
     "likes",
-    "isPro",
+    "is_pro",
 )
 
 PROFILE_CANONICAL_FIELDS: tuple[str, ...] = (
@@ -121,9 +121,46 @@ PROFILE_CANONICAL_FIELDS: tuple[str, ...] = (
 ACTOR_CANONICAL_FIELDS: tuple[str, ...] = (
     "username",
     "fullname",
-    "isPro",
+    "is_pro",
     "role",
     "type",
+)
+
+USER_LIKES_CANONICAL_FIELDS: tuple[str, ...] = (
+    "liked_at",
+    "repo_id",
+    "repo_type",
+    "repo_author",
+    "repo_likes",
+    "repo_downloads",
+    "repo_url",
+)
+
+DISCUSSION_CANONICAL_FIELDS: tuple[str, ...] = (
+    "num",
+    "repo_id",
+    "repo_type",
+    "title",
+    "author",
+    "created_at",
+    "status",
+    "url",
+)
+
+DISCUSSION_DETAIL_CANONICAL_FIELDS: tuple[str, ...] = (
+    "num",
+    "repo_id",
+    "repo_type",
+    "title",
+    "author",
+    "created_at",
+    "status",
+    "url",
+    "comment_count",
+    "latest_comment_author",
+    "latest_comment_created_at",
+    "latest_comment_text",
+    "latest_comment_html",
 )
 
 ACTIVITY_CANONICAL_FIELDS: tuple[str, ...] = (

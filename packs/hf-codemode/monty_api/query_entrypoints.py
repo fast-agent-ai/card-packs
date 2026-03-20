@@ -4,6 +4,8 @@ import argparse
 import asyncio
 import inspect
 import json
+import os
+import sys
 import time
 from typing import Any, Callable
 
@@ -31,6 +33,25 @@ class MontyExecutionError(RuntimeError):
         super().__init__(message)
         self.api_calls = api_calls
         self.trace = trace
+
+
+def _query_debug_enabled() -> bool:
+    value = os.environ.get("MONTY_DEBUG_QUERY", "")
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _log_generated_query(
+    *, query: str, code: str, max_calls: int | None, timeout_sec: int | None
+) -> None:
+    if not _query_debug_enabled():
+        return
+    print("[monty-debug] query:", file=sys.stderr)
+    print(query, file=sys.stderr)
+    print("[monty-debug] max_calls:", max_calls, file=sys.stderr)
+    print("[monty-debug] timeout_sec:", timeout_sec, file=sys.stderr)
+    print("[monty-debug] code:", file=sys.stderr)
+    print(code, file=sys.stderr)
+    sys.stderr.flush()
 
 
 def _introspect_helper_signatures() -> dict[str, set[str]]:
@@ -212,6 +233,12 @@ async def _execute_query(
             max_calls=max_calls,
             timeout_sec=timeout_sec,
         )
+    )
+    _log_generated_query(
+        query=prepared_query,
+        code=prepared_code,
+        max_calls=prepared_max_calls,
+        timeout_sec=prepared_timeout,
     )
     return await _run_with_monty(
         code=prepared_code,

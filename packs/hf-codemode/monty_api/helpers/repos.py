@@ -5,22 +5,21 @@ from itertools import islice
 from typing import Any, Callable
 from huggingface_hub import HfApi
 from ..context_types import HelperRuntimeContext
-from ..aliases import (
-    ACTOR_FIELD_ALIASES,
-    DAILY_PAPER_FIELD_ALIASES,
-    REPO_FIELD_ALIASES,
-    USER_LIKES_FIELD_ALIASES,
-)
 from ..constants import (
+    ACTOR_CANONICAL_FIELDS,
+    DAILY_PAPER_CANONICAL_FIELDS,
     EXHAUSTIVE_HELPER_RETURN_HARD_CAP,
     LIKES_ENRICHMENT_MAX_REPOS,
     LIKES_RANKING_WINDOW_DEFAULT,
     LIKES_SCAN_LIMIT_CAP,
     OUTPUT_ITEMS_TRUNCATION_LIMIT,
+    REPO_CANONICAL_FIELDS,
     SELECTIVE_ENDPOINT_RETURN_HARD_CAP,
     TRENDING_ENDPOINT_MAX_LIMIT,
+    USER_LIKES_CANONICAL_FIELDS,
 )
 from ..registry import (
+    REPO_SEARCH_ALLOWED_EXPAND,
     REPO_SEARCH_DEFAULT_EXPAND,
     REPO_SEARCH_EXTRA_ARGS,
 )
@@ -31,193 +30,283 @@ from .common import resolve_username_or_current
 from functools import partial
 
 
+def _sanitize_repo_expand_values(
+    repo_type: str, raw_expand: Any
+) -> tuple[list[str] | None, list[str], str | None]:
+    if raw_expand is None:
+        return (None, [], None)
+    if isinstance(raw_expand, str):
+        requested_values = [raw_expand]
+    elif isinstance(raw_expand, (list, tuple, set)):
+        requested_values = list(raw_expand)
+    else:
+        return (None, [], "expand must be a string or a list of strings")
+
+    cleaned: list[str] = []
+    for value in requested_values:
+        value_str = str(value).strip()
+        if value_str and value_str not in cleaned:
+            cleaned.append(value_str)
+
+    allowed = set(REPO_SEARCH_ALLOWED_EXPAND.get(repo_type, ()))
+    dropped = [value for value in cleaned if value not in allowed]
+    kept = [value for value in cleaned if value in allowed]
+    return (kept or None, dropped, None)
+
+
+def _resolve_repo_search_types(
+    ctx: HelperRuntimeContext,
+    *,
+    repo_type: str | None,
+    repo_types: list[str] | None,
+    default_repo_type: str = "model",
+) -> tuple[list[str] | None, str | None]:
+    if repo_type is not None and repo_types is not None:
+        return (None, "Pass either repo_type or repo_types, not both")
+
+    if repo_types is None:
+        raw_type = str(repo_type or "").strip()
+        if not raw_type:
+            return ([default_repo_type], None)
+        canonical = ctx._canonical_repo_type(raw_type, default="")
+        if canonical not in {"model", "dataset", "space"}:
+            return (None, f"Unsupported repo_type '{repo_type}'")
+        return ([canonical], None)
+
+    raw_types = ctx._coerce_str_list(repo_types)
+    if not raw_types:
+        return (None, "repo_types must not be empty")
+
+    requested_repo_types: list[str] = []
+    for raw in raw_types:
+        canonical = ctx._canonical_repo_type(raw, default="")
+        if canonical not in {"model", "dataset", "space"}:
+            return (None, f"Unsupported repo_type '{raw}'")
+        if canonical not in requested_repo_types:
+            requested_repo_types.append(canonical)
+    return (requested_repo_types, None)
+
+
+def _clean_repo_search_text(value: str | None) -> str | None:
+    cleaned = str(value or "").strip()
+    return cleaned or None
+
+
+def _normalize_repo_search_filter(
+    ctx: HelperRuntimeContext, value: str | list[str] | None
+) -> tuple[list[str] | None, str | None]:
+    if value is None:
+        return (None, None)
+    try:
+        normalized = ctx._coerce_str_list(value)
+    except ValueError:
+        return (None, "filter must be a string or a list of strings")
+    return (normalized or None, None)
+
+
+def _build_repo_search_extra_args(
+    repo_type: str, **candidate_args: Any
+) -> tuple[dict[str, Any], list[str], str | None]:
+    normalized: dict[str, Any] = {}
+    for key, value in candidate_args.items():
+        if value is None:
+            continue
+        if key in {"card_data", "cardData"}:
+            if value:
+                normalized["cardData"] = True
+            continue
+        if key in {"fetch_config", "linked"}:
+            if value:
+                normalized[key] = True
+            continue
+        normalized[key] = value
+
+    allowed_extra = REPO_SEARCH_EXTRA_ARGS.get(repo_type, set())
+    unsupported = sorted(str(key) for key in normalized if str(key) not in allowed_extra)
+    if unsupported:
+        return (
+            {},
+            [],
+            f"Unsupported search args for repo_type='{repo_type}': {unsupported}. Allowed args: {sorted(allowed_extra)}",
+        )
+
+    dropped_expand: list[str] = []
+    if "expand" in normalized:
+        kept_expand, dropped_expand, expand_error = _sanitize_repo_expand_values(
+            repo_type, normalized.get("expand")
+        )
+        if expand_error:
+            return ({}, [], expand_error)
+        if kept_expand is None:
+            normalized.pop("expand", None)
+        else:
+            normalized["expand"] = kept_expand
+
+    if not any(
+        key in normalized for key in ("expand", "full", "cardData", "fetch_config")
+    ):
+        normalized["expand"] = list(REPO_SEARCH_DEFAULT_EXPAND[repo_type])
+
+    return (normalized, dropped_expand, None)
+
+
 def _normalize_user_likes_sort(sort: str | None) -> tuple[str | None, str | None]:
-    raw = str(sort or "liked_at").strip()
-    alias_map = {
-        "": "liked_at",
-        "likedat": "liked_at",
-        "liked_at": "liked_at",
-        "liked-at": "liked_at",
-        "recency": "liked_at",
-        "repolikes": "repo_likes",
-        "repo_likes": "repo_likes",
-        "repo-likes": "repo_likes",
-        "repodownloads": "repo_downloads",
-        "repo_downloads": "repo_downloads",
-        "repo-downloads": "repo_downloads",
-    }
-    normalized = alias_map.get(raw.lower(), raw)
+    normalized = str(sort or "liked_at").strip() or "liked_at"
     if normalized not in {"liked_at", "repo_likes", "repo_downloads"}:
         return (None, "sort must be one of liked_at, repo_likes, repo_downloads")
     return (normalized, None)
 
 
-async def hf_repo_search(
+async def _run_repo_search(
     ctx: HelperRuntimeContext,
-    query: str | None = None,
-    repo_type: str | None = None,
-    repo_types: list[str] | None = None,
-    author: str | None = None,
-    filters: list[str] | None = None,
-    sort: str | None = None,
-    limit: int = 20,
-    where: dict[str, Any] | None = None,
-    fields: list[str] | None = None,
-    advanced: dict[str, Any] | None = None,
+    *,
+    helper_name: str,
+    requested_repo_types: list[str],
+    search: str | None,
+    filter: str | list[str] | None,
+    author: str | None,
+    sort: str | None,
+    limit: int,
+    fields: list[str] | None,
+    post_filter: dict[str, Any] | None,
+    extra_args_by_type: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     start_calls = ctx.call_count["n"]
-    default_return = ctx._policy_int("hf_repo_search", "default_return", 20)
-    max_return = ctx._policy_int(
-        "hf_repo_search", "max_return", SELECTIVE_ENDPOINT_RETURN_HARD_CAP
+    default_limit = ctx._policy_int(helper_name, "default_limit", 20)
+    max_limit = ctx._policy_int(
+        helper_name, "max_limit", SELECTIVE_ENDPOINT_RETURN_HARD_CAP
     )
-    if repo_type is not None and repo_types is not None:
+    filter_list, filter_error = _normalize_repo_search_filter(ctx, filter)
+    if filter_error:
         return ctx._helper_error(
             start_calls=start_calls,
             source="/api/repos",
-            error="Pass either repo_type or repo_types, not both",
+            error=filter_error,
         )
-    if repo_types is None:
-        if repo_type is None or not str(repo_type).strip():
-            requested_repo_types = ["model"]
-        else:
-            rt = ctx._canonical_repo_type(repo_type, default="")
-            if rt not in {"model", "dataset", "space"}:
-                return ctx._helper_error(
-                    start_calls=start_calls,
-                    source="/api/repos",
-                    error=f"Unsupported repo_type '{repo_type}'",
-                )
-            requested_repo_types = [rt]
-    else:
-        raw_types = ctx._coerce_str_list(repo_types)
-        if not raw_types:
-            return ctx._helper_error(
-                start_calls=start_calls,
-                source="/api/repos",
-                error="repo_types must not be empty",
-            )
-        requested_repo_types: list[str] = []
-        for raw in raw_types:
-            rt = ctx._canonical_repo_type(raw, default="")
-            if rt not in {"model", "dataset", "space"}:
-                return ctx._helper_error(
-                    start_calls=start_calls,
-                    source="/api/repos",
-                    error=f"Unsupported repo_type '{raw}'",
-                )
-            requested_repo_types.append(rt)
-    filter_list = ctx._coerce_str_list(filters)
-    term = str(query or "").strip()
-    author_clean = str(author or "").strip() or None
+
+    term = _clean_repo_search_text(search)
+    author_clean = _clean_repo_search_text(author)
     requested_limit = limit
-    lim = ctx._clamp_int(limit, default=default_return, minimum=1, maximum=max_return)
+    applied_limit = ctx._clamp_int(
+        limit,
+        default=default_limit,
+        minimum=1,
+        maximum=max_limit,
+    )
     limit_meta = ctx._derive_limit_metadata(
-        requested_return_limit=requested_limit,
-        applied_return_limit=lim,
-        default_limit_used=limit == default_return,
+        requested_limit=requested_limit,
+        applied_limit=applied_limit,
+        default_limit_used=limit == default_limit,
     )
     hard_cap_applied = bool(limit_meta.get("hard_cap_applied"))
-    if advanced is not None and (not isinstance(advanced, dict)):
-        return ctx._helper_error(
-            start_calls=start_calls,
-            source="/api/repos",
-            error="advanced must be a dict when provided",
-        )
-    if advanced is not None and len(requested_repo_types) != 1:
-        return ctx._helper_error(
-            start_calls=start_calls,
-            source="/api/repos",
-            error="advanced may only be used with a single repo_type",
-        )
+
     sort_keys: dict[str, str | None] = {}
-    for rt in requested_repo_types:
-        sort_key, sort_error = ctx._normalize_repo_sort_key(rt, sort)
+    for repo_type in requested_repo_types:
+        sort_key, sort_error = ctx._normalize_repo_sort_key(repo_type, sort)
         if sort_error:
             return ctx._helper_error(
-                start_calls=start_calls, source=f"/api/{rt}s", error=sort_error
+                start_calls=start_calls,
+                source=f"/api/{repo_type}s",
+                error=sort_error,
             )
-        sort_keys[rt] = sort_key
+        sort_keys[repo_type] = sort_key
+
     all_items: list[dict[str, Any]] = []
     scanned = 0
     source_endpoints: list[str] = []
     limit_boundary_hit = False
+    ignored_expand: dict[str, list[str]] = {}
     api = ctx._get_hf_api_client()
-    for rt in requested_repo_types:
-        endpoint = f"/api/{rt}s"
+
+    for repo_type in requested_repo_types:
+        endpoint = f"/api/{repo_type}s"
         source_endpoints.append(endpoint)
-        extra_args = dict(advanced or {}) if len(requested_repo_types) == 1 else {}
-        allowed_extra = REPO_SEARCH_EXTRA_ARGS.get(rt, set())
-        unsupported = sorted(
-            (str(k) for k in extra_args.keys() if str(k) not in allowed_extra)
+        raw_extra_args = dict((extra_args_by_type or {}).get(repo_type, {}))
+        extra_args, dropped_expand, extra_error = _build_repo_search_extra_args(
+            repo_type,
+            **raw_extra_args,
         )
-        if unsupported:
+        if extra_error:
             return ctx._helper_error(
                 start_calls=start_calls,
                 source=endpoint,
-                error=f"Unsupported advanced args for repo_type='{rt}': {unsupported}. Allowed advanced args: {sorted(allowed_extra)}",
+                error=extra_error,
             )
-        if "card_data" in extra_args and "cardData" not in extra_args:
-            extra_args["cardData"] = extra_args.pop("card_data")
-        else:
-            extra_args.pop("card_data", None)
-        if not any(
-            (
-                key in extra_args
-                for key in ("expand", "full", "cardData", "fetch_config")
-            )
-        ):
-            extra_args["expand"] = list(REPO_SEARCH_DEFAULT_EXPAND[rt])
+        if dropped_expand:
+            ignored_expand[repo_type] = dropped_expand
         try:
             payload = ctx._host_hf_call(
                 endpoint,
-                lambda rt=rt, extra_args=extra_args: ctx._repo_list_call(
+                lambda repo_type=repo_type, extra_args=extra_args: ctx._repo_list_call(
                     api,
-                    rt,
-                    search=term or None,
+                    repo_type,
+                    search=term,
                     author=author_clean,
-                    filter=filter_list or None,
-                    sort=sort_keys[rt],
-                    limit=lim,
+                    filter=filter_list,
+                    sort=sort_keys[repo_type],
+                    limit=applied_limit,
                     **extra_args,
                 ),
             )
         except Exception as e:
             return ctx._helper_error(start_calls=start_calls, source=endpoint, error=e)
         scanned += len(payload)
-        if len(payload) >= lim:
+        if len(payload) >= applied_limit:
             limit_boundary_hit = True
         all_items.extend(
-            (ctx._normalize_repo_search_row(row, rt) for row in payload[:lim])
+            ctx._normalize_repo_search_row(row, repo_type)
+            for row in payload[:applied_limit]
         )
-    all_items = ctx._apply_where(all_items, where, aliases=REPO_FIELD_ALIASES)
+
+    try:
+        all_items = ctx._apply_where(
+            all_items, post_filter, allowed_fields=REPO_CANONICAL_FIELDS
+        )
+    except ValueError as exc:
+        return ctx._helper_error(
+            start_calls=start_calls,
+            source="/api/repos",
+            error=exc,
+        )
     combined_sort_key = next(iter(sort_keys.values()), None)
     all_items = ctx._sort_repo_rows(all_items, combined_sort_key)
     matched = len(all_items)
-    all_items = ctx._project_repo_items(all_items[:lim], fields)
+    try:
+        all_items = ctx._project_repo_items(all_items[:applied_limit], fields)
+    except ValueError as exc:
+        return ctx._helper_error(
+            start_calls=start_calls,
+            source="/api/repos",
+            error=exc,
+        )
+
     more_available: bool | str = False
     truncated = False
     truncated_by = "none"
     next_request_hint: str | None = None
-    if hard_cap_applied and scanned >= lim:
+    if hard_cap_applied and scanned >= applied_limit:
         truncated = True
         truncated_by = "hard_cap"
         more_available = "unknown"
-        next_request_hint = f"Increase limit above {lim} to improve coverage"
+        next_request_hint = f"Increase limit above {applied_limit} to improve coverage"
     elif limit_boundary_hit:
         more_available = "unknown"
         next_request_hint = (
-            f"Increase limit above {lim} to check whether more rows exist"
+            f"Increase limit above {applied_limit} to check whether more rows exist"
         )
+
     return ctx._helper_success(
         start_calls=start_calls,
         source=",".join(source_endpoints),
         items=all_items,
-        query=term or None,
+        helper=helper_name,
+        search=term,
         repo_types=requested_repo_types,
-        filters=filter_list or None,
+        filter=filter_list,
         sort=combined_sort_key,
         author=author_clean,
-        limit=lim,
+        limit=applied_limit,
+        post_filter=post_filter if isinstance(post_filter, dict) and post_filter else None,
         scanned=scanned,
         matched=matched,
         returned=len(all_items),
@@ -226,7 +315,192 @@ async def hf_repo_search(
         more_available=more_available,
         limit_boundary_hit=limit_boundary_hit,
         next_request_hint=next_request_hint,
+        ignored_expand=ignored_expand or None,
         **limit_meta,
+    )
+
+
+async def hf_models_search(
+    ctx: HelperRuntimeContext,
+    search: str | None = None,
+    filter: str | list[str] | None = None,
+    author: str | None = None,
+    apps: str | list[str] | None = None,
+    gated: bool | None = None,
+    inference: str | None = None,
+    inference_provider: str | list[str] | None = None,
+    model_name: str | None = None,
+    trained_dataset: str | list[str] | None = None,
+    pipeline_tag: str | None = None,
+    emissions_thresholds: tuple[float, float] | None = None,
+    sort: str | None = None,
+    limit: int = 20,
+    expand: list[str] | None = None,
+    full: bool | None = None,
+    card_data: bool = False,
+    fetch_config: bool = False,
+    fields: list[str] | None = None,
+    post_filter: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return await _run_repo_search(
+        ctx,
+        helper_name="hf_models_search",
+        requested_repo_types=["model"],
+        search=search,
+        filter=filter,
+        author=author,
+        sort=sort,
+        limit=limit,
+        fields=fields,
+        post_filter=post_filter,
+        extra_args_by_type={
+            "model": {
+                "apps": apps,
+                "gated": gated,
+                "inference": inference,
+                "inference_provider": inference_provider,
+                "model_name": model_name,
+                "trained_dataset": trained_dataset,
+                "pipeline_tag": pipeline_tag,
+                "emissions_thresholds": emissions_thresholds,
+                "expand": expand,
+                "full": full,
+                "card_data": card_data,
+                "fetch_config": fetch_config,
+            }
+        },
+    )
+
+
+async def hf_datasets_search(
+    ctx: HelperRuntimeContext,
+    search: str | None = None,
+    filter: str | list[str] | None = None,
+    author: str | None = None,
+    benchmark: str | bool | None = None,
+    dataset_name: str | None = None,
+    gated: bool | None = None,
+    language_creators: str | list[str] | None = None,
+    language: str | list[str] | None = None,
+    multilinguality: str | list[str] | None = None,
+    size_categories: str | list[str] | None = None,
+    task_categories: str | list[str] | None = None,
+    task_ids: str | list[str] | None = None,
+    sort: str | None = None,
+    limit: int = 20,
+    expand: list[str] | None = None,
+    full: bool | None = None,
+    fields: list[str] | None = None,
+    post_filter: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return await _run_repo_search(
+        ctx,
+        helper_name="hf_datasets_search",
+        requested_repo_types=["dataset"],
+        search=search,
+        filter=filter,
+        author=author,
+        sort=sort,
+        limit=limit,
+        fields=fields,
+        post_filter=post_filter,
+        extra_args_by_type={
+            "dataset": {
+                "benchmark": benchmark,
+                "dataset_name": dataset_name,
+                "gated": gated,
+                "language_creators": language_creators,
+                "language": language,
+                "multilinguality": multilinguality,
+                "size_categories": size_categories,
+                "task_categories": task_categories,
+                "task_ids": task_ids,
+                "expand": expand,
+                "full": full,
+            }
+        },
+    )
+
+
+async def hf_spaces_search(
+    ctx: HelperRuntimeContext,
+    search: str | None = None,
+    filter: str | list[str] | None = None,
+    author: str | None = None,
+    datasets: str | list[str] | None = None,
+    models: str | list[str] | None = None,
+    linked: bool = False,
+    sort: str | None = None,
+    limit: int = 20,
+    expand: list[str] | None = None,
+    full: bool | None = None,
+    fields: list[str] | None = None,
+    post_filter: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return await _run_repo_search(
+        ctx,
+        helper_name="hf_spaces_search",
+        requested_repo_types=["space"],
+        search=search,
+        filter=filter,
+        author=author,
+        sort=sort,
+        limit=limit,
+        fields=fields,
+        post_filter=post_filter,
+        extra_args_by_type={
+            "space": {
+                "datasets": datasets,
+                "models": models,
+                "linked": linked,
+                "expand": expand,
+                "full": full,
+            }
+        },
+    )
+
+
+async def hf_repo_search(
+    ctx: HelperRuntimeContext,
+    search: str | None = None,
+    repo_type: str | None = None,
+    repo_types: list[str] | None = None,
+    filter: str | list[str] | None = None,
+    author: str | None = None,
+    sort: str | None = None,
+    limit: int = 20,
+    fields: list[str] | None = None,
+    post_filter: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    start_calls = ctx.call_count["n"]
+    requested_repo_types, type_error = _resolve_repo_search_types(
+        ctx,
+        repo_type=repo_type,
+        repo_types=repo_types,
+    )
+    if type_error:
+        return ctx._helper_error(
+            start_calls=start_calls,
+            source="/api/repos",
+            error=type_error,
+        )
+    if not requested_repo_types:
+        return ctx._helper_error(
+            start_calls=start_calls,
+            source="/api/repos",
+            error="repo_type or repo_types is required",
+        )
+    return await _run_repo_search(
+        ctx,
+        helper_name="hf_repo_search",
+        requested_repo_types=requested_repo_types,
+        search=search,
+        filter=filter,
+        author=author,
+        sort=sort,
+        limit=limit,
+        fields=fields,
+        post_filter=post_filter,
     )
 
 
@@ -234,7 +508,7 @@ async def hf_user_likes(
     ctx: HelperRuntimeContext,
     username: str | None = None,
     repo_types: list[str] | None = None,
-    return_limit: int | None = None,
+    limit: int | None = None,
     scan_limit: int | None = None,
     count_only: bool = False,
     where: dict[str, Any] | None = None,
@@ -243,7 +517,7 @@ async def hf_user_likes(
     ranking_window: int | None = None,
 ) -> dict[str, Any]:
     start_calls = ctx.call_count["n"]
-    default_return = ctx._policy_int("hf_user_likes", "default_return", 100)
+    default_limit = ctx._policy_int("hf_user_likes", "default_limit", 100)
     scan_cap = ctx._policy_int("hf_user_likes", "scan_max", LIKES_SCAN_LIMIT_CAP)
     ranking_default = ctx._policy_int(
         "hf_user_likes", "ranking_default", LIKES_RANKING_WINDOW_DEFAULT
@@ -278,16 +552,25 @@ async def hf_user_likes(
             error="sort must be one of liked_at, repo_likes, repo_downloads",
         )
     limit_plan = ctx._resolve_exhaustive_limits(
-        return_limit=return_limit,
+        limit=limit,
         count_only=count_only,
-        default_return=default_return,
-        max_return=EXHAUSTIVE_HELPER_RETURN_HARD_CAP,
+        default_limit=default_limit,
+        max_limit=EXHAUSTIVE_HELPER_RETURN_HARD_CAP,
         scan_limit=scan_limit,
         scan_cap=scan_cap,
     )
-    ret_lim = int(limit_plan["applied_return_limit"])
+    applied_limit = int(limit_plan["applied_limit"])
     scan_lim = int(limit_plan["applied_scan_limit"])
-    normalized_where = ctx._normalize_where(where, aliases=USER_LIKES_FIELD_ALIASES)
+    try:
+        normalized_where = ctx._normalize_where(
+            where, allowed_fields=USER_LIKES_CANONICAL_FIELDS
+        )
+    except ValueError as exc:
+        return ctx._helper_error(
+            start_calls=start_calls,
+            source=f"/api/users/{resolved_username}/likes",
+            error=exc,
+        )
     allowed_repo_types: set[str] | None = None
     try:
         raw_repo_types: list[str] = (
@@ -364,7 +647,7 @@ async def hf_user_likes(
         selected_pairs = []
         ranking_complete = False if matched > 0 else exact_count
     elif sort_key == "liked_at":
-        selected_pairs = matched_rows[:ret_lim]
+        selected_pairs = matched_rows[:applied_limit]
     else:
         metric = str(sort_key)
         requested_window = (
@@ -412,19 +695,26 @@ async def hf_user_likes(
             return (0, -metric_value, idx)
 
         ranked_shortlist = sorted(shortlist, key=_ranking_key)
-        selected_pairs = ranked_shortlist[:ret_lim]
+        selected_pairs = ranked_shortlist[:applied_limit]
         ranking_complete = (
             exact_count
             and shortlist_size >= matched
             and (len(candidates) <= enrich_budget)
         )
-    items = ctx._project_user_like_items([row for _, row in selected_pairs], fields)
+    try:
+        items = ctx._project_user_like_items([row for _, row in selected_pairs], fields)
+    except ValueError as exc:
+        return ctx._helper_error(
+            start_calls=start_calls,
+            source=endpoint,
+            error=exc,
+        )
     popularity_present = sum(
         (1 for _, row in selected_pairs if row.get("repo_likes") is not None)
     )
     sample_complete = (
         exact_count
-        and ret_lim >= matched
+        and applied_limit >= matched
         and (sort_key == "liked_at" or ranking_complete)
         and (not count_only or matched == 0)
     )
@@ -471,7 +761,7 @@ async def hf_repo_likers(
     ctx: HelperRuntimeContext,
     repo_id: str,
     repo_type: str,
-    return_limit: int | None = None,
+    limit: int | None = None,
     count_only: bool = False,
     pro_only: bool | None = None,
     where: dict[str, Any] | None = None,
@@ -493,9 +783,9 @@ async def hf_repo_likers(
             error=f"Unsupported repo_type '{repo_type}'",
             repo_id=rid,
         )
-    default_return = ctx._policy_int("hf_repo_likers", "default_return", 1000)
-    requested_return_limit = return_limit
-    default_limit_used = requested_return_limit is None and (not count_only)
+    default_limit = ctx._policy_int("hf_repo_likers", "default_limit", 1000)
+    requested_limit = limit
+    default_limit_used = requested_limit is None and (not count_only)
     has_where = isinstance(where, dict) and bool(where)
     endpoint = f"/api/{rt}s/{rid}/likers"
     resp = ctx._host_raw_call(endpoint)
@@ -508,7 +798,18 @@ async def hf_repo_likers(
             repo_type=rt,
         )
     payload = resp.get("data") if isinstance(resp.get("data"), list) else []
-    normalized_where = ctx._normalize_where(where, aliases=ACTOR_FIELD_ALIASES)
+    try:
+        normalized_where = ctx._normalize_where(
+            where, allowed_fields=ACTOR_CANONICAL_FIELDS
+        )
+    except ValueError as exc:
+        return ctx._helper_error(
+            start_calls=start_calls,
+            source=endpoint,
+            error=exc,
+            repo_id=rid,
+            repo_type=rt,
+        )
     normalized: list[dict[str, Any]] = []
     for row in payload:
         if not isinstance(row, dict):
@@ -522,37 +823,37 @@ async def hf_repo_likers(
             "type": row.get("type")
             if isinstance(row.get("type"), str) and row.get("type")
             else "user",
-            "isPro": row.get("isPro"),
+            "is_pro": row.get("isPro"),
         }
-        if pro_only is True and item.get("isPro") is not True:
+        if pro_only is True and item.get("is_pro") is not True:
             continue
-        if pro_only is False and item.get("isPro") is True:
+        if pro_only is False and item.get("is_pro") is True:
             continue
         if not ctx._item_matches_where(item, normalized_where):
             continue
         normalized.append(item)
     if count_only:
-        ret_lim = 0
-    elif requested_return_limit is None:
-        ret_lim = default_return
+        applied_limit = 0
+    elif requested_limit is None:
+        applied_limit = default_limit
     else:
         try:
-            ret_lim = max(0, int(requested_return_limit))
+            applied_limit = max(0, int(requested_limit))
         except Exception:
-            ret_lim = default_return
+            applied_limit = default_limit
     limit_plan = {
-        "requested_return_limit": requested_return_limit,
-        "applied_return_limit": ret_lim,
+        "requested_limit": requested_limit,
+        "applied_limit": applied_limit,
         "default_limit_used": default_limit_used,
         "hard_cap_applied": False,
     }
     matched = len(normalized)
-    items = [] if count_only else normalized[:ret_lim]
-    return_limit_hit = ret_lim > 0 and matched > ret_lim
+    items = [] if count_only else normalized[:applied_limit]
+    limit_hit = applied_limit > 0 and matched > applied_limit
     truncated_by = ctx._derive_truncated_by(
-        hard_cap=False, return_limit_hit=return_limit_hit
+        hard_cap=False, limit_hit=limit_hit
     )
-    sample_complete = matched <= ret_lim and (not count_only or matched == 0)
+    sample_complete = matched <= applied_limit and (not count_only or matched == 0)
     truncated = truncated_by != "none"
     more_available = ctx._derive_more_available(
         sample_complete=sample_complete,
@@ -560,7 +861,16 @@ async def hf_repo_likers(
         returned=len(items),
         total=matched,
     )
-    items = ctx._project_actor_items(items, fields)
+    try:
+        items = ctx._project_actor_items(items, fields)
+    except ValueError as exc:
+        return ctx._helper_error(
+            start_calls=start_calls,
+            source=endpoint,
+            error=exc,
+            repo_id=rid,
+            repo_type=rt,
+        )
     meta = ctx._build_exhaustive_meta(
         base_meta={
             "scanned": len(payload),
@@ -591,7 +901,11 @@ async def hf_repo_likers(
 
 
 async def hf_repo_discussions(
-    ctx: HelperRuntimeContext, repo_type: str, repo_id: str, limit: int = 20
+    ctx: HelperRuntimeContext,
+    repo_type: str,
+    repo_id: str,
+    limit: int = 20,
+    fields: list[str] | None = None,
 ) -> dict[str, Any]:
     start_calls = ctx.call_count["n"]
     rt = ctx._canonical_repo_type(repo_type)
@@ -626,17 +940,21 @@ async def hf_repo_discussions(
         items.append(
             {
                 "num": num,
-                "number": num,
-                "discussionNum": num,
-                "id": num,
+                "repo_id": rid,
+                "repo_type": rt,
                 "title": getattr(d, "title", None),
                 "author": getattr(d, "author", None),
-                "createdAt": str(getattr(d, "created_at", None))
+                "created_at": str(getattr(d, "created_at", None))
                 if getattr(d, "created_at", None) is not None
                 else None,
                 "status": getattr(d, "status", None),
+                "url": getattr(d, "url", None),
             }
         )
+    try:
+        items = ctx._project_discussion_items(items, fields)
+    except ValueError as exc:
+        return ctx._helper_error(start_calls=start_calls, source=endpoint, error=exc)
     return ctx._helper_success(
         start_calls=start_calls,
         source=endpoint,
@@ -650,7 +968,11 @@ async def hf_repo_discussions(
 
 
 async def hf_repo_discussion_details(
-    ctx: HelperRuntimeContext, repo_type: str, repo_id: str, discussion_num: int
+    ctx: HelperRuntimeContext,
+    repo_type: str,
+    repo_id: str,
+    discussion_num: int,
+    fields: list[str] | None = None,
 ) -> dict[str, Any]:
     start_calls = ctx.call_count["n"]
     rt = ctx._canonical_repo_type(repo_type)
@@ -687,7 +1009,7 @@ async def hf_repo_discussion_details(
             comment_events.append(
                 {
                     "author": getattr(event, "author", None),
-                    "createdAt": ctx._dt_to_str(getattr(event, "created_at", None)),
+                    "created_at": ctx._dt_to_str(getattr(event, "created_at", None)),
                     "text": getattr(event, "content", None),
                     "rendered": getattr(event, "rendered", None),
                 }
@@ -695,31 +1017,22 @@ async def hf_repo_discussion_details(
     latest_comment: dict[str, Any] | None = None
     if comment_events:
         latest_comment = max(
-            comment_events, key=lambda row: str(row.get("createdAt") or "")
+            comment_events, key=lambda row: str(row.get("created_at") or "")
         )
     item: dict[str, Any] = {
         "num": num,
-        "number": num,
-        "discussionNum": num,
-        "id": num,
         "repo_id": rid,
         "repo_type": rt,
         "title": getattr(detail, "title", None),
         "author": getattr(detail, "author", None),
-        "createdAt": ctx._dt_to_str(getattr(detail, "created_at", None)),
+        "created_at": ctx._dt_to_str(getattr(detail, "created_at", None)),
         "status": getattr(detail, "status", None),
         "url": getattr(detail, "url", None),
-        "commentCount": len(comment_events),
-        "latestCommentAuthor": latest_comment.get("author") if latest_comment else None,
-        "latestCommentCreatedAt": latest_comment.get("createdAt")
-        if latest_comment
-        else None,
-        "latestCommentText": latest_comment.get("text") if latest_comment else None,
-        "latestCommentHtml": latest_comment.get("rendered") if latest_comment else None,
+        "comment_count": len(comment_events),
         "latest_comment_author": latest_comment.get("author")
         if latest_comment
         else None,
-        "latest_comment_created_at": latest_comment.get("createdAt")
+        "latest_comment_created_at": latest_comment.get("created_at")
         if latest_comment
         else None,
         "latest_comment_text": latest_comment.get("text") if latest_comment else None,
@@ -727,13 +1040,17 @@ async def hf_repo_discussion_details(
         if latest_comment
         else None,
     }
+    try:
+        items = ctx._project_discussion_detail_items([item], fields)
+    except ValueError as exc:
+        return ctx._helper_error(start_calls=start_calls, source=endpoint, error=exc)
     return ctx._helper_success(
         start_calls=start_calls,
         source=endpoint,
-        items=[item],
+        items=items,
         scanned=len(comment_events),
         matched=1,
-        returned=1,
+        returned=len(items),
         truncated=False,
         total_comments=len(comment_events),
     )
@@ -834,7 +1151,10 @@ async def hf_repo_details(
             failures=failures,
             repo_type=repo_type,
         )
-    items = ctx._project_repo_items(items, fields)
+    try:
+        items = ctx._project_repo_items(items, fields)
+    except ValueError as exc:
+        return ctx._helper_error(start_calls=start_calls, source="/api/repos", error=exc)
     return ctx._helper_success(
         start_calls=start_calls,
         source="/api/repos",
@@ -855,9 +1175,9 @@ async def hf_trending(
     fields: list[str] | None = None,
 ) -> dict[str, Any]:
     start_calls = ctx.call_count["n"]
-    default_return = ctx._policy_int("hf_trending", "default_return", 20)
-    max_return = ctx._policy_int(
-        "hf_trending", "max_return", TRENDING_ENDPOINT_MAX_LIMIT
+    default_limit = ctx._policy_int("hf_trending", "default_limit", 20)
+    max_limit = ctx._policy_int(
+        "hf_trending", "max_limit", TRENDING_ENDPOINT_MAX_LIMIT
     )
     raw_type = str(repo_type or "model").strip().lower()
     if raw_type == "all":
@@ -870,7 +1190,7 @@ async def hf_trending(
                 source="/api/trending",
                 error=f"Unsupported repo_type '{repo_type}'",
             )
-    lim = ctx._clamp_int(limit, default=default_return, minimum=1, maximum=max_return)
+    lim = ctx._clamp_int(limit, default=default_limit, minimum=1, maximum=max_limit)
     resp = ctx._host_raw_call(
         "/api/trending", params={"type": requested_type, "limit": lim}
     )
@@ -893,9 +1213,23 @@ async def hf_trending(
             continue
         repo = row.get("repoData") if isinstance(row.get("repoData"), dict) else {}
         items.append(ctx._normalize_trending_row(repo, default_row_type, rank=idx))
-    items = ctx._apply_where(items, where, aliases=REPO_FIELD_ALIASES)
+    try:
+        items = ctx._apply_where(items, where, allowed_fields=REPO_CANONICAL_FIELDS)
+    except ValueError as exc:
+        return ctx._helper_error(
+            start_calls=start_calls,
+            source="/api/trending",
+            error=exc,
+        )
     matched = len(items)
-    items = ctx._project_repo_items(items[:lim], fields)
+    try:
+        items = ctx._project_repo_items(items[:lim], fields)
+    except ValueError as exc:
+        return ctx._helper_error(
+            start_calls=start_calls,
+            source="/api/trending",
+            error=exc,
+        )
     return ctx._helper_success(
         start_calls=start_calls,
         source="/api/trending",
@@ -919,11 +1253,11 @@ async def hf_daily_papers(
     fields: list[str] | None = None,
 ) -> dict[str, Any]:
     start_calls = ctx.call_count["n"]
-    default_return = ctx._policy_int("hf_daily_papers", "default_return", 20)
-    max_return = ctx._policy_int(
-        "hf_daily_papers", "max_return", OUTPUT_ITEMS_TRUNCATION_LIMIT
+    default_limit = ctx._policy_int("hf_daily_papers", "default_limit", 20)
+    max_limit = ctx._policy_int(
+        "hf_daily_papers", "max_limit", OUTPUT_ITEMS_TRUNCATION_LIMIT
     )
-    lim = ctx._clamp_int(limit, default=default_return, minimum=1, maximum=max_return)
+    lim = ctx._clamp_int(limit, default=default_limit, minimum=1, maximum=max_limit)
     resp = ctx._host_raw_call("/api/daily_papers", params={"limit": lim})
     if not resp.get("ok"):
         return ctx._helper_error(
@@ -937,9 +1271,25 @@ async def hf_daily_papers(
         if not isinstance(row, dict):
             continue
         items.append(ctx._normalize_daily_paper_row(row, rank=idx))
-    items = ctx._apply_where(items, where, aliases=DAILY_PAPER_FIELD_ALIASES)
+    try:
+        items = ctx._apply_where(
+            items, where, allowed_fields=DAILY_PAPER_CANONICAL_FIELDS
+        )
+    except ValueError as exc:
+        return ctx._helper_error(
+            start_calls=start_calls,
+            source="/api/daily_papers",
+            error=exc,
+        )
     matched = len(items)
-    items = ctx._project_daily_paper_items(items[:lim], fields)
+    try:
+        items = ctx._project_daily_paper_items(items[:lim], fields)
+    except ValueError as exc:
+        return ctx._helper_error(
+            start_calls=start_calls,
+            source="/api/daily_papers",
+            error=exc,
+        )
     return ctx._helper_success(
         start_calls=start_calls,
         source="/api/daily_papers",
@@ -954,6 +1304,9 @@ async def hf_daily_papers(
 
 def register_repo_helpers(ctx: HelperRuntimeContext) -> dict[str, Callable[..., Any]]:
     return {
+        "hf_models_search": partial(hf_models_search, ctx),
+        "hf_datasets_search": partial(hf_datasets_search, ctx),
+        "hf_spaces_search": partial(hf_spaces_search, ctx),
         "hf_repo_search": partial(hf_repo_search, ctx),
         "hf_user_likes": partial(hf_user_likes, ctx),
         "hf_repo_likers": partial(hf_repo_likers, ctx),
