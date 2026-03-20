@@ -1,15 +1,20 @@
 # hf-dev
 
-Develop with Hugging Face Inference providers.
+Code with Hugging Face Inference providers.
 
-## Next Steps
+[Create](https://huggingface.co/settings/tokens) or set your `HF_TOKEN` for inference providers (or use `hf auth login`).
 
-- Set your `HF_TOKEN` for inference providers (or use `hf auth login`).
-- Update the System Prompt in `.fast-agent/agent-cards/dev.md`
+## CLI Commands 
+
 - Start with `fast-agent go` 
-- Use `/skills` to add skills. Use to configure hooks, compaction and automation - `/skills registry` to choose source.
-- **Recommended**: Use `/skills add lsp-setup` and ask your agent to configure LSP for this workspace.
-- Add new agents by asking the assistant, or adding markdown files to `.fast-agent/agent-cards/`. Switch with `@`. 
+- Update the System Prompt in `.fast-agent/agent-cards/dev.md`
 - Use `fast-agent model llamacpp` to configure and use models with [llamacpp](https://llama-cpp.com/)
-- Use `/connect` to connect to MCP Servers (Hugging Face preconfigured)
 
+## Next Steps 
+
+From the fast-agent prompt:
+
+- Use `/skills` to view and manage skills. Use to configure hooks, compaction and automation - `/skills registry` to choose source.
+- **Recommended**: Use `/skills add lsp-setup` and ask your agent to configure LSP for this workspace.
+- Create new agents in this environment  by asking the assistant, or add  markdown files to `.fast-agent/agent-cards/`. Switch agents with `@`. 
+- Use `/connect` to connect to MCP Servers (Hugging Face preconfigured)
