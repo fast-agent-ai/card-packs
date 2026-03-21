@@ -308,7 +308,7 @@ async def fix_ripgrep_tool_calls(ctx: "HookContext") -> None:
     for tool_id, tool_call in message.tool_calls.items():
         normalized_name, corrected = _normalize_tool_name(tool_call.params.name)
         if corrected:
-            logger.warning(
+            logger.info(
                 "Corrected hallucinated tool name",
                 data={"tool_id": tool_id, "original": tool_call.params.name, "corrected": normalized_name},
             )
@@ -337,12 +337,12 @@ async def fix_ripgrep_tool_calls(ctx: "HookContext") -> None:
         normalized = " ".join(cleaned.split())
 
         if changed_flags:
-            logger.warning(
+            logger.info(
                 "Removed invalid recursive flags from ripgrep command",
                 data={"tool_id": tool_id, "original": command, "modified": cleaned},
             )
         elif changed_globs:
-            logger.warning(
+            logger.info(
                 "Removed invalid absolute glob operand from ripgrep command",
                 data={"tool_id": tool_id, "original": command, "modified": cleaned},
             )
