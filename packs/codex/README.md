@@ -1,56 +1,19 @@
-# codex
+# codex - welcome to `fast-agent`
 
-Developer-focused Codex pack for `fast-agent`.
+With `codex`, `spark` and modern `gpt-5.4` models, WebSockets are enabled by default, and an `apply_patch` tool matching the Codex CLI tool signature is supplied. A filesystem search subagent is active by default `spark`. 
 
-This pack installs a `dev` smart card with LSP navigation helpers plus a
-Codex-optimized `ripgrep_spark` repository search subagent for multi-step
-rg-first search workflows.
+## CLI Commands 
 
-## Install from marketplace
+- Start with `fast-agent go` 
+- Update your System Prompt in `.fast-agent/agent-cards/dev.md`. `AGENTS.md` is included by default
 
-```bash
-fast-agent cards add codex
-```
+## Next Steps 
 
-## What gets installed
+From the fast-agent prompt:
 
-- `dev` smart card (`agent-cards/dev.md`)
-- LSP function tools helper (`agent-cards/multilspy_tools.py`)
-- `ripgrep_spark` tool card (`tool-cards/ripgrep_spark.md`)
-- Read-only search guard hook (`hooks/ripgrep_readonly_guard.py`)
-- Pack-local `fastagent.config.yaml`
+- Use `/skills` to view and manage skills. Use to configure hooks, compaction and automation - `/skills registry` to choose source.
+- Optional: use `/skills add lsp-setup` and ask your agent to configure LSP for this workspace.
+- Other skills available help you configure/design compaction if needed, set up agent hooks or automate `fast-agent`
+- Create new agents in this environment  by asking the assistant, or adding markdown files to `.fast-agent/agent-cards/`. Switch agents with `@`. 
+- Use `/connect` to connect to MCP Servers (Hugging Face and OpenAI preconfigured)
 
-## Model configuration
-
-The included `fastagent.config.yaml` configures:
-
-- `$system.default` → `codexplan`
-- `$system.fast` → `codexspark`
-- `$system.last_used` → `codexplan`
-
-`ripgrep_spark` uses `$system.fast`, so the search helper resolves to
-`codexspark` by default.
-
-## MCP targets
-
-The pack preconfigures default MCP targets for the `/connect` menu:
-
-- `openai`
-- `hf`
-- `hf_docs_only`
-
-These are connection targets, not expected startup connections. If
-authentication is required, `fast-agent` should prompt when you connect to a
-server rather than during normal startup.
-
-## Next steps
-
-- Start with `fast-agent go`
-- Use the `dev` card for normal coding tasks
-- Use `ripgrep_spark` for bounded multi-step repository search
-- Use `/connect` to connect to the preconfigured MCP servers
-
-If needed, authenticate with the relevant provider before connecting:
-
-- OpenAI via the local OAuth/browser flow used by `fast-agent`
-- Hugging Face via `HF_TOKEN` or `hf auth login`

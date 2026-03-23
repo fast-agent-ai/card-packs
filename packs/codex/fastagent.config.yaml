@@ -2,7 +2,8 @@ default_model: "$system.default"
 
 model_references:
   system:
-    default: codexplan
+# show the model picker not api key error if no token found
+#    default: codexplan
     fast: codexspark
     last_used: codexplan
 
