@@ -7,6 +7,5 @@ install:
   tool_cards:
     - tool-cards/ripgrep_spark.md
   files:
-    - agent-cards/multilspy_tools.py
     - fastagent.config.yaml
     - hooks/ripgrep_readonly_guard.py
