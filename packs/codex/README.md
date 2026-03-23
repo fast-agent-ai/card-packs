@@ -1,20 +1,56 @@
 # codex
 
-Developer-focused codex card pack paired with the `ripgrep_spark`
-codex search subagent.
+Developer-focused Codex pack for `fast-agent`.
 
-Includes:
+This pack installs a `dev` smart card with LSP navigation helpers plus a
+Codex-optimized `ripgrep_spark` repository search subagent for multi-step
+rg-first search workflows.
+
+## Install from marketplace
+
+```bash
+fast-agent cards add codex
+```
+
+## What gets installed
 
 - `dev` smart card (`agent-cards/dev.md`)
 - LSP function tools helper (`agent-cards/multilspy_tools.py`)
 - `ripgrep_spark` tool card (`tool-cards/ripgrep_spark.md`)
 - Read-only search guard hook (`hooks/ripgrep_readonly_guard.py`)
+- Pack-local `fastagent.config.yaml`
 
-Search model:
+## Model configuration
 
-- `ripgrep_spark` uses `codexspark`
+The included `fastagent.config.yaml` configures:
 
-## Publish target
+- `$system.default` → `codexplan`
+- `$system.fast` → `codexspark`
+- `$system.last_used` → `codexplan`
 
-Intended marketplace repo path: `packs/codex` in
-`https://github.com/fast-agent-ai/card-packs`.
+`ripgrep_spark` uses `$system.fast`, so the search helper resolves to
+`codexspark` by default.
+
+## MCP targets
+
+The pack preconfigures default MCP targets for the `/connect` menu:
+
+- `openai`
+- `hf`
+- `hf_docs_only`
+
+These are connection targets, not expected startup connections. If
+authentication is required, `fast-agent` should prompt when you connect to a
+server rather than during normal startup.
+
+## Next steps
+
+- Start with `fast-agent go`
+- Use the `dev` card for normal coding tasks
+- Use `ripgrep_spark` for bounded multi-step repository search
+- Use `/connect` to connect to the preconfigured MCP servers
+
+If needed, authenticate with the relevant provider before connecting:
+
+- OpenAI via the local OAuth/browser flow used by `fast-agent`
+- Hugging Face via `HF_TOKEN` or `hf auth login`

@@ -2,7 +2,7 @@
   "entries": [
     {
       "name": "codex",
-      "description": "Developer-focused codex card pack with codexspark-backed ripgrep search",
+      "description": "Developer-focused Codex card pack with codexplan default, codexspark-backed search, and preconfigured MCP targets",
       "kind": "card",
       "repo_url": "https://github.com/fast-agent-ai/card-packs",
       "repo_ref": "main",

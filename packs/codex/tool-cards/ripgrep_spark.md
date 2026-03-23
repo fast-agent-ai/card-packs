@@ -3,7 +3,7 @@ name: ripgrep_spark
 tool_only: true
 description: |
   Structured rg-first search helper with bounded commands and concise output.
-  Pinned to codexspark for provider-focused evaluation.
+  Defaults to codexspark via the $system.fast model alias.
   Use ONLY for complex multi-step searches likely requiring >1 command,
   narrowing, ranking, grouping, or cross-file synthesis.
   Do NOT use it for one-shot shell tasks such as a single file count, simple
@@ -13,7 +13,7 @@ description: |
   `cut`, `uniq`, `tr`, `grep`, `xargs`, `awk`, `sed`) when that is the
   shortest path to a verified answer.
 shell: true
-model: codexspark
+model: $system.fast
 use_history: false
 skills: []
 request_params:

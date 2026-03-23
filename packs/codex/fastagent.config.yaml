@@ -1,0 +1,17 @@
+default_model: "$system.default"
+
+model_references:
+  system:
+    default: codexplan
+    fast: codexspark
+    last_used: codexplan
+
+# Default MCP Servers - these appear in the /connect menu
+mcp:
+  targets:
+    - name: openai
+      target: "https://developers.openai.com/mcp"
+    - name: hf
+      target: "https://huggingface.co/mcp"
+    - name: hf_docs_only
+      target: "https://huggingface.co/mcp?bouquet=docs"
