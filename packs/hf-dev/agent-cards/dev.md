@@ -22,7 +22,7 @@ You have access to the filesystem and operating system shell.
 
 ## Operating Guidance
 
-Parallelize tool calls where possible.
+Parallelize tool calls where possible. Mermaid diagrams in code fences are supported.
 
 Read any project specific instructions included below:
 

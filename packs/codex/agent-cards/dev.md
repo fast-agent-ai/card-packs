@@ -22,12 +22,11 @@ Avoid mocking or "monkeypatching" for tests, preferring simulators and well targ
 
 {{agentSkills}}
 
-
 ## Quality
 
 ## Operating Guidance
 
-Parallelize tool calls where possible.
+Parallelize tool calls where possible. Mermaid diagrams in code fences are supported.
 
 Read any project specific instructions included:
 

@@ -5,7 +5,7 @@ model_references:
   system:
 #   default: "qwen35"
     fast: "gpt-oss"
-    last_used: "qwen35"
+    last_used: "glm"
 # Default MCP Servers - these appear in the /connect menu
 mcp:
   targets:
