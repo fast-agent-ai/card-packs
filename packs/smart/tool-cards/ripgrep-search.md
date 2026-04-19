@@ -43,9 +43,6 @@ tool_input_schema:
       minimum: 1
       maximum: 6
   required: [objective]
-  anyOf:
-    - required: [roots]
-    - required: [repo_root]
   additionalProperties: false
 tool_hooks:
   before_tool_call: ../hooks/fix_ripgrep_tool_calls.py:fix_ripgrep_tool_calls
@@ -94,6 +91,7 @@ Input object:
 ```
 
 Command contract:
+- Use the `execute` tool to run shell commands. Do not call a tool named `rg`, `grep`, `find`, or `sed` directly.
 - Prefer `rg`.
 - Simple read-only `find` / `fd` / `ls` / `wc` / `sort` / `head` / `tail` /
   `cut` / `uniq` / `tr` / `grep` / `sed` chains are allowed for inventories

@@ -52,9 +52,6 @@ tool_input_schema:
       minimum: 1
       maximum: 6
   required: [objective]
-  anyOf:
-    - required: [roots]
-    - required: [repo_root]
   additionalProperties: false
 tool_hooks:
   before_tool_call: ../hooks/ripgrep_readonly_guard.py:ripgrep_loop_guard
