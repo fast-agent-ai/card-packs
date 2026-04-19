@@ -226,19 +226,18 @@ def _extract_explicit_roots(ctx: "HookContext") -> list[Path]:
     roots: list[Path] = []
 
     for payload in _extract_structured_payloads(ctx):
-        for key in ("roots", "paths"):
-            value = payload.get(key)
-            if not isinstance(value, list):
-                continue
+        value = payload.get("roots")
+        if not isinstance(value, list):
+            continue
 
-            for item in value:
-                if not isinstance(item, str):
-                    continue
-                candidate = Path(item)
-                if candidate.is_absolute() and candidate.exists():
-                    roots.append(candidate.resolve())
-            if roots:
-                return _dedupe_paths(roots)
+        for item in value:
+            if not isinstance(item, str):
+                continue
+            candidate = Path(item)
+            if candidate.is_absolute() and candidate.exists():
+                roots.append(candidate.resolve())
+        if roots:
+            return _dedupe_paths(roots)
 
     return []
 

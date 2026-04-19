@@ -149,7 +149,7 @@ def _recent_messages(ctx: "HookContext", *, limit: int = 8) -> list[Any]:
 
     When cards run with ``use_history: false``, user turns are not persisted in
     ``ctx.message_history``. In that mode we still need access to the current user
-    payload (e.g., structured JSON containing ``roots`` / ``paths`` / ``repo_root`` /
+    payload (e.g., structured JSON containing ``roots`` / ``repo_root`` /
     ``max_commands``),
     so we also inspect ``runner.delta_messages``.
     """
@@ -218,18 +218,17 @@ def _extract_explicit_roots(ctx: "HookContext") -> list[Path]:
     payloads = _extract_structured_payloads(ctx)
 
     for payload in payloads:
-        for key in ("roots", "paths"):
-            value = payload.get(key)
-            if not isinstance(value, list):
+        value = payload.get("roots")
+        if not isinstance(value, list):
+            continue
+        for item in value:
+            if not isinstance(item, str):
                 continue
-            for item in value:
-                if not isinstance(item, str):
-                    continue
-                candidate = Path(item)
-                if candidate.is_absolute() and candidate.exists():
-                    paths.append(candidate.resolve())
-            if paths:
-                return _dedupe_paths(paths)
+            candidate = Path(item)
+            if candidate.is_absolute() and candidate.exists():
+                paths.append(candidate.resolve())
+        if paths:
+            return _dedupe_paths(paths)
 
     if payloads:
         return []
