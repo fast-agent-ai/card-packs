@@ -4,7 +4,7 @@ Minimal card pack with:
 
 - `smart` (default smart coordinator)
 - `ripgrep_search` (tool-only search subagent)
-- `before_tool_call` hook that strips invalid `-R` / `--recursive` flags from ripgrep commands
+- `before_tool_call` hook that normalizes ripgrep calls, applies simple broad-search excludes, and strips invalid `-R` / `--recursive` flags
 
 ## Install locally (example)
 

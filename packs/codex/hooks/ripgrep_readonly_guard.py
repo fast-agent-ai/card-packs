@@ -10,6 +10,7 @@ Goals:
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -24,6 +25,18 @@ _RIPGREP_BINARIES = {"rg", "ripgrep", "rg.exe", "ripgrep.exe"}
 _MAX_RIPGREP_COMMANDS = 6
 _DEFAULT_COMMAND_BUDGET = 5
 _MAX_REPEATED_COUNT_SIGNATURE = 2
+_DEFAULT_BROAD_SEARCH_EXCLUDES = (
+    "!.git/**",
+    "!node_modules/**",
+    "!__pycache__/**",
+    "!.venv/**",
+    "!venv/**",
+    "!.pytest_cache/**",
+    "!dist/**",
+    "!build/**",
+    "!coverage/**",
+)
+_ENVIRONMENT_DIR_PATTERN = re.compile(r"^\s*environment_dir\s*:\s*(.+?)\s*$")
 
 _ALLOWED_SHELL_BINARIES = {
     "rg",
@@ -136,7 +149,8 @@ def _recent_messages(ctx: "HookContext", *, limit: int = 8) -> list[Any]:
 
     When cards run with ``use_history: false``, user turns are not persisted in
     ``ctx.message_history``. In that mode we still need access to the current user
-    payload (e.g., structured JSON containing ``repo_root`` / ``max_commands``),
+    payload (e.g., structured JSON containing ``roots`` / ``paths`` / ``repo_root`` /
+    ``max_commands``),
     so we also inspect ``runner.delta_messages``.
     """
 
@@ -154,9 +168,72 @@ def _recent_messages(ctx: "HookContext", *, limit: int = 8) -> list[Any]:
     return recent[-limit:]
 
 
-def _extract_repo_roots(ctx: "HookContext") -> list[Path]:
-    """Extract explicit absolute repo paths from recent user messages."""
-    roots: list[Path] = []
+def _extract_structured_payloads(ctx: "HookContext") -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
+
+    for message in reversed(_recent_messages(ctx)):
+        if getattr(message, "role", None) != "user":
+            continue
+        for text in _extract_text_items(getattr(message, "content", None)):
+            candidate = text.strip()
+            if not (candidate.startswith("{") and candidate.endswith("}")):
+                continue
+            try:
+                payload = json.loads(candidate)
+            except Exception:
+                continue
+            if isinstance(payload, dict):
+                payloads.append(payload)
+
+    return payloads
+
+
+def _dedupe_paths(paths: list[Path]) -> list[Path]:
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for path in paths:
+        key = str(path.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(path.resolve())
+    return deduped
+
+
+def _extract_repo_root(ctx: "HookContext") -> Path | None:
+    for payload in _extract_structured_payloads(ctx):
+        value = payload.get("repo_root")
+        if not isinstance(value, str):
+            continue
+        path = Path(value)
+        if path.is_absolute() and path.exists() and path.is_dir():
+            return path.resolve()
+
+    return None
+
+
+def _extract_explicit_roots(ctx: "HookContext") -> list[Path]:
+    """Extract explicit absolute search roots from recent user messages."""
+    paths: list[Path] = []
+    payloads = _extract_structured_payloads(ctx)
+
+    for payload in payloads:
+        for key in ("roots", "paths"):
+            value = payload.get(key)
+            if not isinstance(value, list):
+                continue
+            for item in value:
+                if not isinstance(item, str):
+                    continue
+                candidate = Path(item)
+                if candidate.is_absolute() and candidate.exists():
+                    paths.append(candidate.resolve())
+            if paths:
+                return _dedupe_paths(paths)
+
+    if payloads:
+        return []
+
     path_pattern = re.compile(r"(/[^\s'\"]+)")
 
     for message in reversed(_recent_messages(ctx)):
@@ -165,20 +242,126 @@ def _extract_repo_roots(ctx: "HookContext") -> list[Path]:
         for text in _extract_text_items(getattr(message, "content", None)):
             for match in path_pattern.findall(text):
                 candidate = Path(match.rstrip(".,:;)"))
-                if candidate.exists() and candidate.is_dir():
-                    roots.append(candidate)
-        if roots:
+                if candidate.exists():
+                    paths.append(candidate.resolve())
+        if paths:
             break
 
-    deduped: list[Path] = []
-    seen: set[str] = set()
-    for root in roots:
-        key = str(root.resolve())
-        if key in seen:
+    return _dedupe_paths(paths)
+
+
+def _extract_excludes(ctx: "HookContext") -> list[str]:
+    for payload in _extract_structured_payloads(ctx):
+        value = payload.get("exclude")
+        if not isinstance(value, list):
             continue
-        seen.add(key)
-        deduped.append(root)
-    return deduped
+
+        excludes: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                continue
+            candidate = item.strip()
+            if not candidate or Path(candidate).is_absolute():
+                continue
+            if not candidate.startswith("!"):
+                candidate = f"!{candidate}"
+            excludes.append(candidate)
+        return excludes
+
+    return []
+
+
+def _parse_yaml_scalar(raw: str) -> str | None:
+    try:
+        lexer = shlex.shlex(raw, posix=True)
+        lexer.whitespace_split = True
+        lexer.commenters = "#"
+        tokens = list(lexer)
+    except ValueError:
+        return None
+    return tokens[0] if tokens else None
+
+
+def _resolve_environment_dir_value(value: str, repo_root: Path) -> Path:
+    candidate = Path(value).expanduser()
+    if not candidate.is_absolute():
+        candidate = repo_root / candidate
+    return candidate.resolve()
+
+
+def _read_environment_dir_from_config(repo_root: Path) -> Path | None:
+    config_path = repo_root / "fastagent.config.yaml"
+    if not config_path.is_file():
+        return None
+
+    try:
+        lines = config_path.read_text().splitlines()
+    except OSError:
+        return None
+
+    for line in lines:
+        match = _ENVIRONMENT_DIR_PATTERN.match(line)
+        if match is None:
+            continue
+        value = _parse_yaml_scalar(match.group(1))
+        if not value:
+            return None
+        return _resolve_environment_dir_value(value, repo_root)
+
+    return None
+
+
+def _resolve_environment_dir(repo_root: Path | None) -> Path | None:
+    if repo_root is None:
+        return None
+
+    override = os.getenv("ENVIRONMENT_DIR")
+    if isinstance(override, str) and override.strip():
+        return _resolve_environment_dir_value(override.strip(), repo_root)
+
+    configured = _read_environment_dir_from_config(repo_root)
+    if configured is not None:
+        return configured
+
+    return (repo_root / ".fast-agent").resolve()
+
+
+def _default_broad_search_excludes(repo_root: Path | None) -> list[str]:
+    excludes = list(_DEFAULT_BROAD_SEARCH_EXCLUDES)
+    environment_dir = _resolve_environment_dir(repo_root)
+    if environment_dir is None:
+        return excludes
+
+    sessions_dir = environment_dir / "sessions"
+    try:
+        relative_sessions = sessions_dir.relative_to(repo_root.resolve())
+    except ValueError:
+        return excludes
+
+    excludes.append(f"!{relative_sessions.as_posix()}/**")
+    return excludes
+
+
+def _search_base_roots(explicit_roots: list[Path], repo_root: Path | None) -> list[Path]:
+    if explicit_roots:
+        return _dedupe_paths(explicit_roots)
+    if repo_root is not None:
+        return [repo_root.resolve()]
+    return []
+
+
+def _is_within_root(candidate: Path, root: Path) -> bool:
+    try:
+        candidate.relative_to(root.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def _fallback_root_operand(base_roots: list[Path]) -> str | None:
+    if not base_roots:
+        return None
+    return str(base_roots[0])
 
 
 def _supports_pcre2(ctx: "HookContext") -> bool:
@@ -229,49 +412,61 @@ def _strip_invalid_ripgrep_flags(command: str, *, supports_pcre2: bool) -> str:
     return shlex.join(rewritten)
 
 
-def _normalize_relative_path_tokens(command: str, repo_roots: list[Path]) -> str:
-    """Normalize likely path operands against repo root when they are invalid.
+def _normalize_relative_path_tokens(command: str, base_roots: list[Path]) -> str:
+    """Normalize likely path operands against the inferred search base.
 
     Only adjusts rg command tokens that look like path operands (contain '/').
     """
-    if not repo_roots or not _is_ripgrep_command(command):
+    if not base_roots or not _is_ripgrep_command(command):
         return command
     if _contains_shell_delimiters(command):
         return command
 
-    root = repo_roots[0]
     try:
         tokens = shlex.split(command)
     except ValueError:
         return command
 
     rewritten: list[str] = []
+    skip_next = False
     for idx, token in enumerate(tokens):
+        if skip_next:
+            rewritten.append(token)
+            skip_next = False
+            continue
         if idx == 0 or token.startswith("-") or "/" not in token:
+            if token in {"-g", "--glob"}:
+                skip_next = True
             rewritten.append(token)
             continue
 
         token_path = Path(token)
-        if token_path.is_absolute() and token_path.exists():
-            rewritten.append(token)
-            continue
-        if token_path.exists():
-            rewritten.append(token)
-            continue
-
-        candidate = (root / token).resolve()
-        if candidate.exists():
-            rewritten.append(str(candidate))
+        existing_candidate = token_path.resolve() if token_path.is_absolute() or token_path.exists() else None
+        if existing_candidate is not None:
+            if any(_is_within_root(existing_candidate, root) for root in base_roots):
+                rewritten.append(str(existing_candidate) if token_path.is_absolute() else token)
+            else:
+                fallback = _fallback_root_operand(base_roots)
+                rewritten.append(fallback if fallback is not None else token)
             continue
 
-        trimmed = candidate
-        while trimmed != root and not trimmed.exists():
-            trimmed = trimmed.parent
-        if trimmed.exists() and (trimmed == root or root in trimmed.parents):
-            rewritten.append(str(trimmed))
-            continue
+        for root in base_roots:
+            candidate = (root / token).resolve()
+            if not _is_within_root(candidate, root):
+                continue
+            if candidate.exists():
+                rewritten.append(str(candidate))
+                break
 
-        rewritten.append(token)
+            trimmed = candidate
+            while trimmed != root and not trimmed.exists():
+                trimmed = trimmed.parent
+            if trimmed.exists() and _is_within_root(trimmed, root):
+                rewritten.append(str(trimmed))
+                break
+        else:
+            fallback = _fallback_root_operand(base_roots)
+            rewritten.append(fallback if fallback is not None else token)
 
     return shlex.join(rewritten)
 
@@ -320,6 +515,45 @@ def _strip_absolute_glob_operands(command: str) -> str:
         rewritten.append(token)
         i += 1
 
+    return shlex.join(rewritten)
+
+
+def _add_ripgrep_globs(command: str, globs: list[str]) -> str:
+    if not globs or _contains_shell_delimiters(command):
+        return command
+
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return command
+
+    if not tokens or Path(tokens[0]).name.lower() not in _RIPGREP_BINARIES:
+        return command
+
+    existing: set[str] = set()
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if token in {"--glob", "-g"}:
+            if i + 1 < len(tokens):
+                existing.add(tokens[i + 1])
+                i += 2
+                continue
+            i += 1
+            continue
+        if token.startswith("--glob="):
+            existing.add(token.split("=", 1)[1])
+        i += 1
+
+    pending = [glob for glob in globs if glob not in existing]
+    if not pending:
+        return command
+
+    insert_at = tokens.index("--") if "--" in tokens else len(tokens)
+    rewritten = list(tokens[:insert_at])
+    for glob in pending:
+        rewritten.extend(["-g", glob])
+    rewritten.extend(tokens[insert_at:])
     return shlex.join(rewritten)
 
 
@@ -385,7 +619,11 @@ async def ripgrep_loop_guard(ctx: "HookContext") -> None:
     if not message.tool_calls:
         return
 
-    repo_roots = _extract_repo_roots(ctx)
+    repo_root = _extract_repo_root(ctx)
+    explicit_roots = _extract_explicit_roots(ctx)
+    excludes = _extract_excludes(ctx)
+    base_roots = _search_base_roots(explicit_roots, repo_root)
+    default_excludes = [] if explicit_roots else _default_broad_search_excludes(repo_root)
     supports_pcre2 = _supports_pcre2(ctx)
     seen_commands: set[str] = getattr(ctx.runner, "_ripgrep_seen_commands", set())
     command_count: int = getattr(ctx.runner, "_ripgrep_command_count", 0)
@@ -415,7 +653,8 @@ async def ripgrep_loop_guard(ctx: "HookContext") -> None:
 
         cleaned = _strip_invalid_ripgrep_flags(command, supports_pcre2=supports_pcre2)
         cleaned = _strip_absolute_glob_operands(cleaned)
-        cleaned = _normalize_relative_path_tokens(cleaned, repo_roots)
+        cleaned = _add_ripgrep_globs(cleaned, default_excludes + excludes)
+        cleaned = _normalize_relative_path_tokens(cleaned, base_roots)
         normalized = " ".join(cleaned.split())
 
         # Restrict shell usage.
