@@ -30,7 +30,8 @@ tool_input_schema:
         type: string
     repo_root:
       type: string
-      description: "Broad fallback root. Use only when you truly want a repo-wide scan."
+      description: "Broad fallback root. Use only when you truly want a repo-wide scan. Omit this when explicit `roots` are supplied."
+      minLength: 1
     objective:
       type: string
       description: What to find.
@@ -67,7 +68,7 @@ Parse JSON in-model (no python/jq/sed parsing commands).
 ## Rules
 1. Prefer `rg` for content search. Simple read-only `find`/`fd`/`ls`/`wc`/`sort`/`head`/`tail`/`cut`/`uniq`/`tr`/`grep`/`xargs`/`awk`/`sed` chains are allowed when clearly shortest. Do not invent unsupported shell pipelines.
 2. Never use `-R/--recursive`.
-3. Respect `roots` as the hard boundary when provided. Treat `repo_root` as a broad fallback only when explicit `roots` were not supplied. Treat `scope` as a planning hint, not an execution boundary.
+3. Respect `roots` as the hard boundary when provided. Treat `repo_root` as a broad fallback only when explicit `roots` were not supplied, and omit `repo_root` entirely when `roots` are present. Treat `scope` as a planning hint, not an execution boundary.
 4. If `max_commands` is omitted, default to `5`. Clamp provided values to `1..6` and honor the resulting budget strictly.
 5. If you receive guardrail output (`Search command budget reached`, `Only ... allowed`, `Skipped duplicate ...`), stop tool-calling and return best-effort final results immediately.
 6. Avoid duplicate/near-duplicate commands.

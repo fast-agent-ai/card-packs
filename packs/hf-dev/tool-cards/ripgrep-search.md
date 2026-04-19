@@ -21,7 +21,8 @@ tool_input_schema:
         type: string
     repo_root:
       type: string
-      description: "Broad fallback root. Use only when you truly want a repo-wide scan."
+      description: "Broad fallback root. Use only when you truly want a repo-wide scan. Omit this when explicit `roots` are supplied."
+      minLength: 1
     objective:
       type: string
       description: What to find.
@@ -60,7 +61,8 @@ Parse JSON in-model (no python/jq/sed parsing commands).
 ## Core approach
 - Respect `roots` as the hard boundary when provided.
 - Treat `repo_root` as a broad fallback only when explicit `roots`
-  were not supplied.
+  were not supplied, and omit `repo_root` entirely when `roots`
+  are present.
 - Treat `scope` as a planning hint, not an execution boundary. Convert it
   into concrete absolute `roots` before running commands.
 - Prefer `rg` for content search and `rg --files` for filename discovery.
