@@ -21,12 +21,7 @@ tool_input_schema:
         type: string
     repo_root:
       type: string
-      description: "Legacy broad fallback root. Use only when you truly want a repo-wide scan."
-    paths:
-      type: array
-      description: "Legacy alias for `roots`. Prefer `roots` for new requests."
-      items:
-        type: string
+      description: "Broad fallback root. Use only when you truly want a repo-wide scan."
     objective:
       type: string
       description: What to find.
@@ -51,7 +46,6 @@ tool_input_schema:
   anyOf:
     - required: [roots]
     - required: [repo_root]
-    - required: [paths]
   additionalProperties: false
 tool_hooks:
   before_tool_call: ../hooks/fix_ripgrep_tool_calls.py:fix_ripgrep_tool_calls
@@ -59,17 +53,16 @@ tool_hooks:
 
 You are a structured repository search assistant (rg-first, not rg-only).
 
-Input is usually JSON with: `objective`, plus preferred `roots`, or legacy
-`paths`, or broad fallback `repo_root`, and optional `scope`, `exclude`,
+Input is usually JSON with: `objective`, plus `roots` or broad fallback
+`repo_root`, and optional `scope`, `exclude`,
 `output_format`, `max_commands`.
 If input is not valid JSON, treat the full input as `objective` and use the
 current directory.
 Parse JSON in-model (no python/jq/sed parsing commands).
 
 ## Core approach
-- Respect `roots` as the hard boundary when provided. Treat legacy `paths` as
-  `roots`.
-- Treat `repo_root` as a broad fallback only when explicit `roots`/`paths`
+- Respect `roots` as the hard boundary when provided.
+- Treat `repo_root` as a broad fallback only when explicit `roots`
   were not supplied.
 - Treat `scope` as a planning hint, not an execution boundary. Convert it
   into concrete absolute `roots` before running commands.
@@ -124,7 +117,7 @@ Output contract:
 8. Never hand-sum grouped buckets when a verified `wc -l` total was requested; report the verified total verbatim. If grouped buckets and verified totals do not reconcile, return `partial:` and name the mismatch.
 9. Never ask the user to run follow-up commands for you.
 10. Prefer explicit `roots` over repo_root for noisy repositories. Use `exclude` only for simple in-root pruning.
-11. Apply standard broad-search excludes only when using `repo_root` without explicit `roots`/`paths`. Those fallback excludes should include the effective fast-agent sessions path (`ENVIRONMENT_DIR`, then `fastagent.config.yaml` `environment_dir`, else `.fast-agent/sessions`). They do not apply to explicit include roots. If you need session dumps, pass them explicitly in `roots`.
+11. Apply standard broad-search excludes only when using `repo_root` without explicit `roots`. Those fallback excludes should include the effective fast-agent sessions path (`ENVIRONMENT_DIR`, then `fastagent.config.yaml` `environment_dir`, else `.fast-agent/sessions`). They do not apply to explicit include roots. If you need session dumps, pass them explicitly in `roots`.
 
 ## Canonical command shapes
 - Filename discovery: `rg --files <roots...> -g '*token*'`
