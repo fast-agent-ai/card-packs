@@ -1,6 +1,6 @@
 # codex - welcome to `fast-agent`
 
-With `codex`, `spark` and modern `gpt-5.4` models, WebSockets are enabled by default, and an `apply_patch` tool matching the Codex CLI tool signature is supplied. A filesystem search subagent is active by default `spark`. 
+With `gpt-5.5`, `gpt-5.4-codex`, `spark` and other models. WebSockets are enabled by default, and an `apply_patch` tool matching the Codex CLI tool signature is supplied. A filesystem search subagent is active by default (powered by `spark`). 
 
 ## CLI Commands 
 
