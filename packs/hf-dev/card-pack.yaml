@@ -8,4 +8,4 @@ install:
     - tool-cards/ripgrep-search.md
   files:
     - hooks/fix_ripgrep_tool_calls.py
-    - fastagent.config.yaml
+    - fast-agent.yaml

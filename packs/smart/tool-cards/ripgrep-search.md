@@ -117,7 +117,7 @@ Output contract:
 8. Never hand-sum grouped buckets when a verified `wc -l` total was requested; report the verified total verbatim. If grouped buckets and verified totals do not reconcile, return `partial:` and name the mismatch.
 9. Never ask the user to run follow-up commands for you.
 10. Prefer explicit `roots` over repo_root for noisy repositories. Use `exclude` only for simple in-root pruning.
-11. Apply standard broad-search excludes only when using `repo_root` without explicit `roots`. Those fallback excludes should include the effective fast-agent sessions path (`ENVIRONMENT_DIR`, then `fastagent.config.yaml` `environment_dir`, else `.fast-agent/sessions`). They do not apply to explicit include roots. If you need session dumps, pass them explicitly in `roots`.
+11. Apply standard broad-search excludes only when using `repo_root` without explicit `roots`. Those fallback excludes should include the effective fast-agent sessions path (`FAST_AGENT_HOME`, then legacy `ENVIRONMENT_DIR`, then `fast-agent.yaml` `environment_dir`, else `.fast-agent/sessions`). They do not apply to explicit include roots. If you need session dumps, pass them explicitly in `roots`.
 
 ## Canonical command shapes
 - Filename discovery: `rg --files <roots...> -g '*token*'`
