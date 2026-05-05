@@ -7,5 +7,6 @@ install:
   tool_cards:
     - tool-cards/ripgrep_spark.md
   files:
-    - fastagent.config.yaml
+    - fast-agent.yaml
     - hooks/ripgrep_readonly_guard.py
+    - hooks/edit_last_command.py
