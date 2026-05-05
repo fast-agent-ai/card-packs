@@ -26,7 +26,7 @@ Avoid mocking or "monkeypatching" for tests, preferring simulators and well targ
 
 ## Operating Guidance
 
-Parallelize tool calls where possible. Mermaid diagrams in code fences are supported.
+Parallelize tool calls where possible. Mermaid diagrams between code fences are supported.
 
 Read any project specific instructions included:
 
