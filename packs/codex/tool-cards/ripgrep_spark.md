@@ -91,7 +91,7 @@ Parse JSON in-model (no python/jq/sed parsing commands).
 23. After any STOP, budget, duplicate-skip, or guardrail message from a tool, do not call more tools. Immediately return a non-empty final answer using the best verified findings you already have.
 24. Prefer explicit `roots` over repo-wide scans. Use `exclude` only for small, simple noise patterns inside an included root.
 25. Broad repo-root searches skip obvious noise roots such as `.git`, `node_modules`, build outputs, coverage artefacts, and fast-agent session dumps under `<environment_dir>/sessions`.
-26. Apply standard broad-search excludes only when using `repo_root` without explicit `roots`. Those fallback excludes should include the effective fast-agent sessions path (`ENVIRONMENT_DIR`, then `fastagent.config.yaml` `environment_dir`, else `.fast-agent/sessions`). They do not apply to explicit include roots. If you need session dumps, pass them explicitly in `roots`.
+26. Apply standard broad-search excludes only when using `repo_root` without explicit `roots`. Those fallback excludes should include the effective fast-agent sessions path (`FAST_AGENT_HOME`, then legacy `ENVIRONMENT_DIR`, then `fast-agent.yaml` `environment_dir`, else `.fast-agent/sessions`). They do not apply to explicit include roots. If you need session dumps, pass them explicitly in `roots`.
 
 ## Canonical command shapes
 - Filename discovery: `rg --files <roots...> -g '*token*'`

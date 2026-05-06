@@ -86,7 +86,7 @@ class RipgrepHookTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         _install_fast_agent_logger_stub()
-        repo_root = Path("/home/shaun/source/card-packs")
+        repo_root = Path(__file__).resolve().parents[1]
         cls.smart = _load_module(
             "test_smart_ripgrep_hook",
             repo_root / "packs/smart/hooks/fix_ripgrep_tool_calls.py",

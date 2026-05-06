@@ -282,8 +282,19 @@ def _resolve_environment_dir_value(value: str, repo_root: Path) -> Path:
 
 
 def _read_environment_dir_from_config(repo_root: Path) -> Path | None:
-    config_path = repo_root / "fastagent.config.yaml"
-    if not config_path.is_file():
+    config_path = next(
+        (
+            repo_root / filename
+            for filename in (
+                "fast-agent.yaml",
+                "fast-agent.config.yaml",
+                "fastagent.config.yaml",
+            )
+            if (repo_root / filename).is_file()
+        ),
+        None,
+    )
+    if config_path is None:
         return None
 
     try:
@@ -307,9 +318,13 @@ def _resolve_environment_dir(repo_root: Path | None) -> Path | None:
     if repo_root is None:
         return None
 
-    override = os.getenv("ENVIRONMENT_DIR")
-    if isinstance(override, str) and override.strip():
-        return _resolve_environment_dir_value(override.strip(), repo_root)
+    fast_agent_home = os.getenv("FAST_AGENT_HOME")
+    if isinstance(fast_agent_home, str) and fast_agent_home.strip():
+        return _resolve_environment_dir_value(fast_agent_home.strip(), repo_root)
+
+    legacy_environment_dir = os.getenv("ENVIRONMENT_DIR")
+    if isinstance(legacy_environment_dir, str) and legacy_environment_dir.strip():
+        return _resolve_environment_dir_value(legacy_environment_dir.strip(), repo_root)
 
     configured = _read_environment_dir_from_config(repo_root)
     if configured is not None:

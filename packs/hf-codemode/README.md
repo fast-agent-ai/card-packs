@@ -8,7 +8,7 @@ Includes:
 - `hub_search_normal` — normal final-answer variant with selectable response mode
 - `hub_search_selectable` — raw-runtime variant with selectable response mode, so callers can choose postprocessed output or passthrough per invocation
 - `monty_api/` runtime package
-- `fastagent.config.yaml` model reference defaults
+- `fast-agent.yaml` model reference defaults
 
 ## Required Python packages
 
@@ -44,4 +44,4 @@ fast-agent cards add hf-codemode
 - The cards are read-only and intended for Hugging Face Hub discovery / lookup workflows.
 - `hub_search` returns the raw runtime envelope directly.
 - `hub_search_selectable` is the variant to use when a parent caller should be able to choose `response_mode: postprocess` or `response_mode: passthrough`.
-- The included `fastagent.config.yaml` uses the same `$system.default` / `$system.raw` references as the source `.prod` setup.
+- The included `fast-agent.yaml` uses the same `$system.default` / `$system.raw` references as the source `.prod` setup.
