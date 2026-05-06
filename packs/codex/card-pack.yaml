@@ -9,3 +9,4 @@ install:
   files:
     - fast-agent.yaml
     - hooks/ripgrep_readonly_guard.py
+    - hooks/edit_last_command.py
