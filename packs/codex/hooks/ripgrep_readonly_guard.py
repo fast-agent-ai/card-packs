@@ -15,7 +15,13 @@ import re
 import shlex
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
+
+try:
+    from mcp.types import TextContent
+except ImportError:  # pragma: no cover - standalone card-pack tests
+    TextContent = SimpleNamespace
 
 if TYPE_CHECKING:
     from fast_agent.hooks.hook_context import HookContext
@@ -25,6 +31,19 @@ _RIPGREP_BINARIES = {"rg", "ripgrep", "rg.exe", "ripgrep.exe"}
 _MAX_RIPGREP_COMMANDS = 6
 _DEFAULT_COMMAND_BUDGET = 5
 _MAX_REPEATED_COUNT_SIGNATURE = 2
+_HIGH_VOLUME_OUTPUT_BYTES = 60_000
+_SEARCH_GUARD_WARNING = (
+    "Search guard: the previous command produced truncated/high-volume output and likely exhausted context.\n"
+    "Treat this search as failed due to overly broad scope, not as successful evidence.\n"
+    "Do not continue scanning broadly. Use only narrowed roots, counts, file lists, or small samples\n"
+    "(e.g. rg -l/-c/-m, find ... | sort | head), or return a best-effort answer explaining the limitation.\n"
+)
+_TRUNCATED_OUTPUT_MARKERS = (
+    "Shell to agent output reached",
+    "additional output omitted from tool result",
+    "output omitted from tool result",
+    "additional output omitted",
+)
 _DEFAULT_BROAD_SEARCH_EXCLUDES = (
     "!.git/**",
     "!node_modules/**",
@@ -105,6 +124,18 @@ def _contains_shell_delimiters(command: str) -> bool:
     return bool(segments and len(segments) > 1)
 
 
+def _pipeline_has_output_limiter(command: str) -> bool:
+    segments = _shell_segments(command)
+    if not segments or len(segments) == 1:
+        return False
+
+    for segment in segments[1:]:
+        first = _first_token(segment)
+        if first and Path(first).name.lower() in {"head", "tail", "wc"}:
+            return True
+    return False
+
+
 def _is_allowed_shell_command(command: str) -> bool:
     """Allow simple rg/find/fd/ls/wc command chains for the ripgrep helper."""
     if not command.strip():
@@ -142,6 +173,43 @@ def _extract_text_items(content: Any) -> list[str]:
         if item_type == "text" and isinstance(item_text, str):
             texts.append(item_text)
     return texts
+
+
+def _message_text_items(message: Any) -> list[str]:
+    texts = _extract_text_items(getattr(message, "content", None))
+    tool_results = getattr(message, "tool_results", None)
+    if isinstance(tool_results, dict):
+        for result in tool_results.values():
+            texts.extend(_extract_text_items(getattr(result, "content", None)))
+    return texts
+
+
+def _tool_result_output_is_high_volume(message: Any) -> bool:
+    text = "\n".join(_message_text_items(message))
+    if not text:
+        return False
+    if any(marker in text for marker in _TRUNCATED_OUTPUT_MARKERS):
+        return True
+    return len(text.encode("utf-8", errors="ignore")) >= _HIGH_VOLUME_OUTPUT_BYTES
+
+
+def _append_search_guard_warning(message: Any) -> None:
+    existing = "\n".join(_message_text_items(message))
+    if _SEARCH_GUARD_WARNING in existing:
+        return
+
+    warning = TextContent(type="text", text=_SEARCH_GUARD_WARNING)
+    tool_results = getattr(message, "tool_results", None)
+    if isinstance(tool_results, dict) and tool_results:
+        for result in tool_results.values():
+            content = getattr(result, "content", None)
+            if isinstance(content, list):
+                content.append(warning)
+        return
+
+    add_text = getattr(message, "add_text", None)
+    if callable(add_text):
+        add_text(_SEARCH_GUARD_WARNING)
 
 
 def _recent_messages(ctx: "HookContext", *, limit: int = 8) -> list[Any]:
@@ -376,6 +444,119 @@ def _fallback_root_operand(base_roots: list[Path]) -> str | None:
     if not base_roots:
         return None
     return str(base_roots[0])
+
+
+def _is_obviously_broad_root(path: Path) -> bool:
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return False
+
+    broad_roots = {Path("/"), Path("/home"), Path.home().resolve()}
+    if resolved in broad_roots:
+        return True
+
+    home = Path.home().resolve()
+    broad_home_children = {"source", "src", "code", "projects", "workspace", "workspaces"}
+    return resolved.parent == home and resolved.name in broad_home_children
+
+
+def _command_uses_obviously_broad_root(command: str, base_roots: list[Path]) -> bool:
+    if any(_is_obviously_broad_root(root) for root in base_roots):
+        return True
+
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
+
+    for token in tokens:
+        path = Path(token)
+        if not path.is_absolute():
+            continue
+        if path.exists() and path.is_dir() and _is_obviously_broad_root(path):
+            return True
+    return False
+
+
+def _ripgrep_tokens_have_output_limiter(tokens: list[str]) -> bool:
+    limiter_flags = {
+        "-l",
+        "--files-with-matches",
+        "-c",
+        "--count",
+        "--count-matches",
+        "--files-without-match",
+    }
+    for token in tokens:
+        if token in limiter_flags:
+            return True
+        if token in {"-m", "--max-count"}:
+            return True
+        if re.fullmatch(r"-m\d+", token):
+            return True
+        if token.startswith("--max-count="):
+            return True
+    return False
+
+
+def _first_segment_tokens(command: str) -> list[str] | None:
+    segments = _shell_segments(command)
+    if not segments:
+        return None
+    try:
+        return shlex.split(segments[0])
+    except ValueError:
+        return None
+
+
+def _broad_search_block_reason(command: str, base_roots: list[Path]) -> str | None:
+    if not _command_uses_obviously_broad_root(command, base_roots):
+        return None
+
+    tokens = _first_segment_tokens(command)
+    if not tokens:
+        return None
+
+    first = Path(tokens[0]).name.lower()
+    pipeline_limited = _pipeline_has_output_limiter(command)
+    if first in _RIPGREP_BINARIES:
+        if "--files" in tokens and not pipeline_limited:
+            return (
+                "rg --files over a broad root must be piped to head/tail/wc or "
+                "narrowed to explicit roots"
+            )
+        if not _ripgrep_tokens_have_output_limiter(tokens) and not pipeline_limited:
+            return (
+                "rg content search over a broad root must use -l, -c, "
+                "-m/--max-count, or a head/tail/wc limiter"
+            )
+        return None
+
+    if first in {"find", "fd", "fdfind"}:
+        has_maxdepth = "-maxdepth" in tokens
+        if not has_maxdepth and not pipeline_limited:
+            return "find/fd over a broad root must use -maxdepth or pipe to head/tail/wc"
+
+    return None
+
+
+def _is_low_volume_search_command(command: str, base_roots: list[Path]) -> bool:
+    if _broad_search_block_reason(command, base_roots) is not None:
+        return False
+
+    tokens = _first_segment_tokens(command)
+    if not tokens:
+        return False
+
+    first = Path(tokens[0]).name.lower()
+    if first in _RIPGREP_BINARIES:
+        return _ripgrep_tokens_have_output_limiter(tokens) or _pipeline_has_output_limiter(command)
+    if first in {"find", "fd", "fdfind", "ls"}:
+        return "-maxdepth" in tokens or _pipeline_has_output_limiter(command)
+    if first in {"wc", "printf", "echo"}:
+        return True
+    return _pipeline_has_output_limiter(command)
 
 
 def _supports_pcre2(ctx: "HookContext") -> bool:
@@ -626,6 +807,12 @@ def _extract_max_commands(ctx: "HookContext") -> int | None:
 
 async def ripgrep_loop_guard(ctx: "HookContext") -> None:
     """Guard ripgrep commands before execution."""
+    if ctx.hook_type == "after_tool_call":
+        if _tool_result_output_is_high_volume(ctx.message):
+            setattr(ctx.runner, "_ripgrep_output_overflow", True)
+            _append_search_guard_warning(ctx.message)
+        return
+
     if ctx.hook_type != "before_tool_call":
         return
 
@@ -646,6 +833,7 @@ async def ripgrep_loop_guard(ctx: "HookContext") -> None:
     if command_budget <= 0:
         command_budget = _extract_max_commands(ctx) or _DEFAULT_COMMAND_BUDGET
     budget_exhausted: bool = bool(getattr(ctx.runner, "_ripgrep_budget_exhausted", False))
+    output_overflow: bool = bool(getattr(ctx.runner, "_ripgrep_output_overflow", False))
 
     for tool_call in message.tool_calls.values():
         if tool_call.params.name != "execute":
@@ -680,6 +868,16 @@ async def ripgrep_loop_guard(ctx: "HookContext") -> None:
                 "summarize with existing results.\n"
             )
             args["command"] = f"printf {shlex.quote(blocked)}"
+            continue
+
+        broad_reason = _broad_search_block_reason(normalized, base_roots)
+        if broad_reason is not None:
+            blocked = f"Blocked broad search: {broad_reason}.\n{_SEARCH_GUARD_WARNING}"
+            args["command"] = f"printf {shlex.quote(blocked)}"
+            continue
+
+        if output_overflow and not _is_low_volume_search_command(normalized, base_roots):
+            args["command"] = f"printf {shlex.quote(_SEARCH_GUARD_WARNING)}"
             continue
 
         # Exact dedupe

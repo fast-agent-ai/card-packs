@@ -8,6 +8,11 @@ model_references:
     last_used: codexresponses.gpt-5.5?reasoning=medium
 
 commands:
+  peek:
+    description: Send a message, show the response, then restore chat history
+    input_hint: "<message>"
+    handler: "./hooks/peek_command.py:peek"
+
   edit-last:
     description: Edit the last assistant message
     input_hint: ""
