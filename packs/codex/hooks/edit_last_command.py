@@ -11,6 +11,7 @@ from fast_agent.command_actions import (
 )
 
 
+
 async def editlast(ctx: PluginCommandActionContext) -> PluginCommandActionResult:
     """Open the last assistant message in $VISUAL/$EDITOR and prefill edits."""
     for message in reversed(ctx.message_history):
@@ -30,7 +31,8 @@ async def editlast(ctx: PluginCommandActionContext) -> PluginCommandActionResult
         except (OSError, UnicodeError, ValueError) as exc:
             return PluginCommandActionResult(message=f"Editor failed: {exc}")
 
-        if edited == original:
+        prefill = _extract_annotated_reply(edited)
+        if prefill == original:
             return PluginCommandActionResult(
                 message=(
                     "Editor saved without changing the message."
@@ -41,10 +43,19 @@ async def editlast(ctx: PluginCommandActionContext) -> PluginCommandActionResult
 
         return PluginCommandActionResult(
             message="Edited last assistant message; review before sending.",
-            buffer_prefill=edited,
+            buffer_prefill=prefill,
         )
 
     return PluginCommandActionResult(message="No assistant text found.")
+
+
+def _extract_annotated_reply(text: str) -> str:
+    """Return only `:: `-prefixed reply lines when annotations are present."""
+    prefix = ":: "
+    lines = text.splitlines(keepends=True)
+    if not any(line.startswith(prefix) for line in lines):
+        return text
+    return "".join(line[len(prefix) :] for line in lines if line.startswith(prefix))
 
 
 def _edit_text(initial_text: str, *, cwd: Path | None = None) -> tuple[str, bool]:
