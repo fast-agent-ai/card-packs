@@ -40,5 +40,28 @@
       "repo_ref": "main",
       "repo_path": "packs/hf-codemode"
     }
+  ],
+  "command_plugins": [
+    {
+      "name": "agent-finder",
+      "description": "Discover skills and MCP servers from the Agent Finder registry",
+      "repo_url": "https://github.com/fast-agent-ai/card-packs",
+      "repo_ref": "main",
+      "repo_path": "plugins/agent-finder"
+    },
+    {
+      "name": "edit-assistant",
+      "description": "Prompt editing helpers: /peek and /edit-last",
+      "repo_url": "https://github.com/fast-agent-ai/card-packs",
+      "repo_ref": "main",
+      "repo_path": "plugins/edit-assistant"
+    },
+    {
+      "name": "session-html",
+      "description": "Generate local HTML summaries of the current conversation",
+      "repo_url": "https://github.com/fast-agent-ai/card-packs",
+      "repo_ref": "main",
+      "repo_path": "plugins/session-html"
+    }
   ]
 }

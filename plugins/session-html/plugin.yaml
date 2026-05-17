@@ -1,0 +1,9 @@
+schema_version: 1
+name: session-html
+version: 0.1.0
+description: Generate local HTML summaries of the current conversation.
+commands:
+  html-summary:
+    description: Write a clickable HTML summary of the current conversation
+    input_hint: "[agent-name] [output.html] [--serve] [--port N]"
+    handler: ./peek_commands.py:html_summary

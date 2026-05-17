@@ -231,6 +231,60 @@ class RipgrepHookTests(unittest.TestCase):
             self.assertNotIn(str(outside_file), normalized)
             self.assertIn(str(explicit_root), normalized)
 
+    def test_codex_prefers_fast_agent_home_for_session_exclude(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir(parents=True)
+            fast_agent_home = repo_root / ".custom-fast-agent"
+            payload = {"repo_root": str(repo_root)}
+            ctx, tool_call = _make_ctx(payload, f"rg --files {repo_root} -g '*hook*'")
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "FAST_AGENT_HOME": str(fast_agent_home),
+                    "ENVIRONMENT_DIR": str(repo_root / ".legacy"),
+                },
+                clear=True,
+            ):
+                asyncio.run(self.codex.ripgrep_loop_guard(ctx))
+
+            globs = _extract_globs(tool_call.params.arguments["command"])
+            self.assertIn("!.custom-fast-agent/sessions/**", globs)
+            self.assertNotIn("!.legacy/sessions/**", globs)
+
+    def test_codex_blocks_unbounded_broad_root_search(self):
+        payload = {"repo_root": str(Path.home())}
+        ctx, tool_call = _make_ctx(payload, f"rg -n -F needle {Path.home()}")
+
+        asyncio.run(self.codex.ripgrep_loop_guard(ctx))
+
+        command = tool_call.params.arguments["command"]
+        self.assertIn("Blocked broad search:", command)
+        self.assertIn("Search guard:", command)
+
+    def test_codex_after_tool_call_marks_high_volume_output(self):
+        result = SimpleNamespace(
+            content=[
+                {
+                    "type": "text",
+                    "text": "Shell to agent output reached limit; additional output omitted",
+                }
+            ]
+        )
+        runner = SimpleNamespace()
+        ctx = SimpleNamespace(
+            hook_type="after_tool_call",
+            message=SimpleNamespace(tool_results={"call-1": result}),
+            message_history=[],
+            runner=runner,
+        )
+
+        asyncio.run(self.codex.ripgrep_loop_guard(ctx))
+
+        self.assertTrue(runner._ripgrep_output_overflow)
+        self.assertTrue(any("Search guard:" in getattr(item, "text", "") for item in result.content))
+
 
 if __name__ == "__main__":
     unittest.main()

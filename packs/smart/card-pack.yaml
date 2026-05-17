@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 name: smart
 kind: card
 install:
@@ -8,3 +8,9 @@ install:
     - tool-cards/ripgrep-search.md
   files:
     - hooks/fix_ripgrep_tool_calls.py
+plugins:
+  required:
+    - edit-assistant
+  recommended:
+    - agent-finder
+    - session-html
