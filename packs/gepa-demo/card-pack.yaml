@@ -1,0 +1,15 @@
+schema_version: 2
+name: gepa-demo
+kind: card
+install:
+  agent_cards:
+    - agent-cards/gepa-helper.md
+  tool_cards: []
+  files:
+    - fast-agent.yaml
+    - scripts/gepa-run.py
+    - data/input.jsonl
+    - data/task-template.md
+    - data/smoke-template.md
+    - data/output.schema.json
+    - seed/instructions.md

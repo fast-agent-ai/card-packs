@@ -1,0 +1,6 @@
+{"id":"ex-1","text":"Please reset my password. I cannot sign in after changing phones.","expected":"account_access"}
+{"id":"ex-2","text":"The invoice total is wrong and I need a corrected receipt.","expected":"billing"}
+{"id":"ex-3","text":"Where can I download the Linux installer for the desktop app?","expected":"product_help"}
+{"id":"ex-4","text":"Cancel my subscription at the end of the current billing period.","expected":"billing"}
+{"id":"ex-5","text":"Two-factor authentication codes are not arriving by SMS.","expected":"account_access"}
+{"id":"ex-6","text":"How do I export a report as CSV?","expected":"product_help"}

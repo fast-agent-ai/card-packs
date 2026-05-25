@@ -1,0 +1,5 @@
+default_model: "$system.default"
+
+model_references:
+  system:
+    default: "passthrough"
