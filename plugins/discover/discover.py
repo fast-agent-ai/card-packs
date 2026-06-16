@@ -36,7 +36,6 @@ from fast_agent.ui.picker_theme import build_picker_style
 
 ARD_REGISTRY_URLS = (
     "https://evalstate-hf-discover.hf.space/search",
-    "https://agentfinder.azurewebsites.net/search",
 )
 AI_SKILL_MEDIA_TYPE = "application/ai-skill"
 MCP_SERVER_MEDIA_TYPE = "application/mcp-server-card+json"
@@ -97,7 +96,7 @@ class FinderResult:
         return self.media_type.rsplit("/", 1)[-1][:12]
 
 
-async def find(ctx: PluginCommandActionContext) -> PluginCommandActionResult:
+async def discover(ctx: PluginCommandActionContext) -> PluginCommandActionResult:
     """Search Agent Resource Discovery and interactively apply one selected result."""
     try:
         options = _parse_discover_arguments(ctx.arguments)
@@ -289,7 +288,7 @@ def _post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
         headers={
             "Accept": "application/json",
             "Content-Type": "application/json",
-            "User-Agent": "fast-agent-agentfinder-plugin/0.1",
+            "User-Agent": "fast-agent-discover-plugin/0.2",
         },
         method="POST",
     )
@@ -304,7 +303,7 @@ def _post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
 
     parsed = json.loads(raw)
     if not isinstance(parsed, dict):
-        raise RuntimeError("Agent Finder returned a non-object JSON response.")
+        raise RuntimeError("Agent Resource Discovery returned a non-object JSON response.")
     return parsed
 
 
@@ -779,7 +778,7 @@ def _server_name(result: FinderResult) -> str:
     metadata_space_id = _str(((result.data or {}).get("metadata") or {}).get("spaceId"))
     if metadata_space_id:
         return _slug(f"hf-space-{metadata_space_id}")
-    return _slug(result.display_name or result.identifier or "agentfinder-mcp")
+    return _slug(result.display_name or result.identifier or "discover-mcp")
 
 
 async def _handle_skill_result(
@@ -956,9 +955,9 @@ def _get_text(url: str) -> str:
 
 
 def _get_bytes(url: str, *, max_bytes: int | None = None) -> bytes:
-    request = Request(url, headers={"User-Agent": "fast-agent-agentfinder-plugin/0.1"})
+    request = Request(url, headers={"User-Agent": "fast-agent-discover-plugin/0.2"})
     try:
-        with urlopen(request, timeout=30) as response:  # noqa: S310 - Agent Finder result URL
+        with urlopen(request, timeout=30) as response:  # noqa: S310 - Agent Resource Discovery result URL
             if max_bytes is None:
                 return response.read()
             data = response.read(max_bytes + 1)
@@ -1035,7 +1034,7 @@ def _row_style(*, selected: bool, supported: bool) -> str:
 
 def _slug(value: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9_.-]+", "-", value.strip()).strip("-")
-    return slug or "agentfinder-mcp"
+    return slug or "discover-mcp"
 
 
 def _truncate(value: str, max_len: int) -> str:
