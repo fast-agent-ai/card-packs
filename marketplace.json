@@ -39,15 +39,23 @@
       "repo_url": "https://github.com/fast-agent-ai/card-packs",
       "repo_ref": "main",
       "repo_path": "packs/hf-codemode"
+    },
+    {
+      "name": "gepa-demo",
+      "description": "Starter GEPA optimization pack with fast-agent batch evaluator, ASI checker, and runnable demo loop",
+      "kind": "card",
+      "repo_url": "https://github.com/fast-agent-ai/card-packs",
+      "repo_ref": "main",
+      "repo_path": "packs/gepa-demo"
     }
   ],
   "command_plugins": [
     {
-      "name": "agent-finder",
-      "description": "Discover skills and MCP servers from the Agent Finder registry",
+      "name": "discover",
+      "description": "Discover skills and MCP servers from the Agent Resource Discovery registry",
       "repo_url": "https://github.com/fast-agent-ai/card-packs",
       "repo_ref": "main",
-      "repo_path": "plugins/agent-finder"
+      "repo_path": "plugins/discover"
     },
     {
       "name": "edit-assistant",

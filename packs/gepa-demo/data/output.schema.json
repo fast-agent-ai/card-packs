@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SupportCategory",
+  "type": "object",
+  "properties": {
+    "category": {
+      "type": "string",
+      "enum": ["account_access", "billing", "product_help"]
+    },
+    "rationale": {
+      "type": "string"
+    }
+  },
+  "required": ["category", "rationale"],
+  "additionalProperties": false
+}

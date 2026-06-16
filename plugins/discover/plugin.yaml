@@ -1,0 +1,9 @@
+schema_version: 1
+name: discover
+version: 0.2.0
+description: Discover skills and MCP servers with Agent Resource Discovery.
+commands:
+  discover:
+    description: Discover skills and MCP servers with Agent Resource Discovery
+    input_hint: "[--federation none|auto|referrals] [--follow-referrals] <query>"
+    handler: ./discover.py:discover

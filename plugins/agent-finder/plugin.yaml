@@ -1,9 +1,0 @@
-schema_version: 1
-name: agent-finder
-version: 0.1.0
-description: Discover skills and MCP servers with Agent Finder.
-commands:
-  find:
-    description: Discover skills and MCP servers with Agent Finder
-    input_hint: "<query>"
-    handler: ./agentfinder.py:find

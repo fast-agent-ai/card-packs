@@ -13,5 +13,5 @@ plugins:
   required:
     - edit-assistant
   recommended:
-    - agent-finder
+    - discover
     - session-html
