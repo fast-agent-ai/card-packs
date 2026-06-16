@@ -1,3 +1,3 @@
-# Agent Finder
+# Agent Resource Discovery
 
-Adds `/find <query>` for discovering skills and MCP servers, then applying a selected result to the current session.
+Adds `/discover <query>` for discovering skills and MCP servers, then applying a selected result to the current session.
