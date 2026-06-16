@@ -62,6 +62,13 @@
       "repo_url": "https://github.com/fast-agent-ai/card-packs",
       "repo_ref": "main",
       "repo_path": "plugins/session-html"
+    },
+    {
+      "name": "images",
+      "description": "List or render image URLs and local image paths found in recent conversation and tool results.",
+      "repo_url": "https://github.com/fast-agent-ai/card-packs",
+      "repo_ref": "main",
+      "repo_path": "plugins/images"
     }
   ]
 }
