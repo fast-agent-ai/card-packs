@@ -1,5 +1,5 @@
 default_model: "$system.default"
-
+git_aware: true
 model_references:
   system:
 # show the model picker not api key error if no token found
