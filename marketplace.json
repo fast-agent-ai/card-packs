@@ -62,6 +62,13 @@
       "repo_url": "https://github.com/fast-agent-ai/card-packs",
       "repo_ref": "main",
       "repo_path": "plugins/session-html"
+    },
+    {
+      "name": "discover",
+      "description": "Discover skills, MCP servers, A2A agent cards, and federated registries with Agent Resource Discovery.",
+      "repo_url": "https://github.com/fast-agent-ai/card-packs",
+      "repo_ref": "main",
+      "repo_path": "plugins/discover"
     }
   ]
 }
