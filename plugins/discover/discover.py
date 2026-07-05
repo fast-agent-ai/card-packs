@@ -236,7 +236,7 @@ def _discover_usage() -> str:
 
 
 async def _select_registry(ctx: PluginCommandActionContext) -> str | None:
-    urls = list(dict.fromkeys(ARD_REGISTRY_URLS))
+    urls = _configured_registry_urls(ctx)
     if not urls:
         return None
     if len(urls) == 1 or not ctx.is_tui:
@@ -244,6 +244,39 @@ async def _select_registry(ctx: PluginCommandActionContext) -> str | None:
     registries = [FinderRegistry(index=index, url=url) for index, url in enumerate(urls, start=1)]
     selected = await _RegistryPicker(registries=registries).run_async()
     return selected.url if selected else None
+
+
+def _configured_registry_urls(ctx: PluginCommandActionContext) -> list[str]:
+    config = _discover_plugin_config(ctx)
+    include_defaults = config.get("include_default_urls", True) is not False
+    urls: list[str] = list(ARD_REGISTRY_URLS) if include_defaults else []
+
+    configured_urls = config.get("urls")
+    if isinstance(configured_urls, str):
+        urls.append(configured_urls)
+    elif isinstance(configured_urls, list):
+        urls.extend(url for url in configured_urls if isinstance(url, str))
+
+    configured_registries = config.get("registries")
+    if isinstance(configured_registries, str):
+        urls.append(configured_registries)
+    elif isinstance(configured_registries, list):
+        urls.extend(url for url in configured_registries if isinstance(url, str))
+
+    return list(dict.fromkeys(_registry_search_url(_normalize_ard_service_url(url)) for url in urls))
+
+
+def _discover_plugin_config(ctx: PluginCommandActionContext) -> dict[str, Any]:
+    if ctx.settings is None:
+        return {}
+
+    merged: dict[str, Any] = {}
+    names = list(dict.fromkeys(("discover", "discover-dev", ctx.command_name)))
+    for name in names:
+        config = ctx.settings.plugins.config.get(name)
+        if isinstance(config, dict):
+            merged.update(config)
+    return merged
 
 
 async def _search_ard(
