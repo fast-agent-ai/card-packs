@@ -29,15 +29,15 @@ from prompt_toolkit.widgets import Frame
 
 from fast_agent.command_actions import PluginCommandActionContext, PluginCommandActionResult
 from fast_agent.config import MCPServerSettings
+from fast_agent.marketplace.formatting import iso_utc_now
 from fast_agent.skills.direct_sources import is_direct_skill_source
-from fast_agent.skills.models import InstalledSkillSource, SKILL_SOURCE_SCHEMA_VERSION
+from fast_agent.skills.models import SKILL_SOURCE_SCHEMA_VERSION, InstalledSkillSource
 from fast_agent.skills.provenance import (
     compute_skill_content_fingerprint,
     write_installed_skill_source,
 )
 from fast_agent.skills.scope import get_manager_directory
 from fast_agent.skills.service import install_direct_skill
-from fast_agent.marketplace.formatting import iso_utc_now
 from fast_agent.ui.picker_theme import build_picker_style
 
 ARD_REGISTRY_URLS = (
@@ -177,7 +177,7 @@ async def discover(ctx: PluginCommandActionContext) -> PluginCommandActionResult
         return PluginCommandActionResult()
 
     if selected.media_type in {MCP_SERVER_MEDIA_TYPE, LEGACY_MCP_SERVER_MEDIA_TYPE}:
-        return await _attach_mcp_result(ctx, selected)
+        return await _handle_mcp_result(ctx, selected)
 
     if selected.media_type == AI_SKILL_MEDIA_TYPE:
         return await _handle_skill_result(ctx, options.query, selected)
@@ -519,7 +519,7 @@ class _FinderPicker:
     def _render_details(self) -> list[tuple[str, str]]:
         result = self.selected
         action = (
-            "Enter: connect MCP server"
+            "Enter: MCP actions"
             if result.media_type in {MCP_SERVER_MEDIA_TYPE, LEGACY_MCP_SERVER_MEDIA_TYPE}
             else "Enter: skill actions"
             if result.media_type == AI_SKILL_MEDIA_TYPE
@@ -715,6 +715,151 @@ class _SkillActionPicker:
             return await self.app.run_async()
 
 
+class _McpActionPicker:
+    VISIBLE_ROWS = 3
+
+    def __init__(self, *, result: FinderResult, can_connect: bool) -> None:
+        self.result = result
+        self.actions = [
+            SkillAction(
+                "Connect MCP Server",
+                "connect",
+                enabled=can_connect,
+                hint="" if can_connect else "runtime MCP unavailable",
+            ),
+            SkillAction(
+                "Add MCP Config to User Prompt",
+                "prompt",
+                enabled=_can_add_mcp_to_prompt(result),
+                hint="" if _can_add_mcp_to_prompt(result) else "no server data/card URL",
+            ),
+            SkillAction("Cancel", "cancel"),
+        ]
+        self.index = 0
+        self._normalize_index()
+
+        self.selection_control = FormattedTextControl(
+            self._render_actions,
+            focusable=True,
+            show_cursor=False,
+            get_cursor_position=self._cursor_position,
+        )
+        self.details_control = FormattedTextControl(self._render_details)
+
+        selection_window = Window(
+            self.selection_control,
+            wrap_lines=False,
+            height=Dimension.exact(self.VISIBLE_ROWS),
+            dont_extend_height=True,
+            ignore_content_width=True,
+            always_hide_cursor=True,
+        )
+        details_window = Window(
+            self.details_control,
+            height=Dimension.exact(4),
+            dont_extend_height=True,
+        )
+        body = HSplit(
+            [
+                Frame(selection_window, title=f"MCP Server: {result.display_name}"),
+                details_window,
+            ]
+        )
+        self.app: Application[str | None] = Application(
+            layout=Layout(body, focused_element=selection_window),
+            key_bindings=self._create_key_bindings(),
+            style=build_picker_style(),
+            full_screen=False,
+            mouse_support=False,
+            erase_when_done=True,
+        )
+
+    @property
+    def selected(self) -> SkillAction:
+        self._normalize_index()
+        return self.actions[self.index]
+
+    def _normalize_index(self) -> None:
+        self.index = max(0, min(self.index, len(self.actions) - 1))
+        if self.actions[self.index].enabled:
+            return
+        for offset in range(1, len(self.actions) + 1):
+            candidate = (self.index + offset) % len(self.actions)
+            if self.actions[candidate].enabled:
+                self.index = candidate
+                return
+
+    def _cursor_position(self) -> Point | None:
+        return Point(x=0, y=self.index)
+
+    def _terminal_cols(self) -> int:
+        app = get_app_or_none()
+        if app is not None:
+            try:
+                return max(1, app.output.get_size().columns)
+            except Exception:
+                pass
+        return max(1, shutil.get_terminal_size((100, 20)).columns)
+
+    def _render_actions(self) -> list[tuple[str, str]]:
+        fragments: list[tuple[str, str]] = []
+        for index, action in enumerate(self.actions):
+            selected = index == self.index
+            cursor = "❯ " if selected else "  "
+            suffix = f" ({action.hint})" if action.hint else ""
+            style = _action_style(selected=selected, enabled=action.enabled)
+            fragments.append((style, f"{cursor}{action.label}{suffix}\n"))
+        return fragments
+
+    def _render_details(self) -> list[tuple[str, str]]:
+        location = (
+            self.result.url or _str((self.result.data or {}).get("url")) or self.result.identifier
+        )
+        return [
+            ("class:focus", f"{self.result.display_name} · score {self.result.score:.1f}\n"),
+            ("", f"{_truncate(self.result.description, self._terminal_cols() - 2)}\n"),
+            ("class:muted", f"{_truncate(location, self._terminal_cols() - 2)}\n"),
+            ("class:muted", "Keys: ↑/↓ move · Enter select · q/Esc/Ctrl-C cancel"),
+        ]
+
+    def _move(self, delta: int) -> None:
+        for offset in range(1, len(self.actions) + 1):
+            candidate = (self.index + (delta * offset)) % len(self.actions)
+            if self.actions[candidate].enabled:
+                self.index = candidate
+                return
+
+    def _create_key_bindings(self) -> KeyBindings:
+        kb = KeyBindings()
+
+        @kb.add("up")
+        def _up(event) -> None:
+            self._move(-1)
+            event.app.invalidate()
+
+        @kb.add("down")
+        def _down(event) -> None:
+            self._move(1)
+            event.app.invalidate()
+
+        @kb.add("enter")
+        def _accept(event) -> None:
+            action = self.selected
+            event.app.exit(result=action.value if action.enabled else None)
+
+        @kb.add("q")
+        @kb.add("escape")
+        @kb.add("c-c")
+        def _quit(event) -> None:
+            event.app.exit(result=None)
+
+        return kb
+
+    async def run_async(self) -> str | None:
+        with nullcontext():
+            return await self.app.run_async()
+
+
 class _RegistryPicker:
     VISIBLE_ROWS = 6
 
@@ -851,6 +996,28 @@ async def _attach_mcp_result(
     )
 
 
+async def _handle_mcp_result(
+    ctx: PluginCommandActionContext,
+    result: FinderResult,
+) -> PluginCommandActionResult:
+    if ctx.is_tui:
+        try:
+            action = await _McpActionPicker(
+                result=result,
+                can_connect=ctx.runtime is not None,
+            ).run_async()
+        except KeyboardInterrupt:
+            return PluginCommandActionResult()
+        if action in {None, "cancel"}:
+            return PluginCommandActionResult()
+        if action == "connect":
+            return await _attach_mcp_result(ctx, result)
+        if action == "prompt":
+            return await _prefill_mcp_result(result)
+
+    return await _prefill_mcp_result(result)
+
+
 async def _mcp_server_settings(result: FinderResult, server_name: str) -> MCPServerSettings:
     data = dict(result.data or {})
     data.setdefault("name", server_name)
@@ -872,6 +1039,48 @@ def _server_name(result: FinderResult) -> str:
     if metadata_space_id:
         return _slug(f"hf-space-{metadata_space_id}")
     return _slug(result.display_name or result.identifier or "discover-mcp")
+
+
+async def _prefill_mcp_result(result: FinderResult) -> PluginCommandActionResult:
+    if not _can_add_mcp_to_prompt(result):
+        return PluginCommandActionResult(
+            message="Add to User Prompt requires MCP server data or a server card URL."
+        )
+
+    try:
+        payload, label = await _mcp_prompt_payload(result)
+    except Exception as exc:  # noqa: BLE001
+        return PluginCommandActionResult(message=f"Failed to prepare MCP prompt config: {exc}")
+
+    prefill = (
+        "Use this discovered MCP server configuration if it is useful for the task below.\n\n"
+        f"Discovered MCP server: {result.display_name}\n\n"
+        f"{result.description}\n\n"
+        f"{label}:\n\n"
+        "```json\n"
+        f"{json.dumps(payload, indent=2, sort_keys=True)}\n"
+        "```\n"
+    )
+    return PluginCommandActionResult(
+        message=f"Added MCP config to prompt: {result.display_name}",
+        buffer_prefill=prefill,
+    )
+
+
+async def _mcp_prompt_payload(result: FinderResult) -> tuple[dict[str, Any], str]:
+    server_name = _server_name(result)
+    if result.media_type == MCP_SERVER_MEDIA_TYPE and result.url:
+        card = await asyncio.to_thread(_get_json, result.url)
+        return card, "MCP server card"
+
+    data = dict(result.data or {})
+    data.setdefault("name", server_name)
+    data.setdefault("description", result.description or result.display_name)
+    if not data.get("url") and result.url:
+        data["url"] = result.url
+
+    server_config = {key: value for key, value in data.items() if key != "name"}
+    return {"mcpServers": {server_name: server_config}}, "mcp.json"
 
 
 async def _handle_skill_result(
@@ -1229,6 +1438,10 @@ def _looks_like_skill_archive(url: str) -> bool:
 
 def _can_add_skill_to_prompt(result: FinderResult) -> bool:
     return bool(result.url and _looks_like_text_skill(result.url))
+
+
+def _can_add_mcp_to_prompt(result: FinderResult) -> bool:
+    return bool(result.data or result.url)
 
 
 def _action_style(*, selected: bool, enabled: bool) -> str:
