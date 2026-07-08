@@ -43,13 +43,6 @@
   ],
   "command_plugins": [
     {
-      "name": "agent-finder",
-      "description": "Discover skills and MCP servers from the Agent Finder registry",
-      "repo_url": "https://github.com/fast-agent-ai/card-packs",
-      "repo_ref": "main",
-      "repo_path": "plugins/agent-finder"
-    },
-    {
       "name": "edit-assistant",
       "description": "Prompt editing helpers: /peek and /edit-last",
       "repo_url": "https://github.com/fast-agent-ai/card-packs",
