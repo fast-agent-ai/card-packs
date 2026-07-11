@@ -13,8 +13,10 @@ From the fast-agent prompt:
 
 - Use `/peek <message>` to ask a one-off question without keeping it in the active chat history.
 - Use `/edit-last` (`c-x e`) to open the last assistant response in `$VISUAL`/`$EDITOR` and prefill your edited reply.
+- Use `/annotate-last` (`c-x a`) to annotate the last assistant response with AnnoTUI
 - Use `/skills` to view and manage skills. Use to configure hooks, compaction and automation - `/skills registry` to choose source.
 - Optional: use `/skills add lsp-setup` and ask your agent to configure LSP for this workspace.
 - Other skills available help you configure/design compaction if needed, set up agent hooks or automate `fast-agent`
 - Create new agents in this environment  by asking the assistant, or adding markdown files to `.fast-agent/agent-cards/`. Switch agents with `@`. 
 - Use `/connect` to connect to MCP Servers (Hugging Face and OpenAI preconfigured)
+- Recommended: Set up a sandbox environment for development. Sample prompt:  `configure a docker execution environment (ubuntu) named docker-env, with a read-only mount of the current directory. make it the default`
