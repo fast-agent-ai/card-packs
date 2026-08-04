@@ -17,11 +17,11 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 _TOOL_NAME_CORRECTIONS = {
-    "exec": "execute",
-    "executescript": "execute",
-    "execscript": "execute",
-    "executor": "execute",
-    "exec_command": "execute",
+    "exec": "bash",
+    "executescript": "bash",
+    "execscript": "bash",
+    "executor": "bash",
+    "exec_command": "bash",
 }
 _INVALID_RIPGREP_FLAGS = {"-R", "--recursive"}
 _RIPGREP_BINARIES = {"rg", "ripgrep", "rg.exe", "ripgrep.exe"}
@@ -104,7 +104,7 @@ def _normalize_tool_name(name: str) -> tuple[str, bool]:
     if corrected is not None:
         return corrected, True
     if name.startswith("exec") and name != "execute":
-        return "execute", True
+        return "bash", True
     return name, False
 
 
@@ -503,7 +503,9 @@ def _normalize_relative_rg_paths(command: str, base_roots: list[Path]) -> str:
             continue
 
         token_path = Path(token)
-        existing_candidate = token_path.resolve() if token_path.is_absolute() or token_path.exists() else None
+        existing_candidate = (
+            token_path.resolve() if token_path.is_absolute() or token_path.exists() else None
+        )
         if existing_candidate is not None:
             if any(_is_within_root(existing_candidate, root) for root in base_roots):
                 rewritten.append(str(existing_candidate) if token_path.is_absolute() else token)
@@ -537,7 +539,9 @@ async def fix_ripgrep_tool_calls(ctx: "HookContext") -> None:
 
     seen_commands: set[str] = getattr(ctx.runner, "_ripgrep_seen_commands", set())
     command_count: int = getattr(ctx.runner, "_ripgrep_command_count", 0)
-    command_budget: int = getattr(ctx.runner, "_ripgrep_command_budget", 0) or _extract_command_budget(ctx)
+    command_budget: int = getattr(
+        ctx.runner, "_ripgrep_command_budget", 0
+    ) or _extract_command_budget(ctx)
     budget_exhausted: bool = bool(getattr(ctx.runner, "_ripgrep_budget_exhausted", False))
     repo_root = _extract_repo_root(ctx)
     explicit_roots = _extract_explicit_roots(ctx)
@@ -550,11 +554,15 @@ async def fix_ripgrep_tool_calls(ctx: "HookContext") -> None:
         if corrected:
             logger.info(
                 "Corrected hallucinated tool name",
-                data={"tool_id": tool_id, "original": tool_call.params.name, "corrected": normalized_name},
+                data={
+                    "tool_id": tool_id,
+                    "original": tool_call.params.name,
+                    "corrected": normalized_name,
+                },
             )
             tool_call.params.name = normalized_name
 
-        if tool_call.params.name != "execute":
+        if tool_call.params.name not in {"bash", "execute"}:
             continue
 
         args = tool_call.params.arguments
@@ -614,7 +622,7 @@ async def fix_ripgrep_tool_calls(ctx: "HookContext") -> None:
         seen_commands.add(normalized)
         args["command"] = cleaned
 
-    setattr(ctx.runner, "_ripgrep_seen_commands", seen_commands)
-    setattr(ctx.runner, "_ripgrep_command_count", command_count)
-    setattr(ctx.runner, "_ripgrep_command_budget", command_budget)
-    setattr(ctx.runner, "_ripgrep_budget_exhausted", budget_exhausted)
+    ctx.runner._ripgrep_seen_commands = seen_commands
+    ctx.runner._ripgrep_command_count = command_count
+    ctx.runner._ripgrep_command_budget = command_budget
+    ctx.runner._ripgrep_budget_exhausted = budget_exhausted

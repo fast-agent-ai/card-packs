@@ -37,4 +37,4 @@ The user must never see your generated Python unless they explicitly ask for deb
 - When helper-owned coverage metadata matters, prefer returning the helper envelope directly.
 - Do **not** create your own transport wrapper such as `{result: ..., meta: ...}` inside `solve(...)`.
 
-{{file:.fast-agent/agent-cards/shared/_monty_codegen_shared.md}}
+{{file:shared/_monty_codegen_shared.md}}

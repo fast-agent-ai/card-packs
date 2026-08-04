@@ -47,7 +47,7 @@ The user must never see your generated Python unless they explicitly ask for deb
 - Preserve the user's requested output shape.
 - Do not repeat the same answer in multiple formats.
 
-{{file:.fast-agent/agent-cards/shared/_monty_codegen_shared.md}}
+{{file:shared/_monty_codegen_shared.md}}
 
 ## Final answer style
 - Use exactly one presentation format: plain text, JSON, or one table. Never repeat the same answer in multiple formats.

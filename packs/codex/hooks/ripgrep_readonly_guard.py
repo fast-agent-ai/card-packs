@@ -81,6 +81,7 @@ _ALLOWED_SHELL_BINARIES = {
     "echo",
 }
 
+
 def _first_token(command: str) -> str | None:
     try:
         tokens = shlex.split(command)
@@ -576,7 +577,7 @@ def _supports_pcre2(ctx: "HookContext") -> bool:
     except Exception:
         supported = False
 
-    setattr(ctx.runner, "_ripgrep_supports_pcre2", supported)
+    ctx.runner._ripgrep_supports_pcre2 = supported
     return supported
 
 
@@ -636,7 +637,9 @@ def _normalize_relative_path_tokens(command: str, base_roots: list[Path]) -> str
             continue
 
         token_path = Path(token)
-        existing_candidate = token_path.resolve() if token_path.is_absolute() or token_path.exists() else None
+        existing_candidate = (
+            token_path.resolve() if token_path.is_absolute() or token_path.exists() else None
+        )
         if existing_candidate is not None:
             if any(_is_within_root(existing_candidate, root) for root in base_roots):
                 rewritten.append(str(existing_candidate) if token_path.is_absolute() else token)
@@ -809,7 +812,7 @@ async def ripgrep_loop_guard(ctx: "HookContext") -> None:
     """Guard ripgrep commands before execution."""
     if ctx.hook_type == "after_tool_call":
         if _tool_result_output_is_high_volume(ctx.message):
-            setattr(ctx.runner, "_ripgrep_output_overflow", True)
+            ctx.runner._ripgrep_output_overflow = True
             _append_search_guard_warning(ctx.message)
         return
 
@@ -836,7 +839,7 @@ async def ripgrep_loop_guard(ctx: "HookContext") -> None:
     output_overflow: bool = bool(getattr(ctx.runner, "_ripgrep_output_overflow", False))
 
     for tool_call in message.tool_calls.values():
-        if tool_call.params.name != "execute":
+        if tool_call.params.name not in {"bash", "execute"}:
             continue
 
         args = tool_call.params.arguments
@@ -890,7 +893,9 @@ async def ripgrep_loop_guard(ctx: "HookContext") -> None:
         if signature is not None:
             seen_count = count_signatures.get(signature, 0)
             if seen_count >= _MAX_REPEATED_COUNT_SIGNATURE:
-                args["command"] = "printf 'Count-query budget reached; summarize current findings.\\n'"
+                args["command"] = (
+                    "printf 'Count-query budget reached; summarize current findings.\\n'"
+                )
                 continue
             count_signatures[signature] = seen_count + 1
 
@@ -906,8 +911,8 @@ async def ripgrep_loop_guard(ctx: "HookContext") -> None:
         seen_commands.add(normalized)
         args["command"] = cleaned
 
-    setattr(ctx.runner, "_ripgrep_seen_commands", seen_commands)
-    setattr(ctx.runner, "_ripgrep_command_count", command_count)
-    setattr(ctx.runner, "_ripgrep_count_signatures", count_signatures)
-    setattr(ctx.runner, "_ripgrep_command_budget", command_budget)
-    setattr(ctx.runner, "_ripgrep_budget_exhausted", budget_exhausted)
+    ctx.runner._ripgrep_seen_commands = seen_commands
+    ctx.runner._ripgrep_command_count = command_count
+    ctx.runner._ripgrep_count_signatures = count_signatures
+    ctx.runner._ripgrep_command_budget = command_budget
+    ctx.runner._ripgrep_budget_exhausted = budget_exhausted

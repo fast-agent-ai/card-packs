@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 name: hf-codemode
 kind: card
 install:
@@ -28,3 +28,6 @@ install:
     - monty_api/runtime_filtering.py
     - monty_api/tool_entrypoints.py
     - monty_api/validation.py
+model_references_required:
+  - $system.default
+  - $system.raw

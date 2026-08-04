@@ -7,7 +7,7 @@ description: |
   Use ONLY for complex multi-step searches likely requiring >1 command,
   narrowing, ranking, grouping, or cross-file synthesis.
   Do NOT use it for one-shot shell tasks such as a single file count, simple
-  path listing, existence check, or literal search; call execute directly for
+  path listing, existence check, or literal search; call bash directly for
   those.
   Supports simple read-only shell post-processing (`sort`, `head`, `tail`,
   `cut`, `uniq`, `tr`, `grep`, `xargs`, `awk`, `sed`) when that is the
@@ -50,7 +50,7 @@ tool_input_schema:
       enum: ["paths", "paths_with_notes", "summary"]
     max_commands:
       type: integer
-      description: Max execute-search commands to run (1-6). Defaults to 5 when omitted.
+      description: Max bash search commands to run (1-6). Defaults to 5 when omitted.
       minimum: 1
       maximum: 6
   required: [objective]
@@ -86,7 +86,7 @@ Parse JSON in-model (no python/jq/sed parsing commands).
 16. For grouped file-count tasks, prefer `cut`/`sed`/`sort`/`uniq` patterns over more complex shell logic when either would work.
 17. For exact file inventories, counts, or grouped file counts, prefer `find ... -type f -name '*.ext'` over `rg --files` so ignored files are not silently skipped.
 18. For totals, prefer a separate verified count command (`wc -l`) over hand-summing many buckets. If the total is not directly verified, say so.
-19. Prefer `execute` searches over file-reading tools. Do not call `read_text_file` unless the user explicitly asks to inspect file contents or a concise snippet is strictly required to answer.
+19. Prefer `bash` searches over file-reading tools. Do not call `read_text_file` unless the user explicitly asks to inspect file contents or a concise snippet is strictly required to answer.
 20. For `paths` or `paths_with_notes` outputs, rely on `rg -n`/`rg --files` evidence and stop once you have enough paths to answer.
 21. For “where is X implemented, plus main tests” tasks, stop and answer once you have the primary implementation files and 1-3 main tests. Do not continue opening files just to be more certain.
 22. If a search already identifies the relevant files and symbols, synthesize immediately instead of doing additional confirmation passes.

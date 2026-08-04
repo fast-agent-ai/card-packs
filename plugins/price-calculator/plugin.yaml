@@ -1,0 +1,11 @@
+schema_version: 2
+name: price-calculator
+version: 0.2.0
+description: Display estimated model cost for the last turn and current session.
+commands:
+  cost:
+    description: Show model cost by user turn, or a detailed provider-call ledger
+    input_hint: "[detail]"
+    handler: ./price_calculator.py:cost_breakdown
+hooks:
+  post_user_turn: ./price_calculator.py:display_cost

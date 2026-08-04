@@ -8,6 +8,8 @@ install:
     - tool-cards/ripgrep-search.md
   files:
     - hooks/fix_ripgrep_tool_calls.py
+model_references_required:
+  - $system.fast
 plugins:
   required:
     - edit-assistant

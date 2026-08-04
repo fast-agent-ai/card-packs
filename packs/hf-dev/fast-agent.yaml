@@ -4,19 +4,18 @@ git_aware: true
 
 model_references:
   system:
+    default: "hf.zai-org/GLM-5.2:fireworks-ai"
     fast: "gpt-oss"
-    last_used: "hf.zai-org/GLM-5.2:fireworks-ai"
 # Default MCP Servers - these appear in the /connect menu
 mcp:
-  targets:
-    - name: hf
+  servers:
+    hf:
       target: "https://huggingface.co/mcp"
-    - name: hf_docs_only
+    hf_docs_only:
       target: "https://huggingface.co/mcp?bouquet=docs"
-    # - name: github
+    # github:
     #   target: "https://api.githubcopilot.com/mcp/"
     #   headers:
     #     Authorization: "Bearer ${GITHUB_TOKEN}"
-    - name: openai
+    openai:
       target: "https://developers.openai.com/mcp"
-
