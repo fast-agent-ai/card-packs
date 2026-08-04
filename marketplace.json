@@ -2,7 +2,7 @@
   "entries": [
     {
       "name": "codex",
-      "description": "Developer-focused Codex card pack with codexplan default, codexspark-backed search, and preconfigured MCP targets",
+      "description": "Developer-focused GPT-5.6 Codex card pack with codexspark-backed search and preconfigured MCP servers",
       "kind": "card",
       "repo_url": "https://github.com/fast-agent-ai/card-packs",
       "repo_ref": "main",
@@ -62,6 +62,13 @@
       "repo_url": "https://github.com/fast-agent-ai/card-packs",
       "repo_ref": "main",
       "repo_path": "plugins/discover"
+    },
+    {
+      "name": "price-calculator",
+      "description": "Display estimated model cost for the last turn and current session",
+      "repo_url": "https://github.com/fast-agent-ai/card-packs",
+      "repo_ref": "main",
+      "repo_path": "plugins/price-calculator"
     }
   ]
 }

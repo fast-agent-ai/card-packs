@@ -65,7 +65,7 @@ def _extract_globs(command: str) -> list[str]:
     return globs
 
 
-def _make_ctx(payload: dict[str, object], command: str, *, tool_name: str = "execute"):
+def _make_ctx(payload: dict[str, object], command: str, *, tool_name: str = "bash"):
     user_message = SimpleNamespace(
         role="user",
         content=[{"type": "text", "text": json.dumps(payload)}],
@@ -121,6 +121,32 @@ class RipgrepHookTests(unittest.TestCase):
                 command = tool_call.params.arguments["command"]
                 self.assertNotIn(str(repo_only_target), command)
                 self.assertIn(str(explicit_root), command)
+
+    def test_hallucinated_exec_tool_names_normalize_to_bash(self):
+        payload = {"repo_root": "/tmp/repo"}
+        for module in (self.smart, self.hf_dev):
+            with self.subTest(module=module.__name__):
+                ctx, tool_call = _make_ctx(payload, "rg -R needle /tmp/repo", tool_name="exec")
+
+                asyncio.run(module.fix_ripgrep_tool_calls(ctx))
+
+                self.assertEqual("bash", tool_call.params.name)
+                self.assertNotIn(" -R ", f" {tool_call.params.arguments['command']} ")
+
+    def test_native_execute_tool_remains_supported(self):
+        payload = {"repo_root": "/tmp/repo"}
+        for module in (self.smart, self.hf_dev):
+            with self.subTest(module=module.__name__):
+                ctx, tool_call = _make_ctx(
+                    payload,
+                    "rg -R needle /tmp/repo",
+                    tool_name="execute",
+                )
+
+                asyncio.run(module.fix_ripgrep_tool_calls(ctx))
+
+                self.assertEqual("execute", tool_call.params.name)
+                self.assertNotIn(" -R ", f" {tool_call.params.arguments['command']} ")
 
     def test_explicit_roots_do_not_receive_broad_default_excludes(self):
         for module in (self.smart, self.hf_dev):
@@ -283,7 +309,9 @@ class RipgrepHookTests(unittest.TestCase):
         asyncio.run(self.codex.ripgrep_loop_guard(ctx))
 
         self.assertTrue(runner._ripgrep_output_overflow)
-        self.assertTrue(any("Search guard:" in getattr(item, "text", "") for item in result.content))
+        self.assertTrue(
+            any("Search guard:" in getattr(item, "text", "") for item in result.content)
+        )
 
 
 if __name__ == "__main__":

@@ -1,9 +1,11 @@
 ---
-type: smart
+type: agent
 name: dev
 shell: true
 model: $system.default
 default: true
+subagents: true
+harness_tools: true
 #tool_hooks:
 #  before_llm_call: dev_hooks.py:before_llm_call
 ---

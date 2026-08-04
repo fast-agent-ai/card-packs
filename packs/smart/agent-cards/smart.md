@@ -1,10 +1,12 @@
 ---
 name: smart
-type: smart
+type: agent
 description: |
   Smart coordinator that delegates repository discovery and code search to
   the ripgrep_search subagent.
 default: true
+harness_tools: true
+subagents: true
 agents:
   - ripgrep_search
 skills: []

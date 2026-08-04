@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 name: mcp-working
 kind: bundle
 version: 0.1.0
@@ -15,3 +15,9 @@ install:
     - agent-cards/python_sdk_multilspy_tools.py
     - agent-cards/typescript_sdk_multilspy_tools.py
     - hooks/fix_ripgrep_tool_calls.py
+model_references_required:
+  - $system.fast
+  - $system.code
+plugins:
+  required:
+    - price-calculator

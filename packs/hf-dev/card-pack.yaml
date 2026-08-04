@@ -9,9 +9,13 @@ install:
   files:
     - hooks/fix_ripgrep_tool_calls.py
     - fast-agent.yaml
+model_references_required:
+  - $system.default
+  - $system.fast
 plugins:
   required:
     - edit-assistant
+    - price-calculator
   recommended:
     - agent-finder
     - session-html
