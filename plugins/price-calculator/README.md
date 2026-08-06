@@ -44,10 +44,17 @@ including tool-loop calls, retries, parallel fan-out/fan-in calls, and subagent
 calls merged into the parent agent's canonical usage. It displays once for the
 top-level turn rather than once per subagent.
 
-Hardcoded USD-per-million-token rates are included for:
+The bundled, versioned `pricing_catalog.json` contains USD-per-million-token
+rates. Catalog rules can vary by fast-agent provider, upstream provider,
+service tier, effective date, and prompt-token band. This is important for
+Hugging Face routes, where the same model may have a different tariff through
+different upstream inference providers. Provider-specific rules take
+precedence over provider-neutral fallbacks.
+
+The bundled catalog currently includes:
 
 - GPT-5.6 Sol, Terra, and Luna, with Standard and Flex short/long-context rates.
-- Kimi K3 across providers.
+- Kimi K3 through the Moonshot provider.
 - DeepSeek V4 Flash (`$0.14` input, `$0.002` cached input, `$0.28` output).
 - Muse Spark 1.1 and 1.2 Standard (`$1.25` input, `$0.15` cached input,
   `$4.25` output) and Muse Spark 1.2 Contributor (`$0.10` input, `$0.002`
@@ -60,3 +67,8 @@ GPT-5.6 prompts over 272,000 tokens use long-context rates. Where a provider
 does not publish a separate cache-write tariff, cache-write tokens use the
 normal input rate. Fast-tier calls, unknown models, and incomplete token
 partitions are labeled unpriced instead of being counted as free.
+
+Hugging Face routes require a catalog rule for the specific
+`provider=hf`/`upstream_provider` combination. When that upstream tariff is not
+listed, the call remains unpriced rather than inheriting another provider's
+rate.

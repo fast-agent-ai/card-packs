@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
+from datetime import datetime
+from itertools import combinations
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fast_agent.command_actions import (
@@ -26,8 +30,8 @@ if TYPE_CHECKING:
     from fast_agent.types import PromptMessageExtended
 
 _TOKENS_PER_MILLION = 1_000_000
-_GPT_56_LONG_CONTEXT_THRESHOLD = 272_000
-_GROK_LONG_CONTEXT_THRESHOLD = 200_000
+_CATALOG_SCHEMA = "fast-agent.pricing/v1"
+_CATALOG_PATH = Path(__file__).with_name("pricing_catalog.json")
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,109 +58,428 @@ class _FallbackUserTurn:
 type CostUserTurn = UserTurnUsage | _FallbackUserTurn
 
 
-_GPT_56_RATES = {
-    ("sol", "standard", "short"): Rates(5.00, 0.50, 30.00, 6.25),
-    ("sol", "standard", "long"): Rates(10.00, 1.00, 45.00, 12.50),
-    ("sol", "flex", "short"): Rates(2.50, 0.25, 15.00, 3.125),
-    ("sol", "flex", "long"): Rates(5.00, 0.50, 22.50, 6.25),
-    ("terra", "standard", "short"): Rates(2.00, 0.20, 12.00, 2.50),
-    ("terra", "standard", "long"): Rates(4.00, 0.40, 18.00, 5.00),
-    ("terra", "flex", "short"): Rates(1.00, 0.10, 6.00, 1.25),
-    ("terra", "flex", "long"): Rates(2.00, 0.20, 9.00, 2.50),
-    ("luna", "standard", "short"): Rates(0.20, 0.02, 1.20, 0.25),
-    ("luna", "standard", "long"): Rates(0.40, 0.04, 1.80, 0.50),
-    ("luna", "flex", "short"): Rates(0.10, 0.01, 0.60, 0.125),
-    ("luna", "flex", "long"): Rates(0.20, 0.02, 0.90, 0.25),
-}
-_KIMI_K3 = Rates(3.00, 0.30, 15.00)
-_DEEPSEEK_V4_FLASH = Rates(0.14, 0.002, 0.28)
-_MUSE_SPARK_STANDARD = Rates(1.25, 0.15, 4.25)
-_MUSE_SPARK_CONTRIBUTOR = Rates(0.10, 0.002, 0.20)
-_GROK_STANDARD = Rates(2.00, 0.30, 6.00)
-_GROK_LONG_CONTEXT = Rates(4.00, 0.60, 12.00)
-_GROK_MODELS = frozenset({"grok-4.3", "grok-4.5"})
+@dataclass(frozen=True, slots=True)
+class _ModelMatcher:
+    values: frozenset[str]
+    path_suffix: bool = False
+    strip_prefixes: tuple[str, ...] = ()
+    strip_after: str | None = None
+
+    def matches(self, model: str) -> bool:
+        candidate = model.casefold()
+        if self.strip_after is not None:
+            candidate = candidate.partition(self.strip_after)[0]
+        for prefix in self.strip_prefixes:
+            candidate = candidate.removeprefix(prefix)
+        return candidate in self.values or (
+            self.path_suffix
+            and any(candidate.endswith(f"/{value}") for value in self.values)
+        )
 
 
-def _gpt_56_variant(model: str) -> str | None:
-    if model in {"gpt-5.6", "gpt-5.6-sol"}:
-        return "sol"
-    for variant in ("terra", "luna"):
-        if model == f"gpt-5.6-{variant}":
-            return variant
-    return None
+@dataclass(frozen=True, slots=True)
+class _PricingRule:
+    id: str
+    model: _ModelMatcher
+    rates: Rates
+    providers: frozenset[str] | None = None
+    upstream_providers: frozenset[str] | None = None
+    service_tiers: frozenset[str] | None = None
+    prompt_min: int = 0
+    prompt_max: int | None = None
+    context: str | None = None
+    effective_from: float | None = None
+    effective_until: float | None = None
+
+    @property
+    def specificity(self) -> tuple[int, int, int, int, int, int, int]:
+        return (
+            int(self.providers is not None) + int(self.upstream_providers is not None),
+            int(self.upstream_providers is not None),
+            int(self.providers is not None),
+            int(self.service_tiers is not None),
+            int(self.prompt_min > 0) + int(self.prompt_max is not None),
+            int(self.effective_from is not None)
+            + int(self.effective_until is not None),
+            int(not self.model.path_suffix),
+        )
+
+    def matches(
+        self,
+        turn: TurnUsage,
+        *,
+        include_tier: bool = True,
+    ) -> bool:
+        prompt_total = turn.prompt.total
+        if prompt_total is None or not self.model.matches(turn.model):
+            return False
+        if self.providers is not None and _provider_name(turn) not in self.providers:
+            return False
+        upstream_provider = (
+            turn.upstream_provider.casefold()
+            if turn.upstream_provider is not None
+            else None
+        )
+        if (
+            self.upstream_providers is not None
+            and upstream_provider not in self.upstream_providers
+        ):
+            return False
+        if include_tier and self.service_tiers is not None:
+            if _normalized_service_tier(turn) not in self.service_tiers:
+                return False
+        if prompt_total < self.prompt_min:
+            return False
+        if self.prompt_max is not None and prompt_total > self.prompt_max:
+            return False
+        if self.effective_from is not None and turn.timestamp < self.effective_from:
+            return False
+        return self.effective_until is None or turn.timestamp < self.effective_until
 
 
-def _service_tier(turn: TurnUsage) -> str | None:
+@dataclass(frozen=True, slots=True)
+class _PricingCatalog:
+    version: str
+    rules: tuple[_PricingRule, ...]
+
+    def resolve(self, turn: TurnUsage) -> Rates | None:
+        matches = [rule for rule in self.rules if rule.matches(turn)]
+        if not matches:
+            return None
+        return _select_rule(matches).rates
+
+    def context_label(self, turn: TurnUsage) -> str:
+        matches = [
+            rule
+            for rule in self.rules
+            if rule.context is not None and rule.matches(turn)
+        ]
+        if not matches:
+            matches = [
+                rule
+                for rule in self.rules
+                if rule.context is not None and rule.matches(turn, include_tier=False)
+            ]
+        if not matches:
+            return "—"
+        best_specificity = max(rule.specificity for rule in matches)
+        contexts = {
+            rule.context for rule in matches if rule.specificity == best_specificity
+        }
+        return contexts.pop() if len(contexts) == 1 else "—"
+
+
+def _select_rule(rules: list[_PricingRule]) -> _PricingRule:
+    best_specificity = max(rule.specificity for rule in rules)
+    best = [rule for rule in rules if rule.specificity == best_specificity]
+    if len(best) != 1:
+        ids = ", ".join(rule.id for rule in best)
+        raise ValueError(f"Ambiguous pricing rules: {ids}")
+    return best[0]
+
+
+def _provider_name(turn: TurnUsage) -> str:
+    provider = turn.provider
+    if isinstance(provider, str):
+        return provider.casefold()
+    return provider.config_name.casefold()
+
+
+def _normalized_service_tier(turn: TurnUsage) -> str:
     tier = turn.requested_service_tier or turn.service_tier
-    if tier in (None, "default", "standard"):
-        return "standard"
-    if tier == "flex":
-        return "flex"
-    return None
+    return "standard" if tier in (None, "default", "standard") else tier.casefold()
 
 
-def _gpt_56_rates(turn: TurnUsage) -> Rates | None:
-    model = turn.model.casefold()
-    variant = _gpt_56_variant(model)
-    if variant is None:
+def _require_object(value: object, label: str) -> dict[str, object]:
+    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
+        raise ValueError(f"{label} must be an object")
+    return value
+
+
+def _check_keys(value: dict[str, object], allowed: set[str], label: str) -> None:
+    unknown = value.keys() - allowed
+    if unknown:
+        raise ValueError(f"{label} has unknown fields: {', '.join(sorted(unknown))}")
+
+
+def _require_string(value: object, label: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label} must be a non-empty string")
+    return value.strip()
+
+
+def _string_set(value: object, label: str) -> frozenset[str]:
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"{label} must be a non-empty list")
+    return frozenset(_require_string(item, label).casefold() for item in value)
+
+
+def _optional_string_set(
+    value: object,
+    label: str,
+) -> frozenset[str] | None:
+    return None if value is None else _string_set(value, label)
+
+
+def _optional_token_limit(value: object, label: str) -> int | None:
+    if value is None:
         return None
-    tier = _service_tier(turn)
-    if tier is None or turn.prompt.total is None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{label} must be a non-negative integer or null")
+    return value
+
+
+def _rate(value: object, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise ValueError(f"{label} must be a non-negative number")
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise ValueError(f"{label} must be a non-negative number") from exc
+    if not math.isfinite(parsed) or parsed < 0:
+        raise ValueError(f"{label} must be a non-negative finite number")
+    return parsed
+
+
+def _effective_time(value: object, label: str) -> float | None:
+    if value is None:
         return None
-    context = "long" if turn.prompt.total > _GPT_56_LONG_CONTEXT_THRESHOLD else "short"
-    return _GPT_56_RATES[(variant, tier, context)]
+    text = _require_string(value, label)
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"{label} must be an ISO 8601 timestamp") from exc
+    if parsed.tzinfo is None:
+        raise ValueError(f"{label} must include a timezone")
+    return parsed.timestamp()
 
 
-def _kimi_k3_rates(turn: TurnUsage) -> Rates | None:
-    model = turn.model.casefold()
-    kimi_model = model.partition(":")[0]
-    return (
-        _KIMI_K3 if kimi_model == "kimi-k3" or kimi_model.endswith("/kimi-k3") else None
+def _parse_model_matcher(value: object, label: str) -> _ModelMatcher:
+    payload = _require_object(value, label)
+    _check_keys(
+        payload,
+        {"values", "path_suffix", "strip_prefixes", "strip_after"},
+        label,
+    )
+    strip_after = payload.get("strip_after")
+    if strip_after is not None:
+        strip_after = _require_string(strip_after, f"{label}.strip_after")
+    path_suffix = payload.get("path_suffix", False)
+    if not isinstance(path_suffix, bool):
+        raise ValueError(f"{label}.path_suffix must be a boolean")
+    strip_prefixes = payload.get("strip_prefixes", [])
+    if not isinstance(strip_prefixes, list):
+        raise ValueError(f"{label}.strip_prefixes must be a list")
+    return _ModelMatcher(
+        values=_string_set(payload.get("values"), f"{label}.values"),
+        path_suffix=path_suffix,
+        strip_prefixes=tuple(
+            _require_string(prefix, f"{label}.strip_prefixes").casefold()
+            for prefix in strip_prefixes
+        ),
+        strip_after=strip_after,
     )
 
 
-def _deepseek_v4_flash_rates(turn: TurnUsage) -> Rates | None:
-    model = turn.model.casefold()
-    if model == "deepseek-v4-flash" or model.endswith("/deepseek-v4-flash"):
-        return _DEEPSEEK_V4_FLASH
-    return None
+def _parse_rates(value: object, label: str) -> Rates:
+    payload = _require_object(value, label)
+    _check_keys(payload, {"input", "cache_read", "cache_write", "output"}, label)
+    for required in ("input", "cache_read", "output"):
+        if required not in payload:
+            raise ValueError(f"{label}.{required} is required")
+    cache_write = payload.get("cache_write")
+    return Rates(
+        input=_rate(payload["input"], f"{label}.input"),
+        cached_input=_rate(payload["cache_read"], f"{label}.cache_read"),
+        cache_write=(
+            None if cache_write is None else _rate(cache_write, f"{label}.cache_write")
+        ),
+        output=_rate(payload["output"], f"{label}.output"),
+    )
 
 
-def _muse_spark_rates(turn: TurnUsage) -> Rates | None:
-    model = turn.model.casefold().removeprefix("metaai.")
-    if model in {"muse-spark-1.1", "muse-spark-1.2"}:
-        return _MUSE_SPARK_STANDARD
-    if model == "muse-spark-1.2-contributor":
-        return _MUSE_SPARK_CONTRIBUTOR
-    return None
+def _parse_rule(value: object, index: int) -> _PricingRule:
+    label = f"rules[{index}]"
+    payload = _require_object(value, label)
+    _check_keys(
+        payload,
+        {
+            "id",
+            "match",
+            "prompt_tokens",
+            "context",
+            "effective",
+            "rates",
+        },
+        label,
+    )
+    match = _require_object(payload.get("match"), f"{label}.match")
+    _check_keys(
+        match,
+        {"model", "providers", "upstream_providers", "service_tiers"},
+        f"{label}.match",
+    )
+    prompt = _require_object(payload.get("prompt_tokens", {}), f"{label}.prompt_tokens")
+    _check_keys(prompt, {"minimum", "maximum"}, f"{label}.prompt_tokens")
+    prompt_min = _optional_token_limit(
+        prompt.get("minimum", 0),
+        f"{label}.prompt_tokens.minimum",
+    )
+    prompt_max = _optional_token_limit(
+        prompt.get("maximum"),
+        f"{label}.prompt_tokens.maximum",
+    )
+    assert prompt_min is not None
+    if prompt_max is not None and prompt_min > prompt_max:
+        raise ValueError(f"{label}.prompt_tokens minimum exceeds maximum")
+    effective = _require_object(payload.get("effective", {}), f"{label}.effective")
+    _check_keys(effective, {"from", "until"}, f"{label}.effective")
+    effective_from = _effective_time(effective.get("from"), f"{label}.effective.from")
+    effective_until = _effective_time(
+        effective.get("until"), f"{label}.effective.until"
+    )
+    if (
+        effective_from is not None
+        and effective_until is not None
+        and effective_from >= effective_until
+    ):
+        raise ValueError(f"{label}.effective from must precede until")
+    context = payload.get("context")
+    if context is not None:
+        context = _require_string(context, f"{label}.context")
+    providers = _optional_string_set(
+        match.get("providers"),
+        f"{label}.match.providers",
+    )
+    upstream_providers = _optional_string_set(
+        match.get("upstream_providers"),
+        f"{label}.match.upstream_providers",
+    )
+    if upstream_providers is not None and providers is None:
+        raise ValueError(f"{label}.match.upstream_providers requires match.providers")
+    return _PricingRule(
+        id=_require_string(payload.get("id"), f"{label}.id"),
+        model=_parse_model_matcher(match.get("model"), f"{label}.match.model"),
+        providers=providers,
+        upstream_providers=upstream_providers,
+        service_tiers=_optional_string_set(
+            match.get("service_tiers"),
+            f"{label}.match.service_tiers",
+        ),
+        prompt_min=prompt_min,
+        prompt_max=prompt_max,
+        context=context,
+        effective_from=effective_from,
+        effective_until=effective_until,
+        rates=_parse_rates(payload.get("rates"), f"{label}.rates"),
+    )
 
 
-def _is_grok_model(model: str) -> bool:
-    return model.casefold().removeprefix("xai.") in _GROK_MODELS
+def _sets_overlap(
+    left: frozenset[str] | None,
+    right: frozenset[str] | None,
+) -> bool:
+    return left is None or right is None or bool(left & right)
 
 
-def _grok_rates(turn: TurnUsage) -> Rates | None:
-    if not _is_grok_model(turn.model) or turn.prompt.total is None:
-        return None
-    if turn.prompt.total > _GROK_LONG_CONTEXT_THRESHOLD:
-        return _GROK_LONG_CONTEXT
-    return _GROK_STANDARD
+def _ranges_overlap(
+    left_min: int,
+    left_max: int | None,
+    right_min: int,
+    right_max: int | None,
+) -> bool:
+    return (left_max is None or right_min <= left_max) and (
+        right_max is None or left_min <= right_max
+    )
 
 
-_RATE_RESOLVERS = (
-    _gpt_56_rates,
-    _kimi_k3_rates,
-    _deepseek_v4_flash_rates,
-    _muse_spark_rates,
-    _grok_rates,
-)
+def _times_overlap(left: _PricingRule, right: _PricingRule) -> bool:
+    return (
+        left.effective_until is None
+        or right.effective_from is None
+        or right.effective_from < left.effective_until
+    ) and (
+        right.effective_until is None
+        or left.effective_from is None
+        or left.effective_from < right.effective_until
+    )
+
+
+def _model_examples(matcher: _ModelMatcher) -> set[str]:
+    examples = set(matcher.values)
+    for value in matcher.values:
+        examples.update(f"{prefix}{value}" for prefix in matcher.strip_prefixes)
+        if matcher.path_suffix:
+            examples.add(f"owner/{value}")
+        if matcher.strip_after is not None:
+            examples.add(f"{value}{matcher.strip_after}route")
+    return examples
+
+
+def _model_matchers_overlap(left: _ModelMatcher, right: _ModelMatcher) -> bool:
+    examples = _model_examples(left) | _model_examples(right)
+    return any(left.matches(example) and right.matches(example) for example in examples)
+
+
+def _rules_overlap(left: _PricingRule, right: _PricingRule) -> bool:
+    return (
+        left.specificity == right.specificity
+        and _model_matchers_overlap(left.model, right.model)
+        and _sets_overlap(left.providers, right.providers)
+        and _sets_overlap(left.upstream_providers, right.upstream_providers)
+        and _sets_overlap(left.service_tiers, right.service_tiers)
+        and _ranges_overlap(
+            left.prompt_min,
+            left.prompt_max,
+            right.prompt_min,
+            right.prompt_max,
+        )
+        and _times_overlap(left, right)
+    )
+
+
+def _validate_rule_overlaps(rules: tuple[_PricingRule, ...]) -> None:
+    for left, right in combinations(rules, 2):
+        if _rules_overlap(left, right):
+            raise ValueError(f"Ambiguous pricing rules: {left.id}, {right.id}")
+
+
+def _parse_catalog(payload: object) -> _PricingCatalog:
+    root = _require_object(payload, "catalog")
+    _check_keys(
+        root,
+        {"schema", "catalog_version", "currency", "unit", "rules"},
+        "catalog",
+    )
+    if root.get("schema") != _CATALOG_SCHEMA:
+        raise ValueError(f"catalog.schema must be {_CATALOG_SCHEMA}")
+    if root.get("currency") != "USD":
+        raise ValueError("catalog.currency must be USD")
+    if root.get("unit") != "usd_per_million_tokens":
+        raise ValueError("catalog.unit must be usd_per_million_tokens")
+    rules_payload = root.get("rules")
+    if not isinstance(rules_payload, list) or not rules_payload:
+        raise ValueError("catalog.rules must be a non-empty list")
+    rules = tuple(_parse_rule(rule, index) for index, rule in enumerate(rules_payload))
+    ids = [rule.id for rule in rules]
+    if len(ids) != len(set(ids)):
+        raise ValueError("catalog rule IDs must be unique")
+    _validate_rule_overlaps(rules)
+    return _PricingCatalog(
+        version=_require_string(root.get("catalog_version"), "catalog.catalog_version"),
+        rules=rules,
+    )
+
+
+def _load_catalog(path: Path = _CATALOG_PATH) -> _PricingCatalog:
+    return _parse_catalog(json.loads(path.read_text(encoding="utf-8")))
+
+
+_PRICING_CATALOG = _load_catalog()
 
 
 def _rates(turn: TurnUsage) -> Rates | None:
-    for resolve in _RATE_RESOLVERS:
-        if rates := resolve(turn):
-            return rates
-    return None
+    return _PRICING_CATALOG.resolve(turn)
 
 
 def _usage_attempts(message: PromptMessageExtended) -> tuple[TurnUsage, ...]:
@@ -348,15 +671,7 @@ def _tier_label(turn: TurnUsage) -> str:
 
 
 def _context_label(turn: TurnUsage) -> str:
-    if turn.prompt.total is None:
-        return "—"
-    if _gpt_56_variant(turn.model.casefold()) is not None:
-        threshold = _GPT_56_LONG_CONTEXT_THRESHOLD
-    elif _is_grok_model(turn.model):
-        threshold = _GROK_LONG_CONTEXT_THRESHOLD
-    else:
-        return "—"
-    return "long" if turn.prompt.total > threshold else "short"
+    return _PRICING_CATALOG.context_label(turn)
 
 
 def _format_tokens(value: int | None) -> str:
