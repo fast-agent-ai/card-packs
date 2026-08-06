@@ -52,6 +52,9 @@ Hardcoded USD-per-million-token rates are included for:
 - Muse Spark 1.1 and 1.2 Standard (`$1.25` input, `$0.15` cached input,
   `$4.25` output) and Muse Spark 1.2 Contributor (`$0.10` input, `$0.002`
   cached input, `$0.20` output).
+- Grok 4.3 and 4.5 (`$2.00` input, `$0.30` cached input, `$6.00` output);
+  prompts over 200,000 tokens use `$4.00` input, `$0.60` cached input, and
+  `$12.00` output.
 
 GPT-5.6 prompts over 272,000 tokens use long-context rates. Where a provider
 does not publish a separate cache-write tariff, cache-write tokens use the

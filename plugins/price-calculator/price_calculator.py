@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 
 _TOKENS_PER_MILLION = 1_000_000
 _GPT_56_LONG_CONTEXT_THRESHOLD = 272_000
+_GROK_LONG_CONTEXT_THRESHOLD = 200_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +72,9 @@ _KIMI_K3 = Rates(3.00, 0.30, 15.00)
 _DEEPSEEK_V4_FLASH = Rates(0.14, 0.002, 0.28)
 _MUSE_SPARK_STANDARD = Rates(1.25, 0.15, 4.25)
 _MUSE_SPARK_CONTRIBUTOR = Rates(0.10, 0.002, 0.20)
+_GROK_STANDARD = Rates(2.00, 0.30, 6.00)
+_GROK_LONG_CONTEXT = Rates(4.00, 0.60, 12.00)
+_GROK_MODELS = frozenset({"grok-4.3", "grok-4.5"})
 
 
 def _gpt_56_variant(model: str) -> str | None:
@@ -127,11 +131,24 @@ def _muse_spark_rates(turn: TurnUsage) -> Rates | None:
     return None
 
 
+def _is_grok_model(model: str) -> bool:
+    return model.casefold().removeprefix("xai.") in _GROK_MODELS
+
+
+def _grok_rates(turn: TurnUsage) -> Rates | None:
+    if not _is_grok_model(turn.model) or turn.prompt.total is None:
+        return None
+    if turn.prompt.total > _GROK_LONG_CONTEXT_THRESHOLD:
+        return _GROK_LONG_CONTEXT
+    return _GROK_STANDARD
+
+
 _RATE_RESOLVERS = (
     _gpt_56_rates,
     _kimi_k3_rates,
     _deepseek_v4_flash_rates,
     _muse_spark_rates,
+    _grok_rates,
 )
 
 
@@ -331,9 +348,15 @@ def _tier_label(turn: TurnUsage) -> str:
 
 
 def _context_label(turn: TurnUsage) -> str:
-    if _gpt_56_variant(turn.model.casefold()) is None or turn.prompt.total is None:
+    if turn.prompt.total is None:
         return "—"
-    return "long" if turn.prompt.total > _GPT_56_LONG_CONTEXT_THRESHOLD else "short"
+    if _gpt_56_variant(turn.model.casefold()) is not None:
+        threshold = _GPT_56_LONG_CONTEXT_THRESHOLD
+    elif _is_grok_model(turn.model):
+        threshold = _GROK_LONG_CONTEXT_THRESHOLD
+    else:
+        return "—"
+    return "long" if turn.prompt.total > threshold else "short"
 
 
 def _format_tokens(value: int | None) -> str:
