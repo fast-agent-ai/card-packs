@@ -1,6 +1,6 @@
 schema_version: 2
 name: price-calculator
-version: 0.2.10
+version: 0.3.0
 description: Display estimated model cost for the last turn and current session.
 commands:
   cost:

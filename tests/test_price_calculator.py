@@ -191,10 +191,12 @@ def _turn(
     cost_usd=None,
     tool_calls=0,
     timestamp=0.0,
+    provider="codexresponses",
+    upstream_provider=None,
 ):
     return _Turn(
-        provider="codexresponses",
-        upstream_provider=None,
+        provider=provider,
+        upstream_provider=upstream_provider,
         usage_schema="openai-responses",
         model=model,
         requested_service_tier=tier,
@@ -280,6 +282,227 @@ class PriceCalculatorTests(unittest.TestCase):
         self.assertEqual(0, price.unpriced_calls)
         self.assertAlmostEqual(0.100 + 0.002 + 0.0125 + 0.060, price.usd)
 
+    def test_bundled_pricing_catalog_loads(self):
+        catalog_path = (
+            Path(__file__).resolve().parents[1]
+            / "plugins"
+            / "price-calculator"
+            / "pricing_catalog.json"
+        )
+
+        self.assertTrue(catalog_path.is_file())
+        self.assertEqual("2026-08-06.1", self.plugin._PRICING_CATALOG.version)
+        self.assertEqual(18, len(self.plugin._PRICING_CATALOG.rules))
+
+    def test_bundled_catalog_does_not_cross_provider_boundaries(self):
+        price = self.plugin.calculate_price(
+            (
+                _turn(
+                    "gpt-5.6-terra",
+                    prompt=100_000,
+                    output=10_000,
+                    provider="hf",
+                    upstream_provider="fireworks-ai",
+                ),
+            )
+        )
+
+        self.assertEqual(0, price.usd)
+        self.assertEqual(1, price.unpriced_calls)
+
+    def test_pricing_catalog_prefers_hf_upstream_specific_rates(self):
+        def rule(rule_id, input_rate, *, providers=None, upstream_providers=None):
+            match = {"model": {"values": ["shared/model"]}}
+            if providers is not None:
+                match["providers"] = providers
+            if upstream_providers is not None:
+                match["upstream_providers"] = upstream_providers
+            return {
+                "id": rule_id,
+                "match": match,
+                "rates": {
+                    "input": str(input_rate),
+                    "cache_read": "0",
+                    "output": "0",
+                },
+            }
+
+        catalog = self.plugin._parse_catalog(
+            {
+                "schema": "fast-agent.pricing/v1",
+                "catalog_version": "test",
+                "currency": "USD",
+                "unit": "usd_per_million_tokens",
+                "rules": [
+                    rule("generic", 1),
+                    rule("hf", 2, providers=["hf"]),
+                    rule(
+                        "hf-fireworks",
+                        3,
+                        providers=["hf"],
+                        upstream_providers=["fireworks-ai"],
+                    ),
+                ],
+            }
+        )
+
+        fireworks = _turn(
+            "shared/model",
+            prompt=1,
+            output=1,
+            provider="hf",
+            upstream_provider="fireworks-ai",
+        )
+        together = _turn(
+            "shared/model",
+            prompt=1,
+            output=1,
+            provider="hf",
+            upstream_provider="together",
+        )
+        direct = _turn("shared/model", prompt=1, output=1, provider="openai")
+
+        self.assertEqual(3, catalog.resolve(fireworks).input)
+        self.assertEqual(2, catalog.resolve(together).input)
+        self.assertEqual(1, catalog.resolve(direct).input)
+
+    def test_pricing_catalog_resolves_effective_dates_and_service_tiers(self):
+        def rule(rule_id, input_rate, tier, effective):
+            return {
+                "id": rule_id,
+                "match": {
+                    "model": {"values": ["dated-model"]},
+                    "service_tiers": [tier],
+                },
+                "effective": effective,
+                "rates": {
+                    "input": str(input_rate),
+                    "cache_read": "0",
+                    "output": "0",
+                },
+            }
+
+        catalog = self.plugin._parse_catalog(
+            {
+                "schema": "fast-agent.pricing/v1",
+                "catalog_version": "test",
+                "currency": "USD",
+                "unit": "usd_per_million_tokens",
+                "rules": [
+                    {
+                        "id": "baseline",
+                        "match": {"model": {"values": ["dated-model"]}},
+                        "rates": {
+                            "input": "8",
+                            "cache_read": "0",
+                            "output": "0",
+                        },
+                    },
+                    rule(
+                        "old-standard",
+                        4,
+                        "standard",
+                        {"until": "2026-01-01T00:00:00Z"},
+                    ),
+                    rule(
+                        "new-standard",
+                        2,
+                        "standard",
+                        {"from": "2026-01-01T00:00:00Z"},
+                    ),
+                    rule(
+                        "new-flex",
+                        1,
+                        "flex",
+                        {"from": "2026-01-01T00:00:00Z"},
+                    ),
+                    {
+                        **rule(
+                            "new-long-standard",
+                            3,
+                            "standard",
+                            {"from": "2026-01-01T00:00:00Z"},
+                        ),
+                        "prompt_tokens": {"minimum": 100},
+                    },
+                ],
+            }
+        )
+
+        old = _turn("dated-model", prompt=1, output=1, timestamp=0)
+        standard = _turn("dated-model", prompt=1, output=1, timestamp=2_000_000_000)
+        flex = _turn(
+            "dated-model",
+            prompt=1,
+            output=1,
+            tier="flex",
+            timestamp=2_000_000_000,
+        )
+        long_standard = _turn(
+            "dated-model",
+            prompt=100,
+            output=1,
+            timestamp=2_000_000_000,
+        )
+
+        self.assertEqual(4, catalog.resolve(old).input)
+        self.assertEqual(2, catalog.resolve(standard).input)
+        self.assertEqual(1, catalog.resolve(flex).input)
+        self.assertEqual(3, catalog.resolve(long_standard).input)
+
+    def test_pricing_catalog_rejects_unknown_fields(self):
+        with self.assertRaisesRegex(ValueError, "unknown fields"):
+            self.plugin._parse_catalog(
+                {
+                    "schema": "fast-agent.pricing/v1",
+                    "catalog_version": "test",
+                    "currency": "USD",
+                    "unit": "usd_per_million_tokens",
+                    "rules": [],
+                    "unexpected": True,
+                }
+            )
+
+    def test_pricing_catalog_rejects_ambiguous_and_unscoped_rules(self):
+        root = {
+            "schema": "fast-agent.pricing/v1",
+            "catalog_version": "test",
+            "currency": "USD",
+            "unit": "usd_per_million_tokens",
+        }
+        rule = {
+            "match": {"model": {"values": ["model"]}},
+            "rates": {"input": "1", "cache_read": "0", "output": "1"},
+        }
+
+        with self.assertRaisesRegex(ValueError, "Ambiguous pricing rules"):
+            self.plugin._parse_catalog(
+                {
+                    **root,
+                    "rules": [
+                        {"id": "one", **rule},
+                        {"id": "two", **rule},
+                    ],
+                }
+            )
+
+        with self.assertRaisesRegex(ValueError, "requires match.providers"):
+            self.plugin._parse_catalog(
+                {
+                    **root,
+                    "rules": [
+                        {
+                            "id": "unscoped",
+                            **rule,
+                            "match": {
+                                "model": {"values": ["model"]},
+                                "upstream_providers": ["fireworks-ai"],
+                            },
+                        }
+                    ],
+                }
+            )
+
     def test_gpt_56_long_context_starts_above_272k(self):
         short = self.plugin.calculate_price(
             (_turn("gpt-5.6-sol", prompt=272_000, output=10_000),)
@@ -292,20 +515,44 @@ class PriceCalculatorTests(unittest.TestCase):
         self.assertAlmostEqual(272_001 * 10 / 1_000_000 + 0.45, long.usd)
 
     def test_kimi_provider_routes_and_deepseek(self):
-        for model in (
-            "kimi-k3",
-            "moonshotai/kimi-k3",
-            "moonshotai/Kimi-K3:fireworks-ai",
-            "moonshotai/Kimi-K3:together",
-        ):
+        for model in ("kimi-k3", "moonshotai/kimi-k3"):
             with self.subTest(model=model):
                 price = self.plugin.calculate_price(
-                    (_turn(model, prompt=100_000, output=20_000),)
+                    (
+                        _turn(
+                            model,
+                            prompt=100_000,
+                            output=20_000,
+                            provider="moonshot",
+                        ),
+                    )
                 )
                 self.assertAlmostEqual(0.6, price.usd)
 
+        for upstream_provider in ("fireworks-ai", "together"):
+            with self.subTest(upstream_provider=upstream_provider):
+                price = self.plugin.calculate_price(
+                    (
+                        _turn(
+                            "moonshotai/Kimi-K3",
+                            prompt=100_000,
+                            output=20_000,
+                            provider="hf",
+                            upstream_provider=upstream_provider,
+                        ),
+                    )
+                )
+                self.assertEqual(1, price.unpriced_calls)
+
         deepseek = self.plugin.calculate_price(
-            (_turn("deepseek-v4-flash", prompt=100_000, output=20_000),)
+            (
+                _turn(
+                    "deepseek-v4-flash",
+                    prompt=100_000,
+                    output=20_000,
+                    provider="deepseek",
+                ),
+            )
         )
         self.assertAlmostEqual(0.0196, deepseek.usd)
 
@@ -317,7 +564,15 @@ class PriceCalculatorTests(unittest.TestCase):
         ):
             with self.subTest(model=model):
                 price = self.plugin.calculate_price(
-                    (_turn(model, prompt=1_000_000, output=1_000_000, cached=200_000),)
+                    (
+                        _turn(
+                            model,
+                            prompt=1_000_000,
+                            output=1_000_000,
+                            cached=200_000,
+                            provider="metaai",
+                        ),
+                    )
                 )
                 self.assertEqual(0, price.unpriced_calls)
                 self.assertAlmostEqual(expected, price.usd)
@@ -330,12 +585,14 @@ class PriceCalculatorTests(unittest.TestCase):
                     prompt=200_000,
                     output=10_000,
                     cached=50_000,
+                    provider="xai",
                 )
                 long = _turn(
                     model,
                     prompt=200_001,
                     output=10_000,
                     cached=50_000,
+                    provider="xai",
                 )
 
                 short_price = self.plugin.calculate_price((short,))
@@ -356,6 +613,7 @@ class PriceCalculatorTests(unittest.TestCase):
                     prompt=100_000,
                     output=20_000,
                     cached=20_000,
+                    provider="deepseek",
                 ),
             )
         )
@@ -366,6 +624,7 @@ class PriceCalculatorTests(unittest.TestCase):
                     prompt=100_000,
                     output=20_000,
                     cached=20_000,
+                    provider="moonshot",
                 ),
             )
         )
@@ -376,6 +635,7 @@ class PriceCalculatorTests(unittest.TestCase):
                     prompt=100_000,
                     output=20_000,
                     cache_write=20_000,
+                    provider="moonshot",
                 ),
             )
         )
@@ -403,7 +663,12 @@ class PriceCalculatorTests(unittest.TestCase):
         self.assertEqual(3, price.unpriced_calls)
 
     def test_display_reports_last_and_session(self):
-        first = _turn("deepseek-v4-flash", prompt=100_000, output=20_000)
+        first = _turn(
+            "deepseek-v4-flash",
+            prompt=100_000,
+            output=20_000,
+            provider="deepseek",
+        )
         second = _turn("gpt-5.6-luna", prompt=100_000, output=10_000)
         ctx = SimpleNamespace(
             turn_usage=(second,),
@@ -455,7 +720,12 @@ class PriceCalculatorTests(unittest.TestCase):
 
     def test_cost_command_rolls_up_user_turns_with_subagent_ledgers(self):
         parent = _turn("gpt-5.6-terra", prompt=100_000, output=10_000)
-        child = _turn("deepseek-v4-flash", prompt=20_000, output=2_000)
+        child = _turn(
+            "deepseek-v4-flash",
+            prompt=20_000,
+            output=2_000,
+            provider="deepseek",
+        )
         ctx = SimpleNamespace(
             arguments="",
             usage=None,
