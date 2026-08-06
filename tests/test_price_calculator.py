@@ -322,6 +322,32 @@ class PriceCalculatorTests(unittest.TestCase):
                 self.assertEqual(0, price.unpriced_calls)
                 self.assertAlmostEqual(expected, price.usd)
 
+    def test_grok_long_context_rates_start_above_200k(self):
+        for model in ("grok-4.3", "xai.grok-4.5"):
+            with self.subTest(model=model):
+                short = _turn(
+                    model,
+                    prompt=200_000,
+                    output=10_000,
+                    cached=50_000,
+                )
+                long = _turn(
+                    model,
+                    prompt=200_001,
+                    output=10_000,
+                    cached=50_000,
+                )
+
+                short_price = self.plugin.calculate_price((short,))
+                long_price = self.plugin.calculate_price((long,))
+
+                self.assertEqual(0, short_price.unpriced_calls)
+                self.assertAlmostEqual(0.375, short_price.usd)
+                self.assertEqual("short", self.plugin._context_label(short))
+                self.assertEqual(0, long_price.unpriced_calls)
+                self.assertAlmostEqual(0.750004, long_price.usd)
+                self.assertEqual("long", self.plugin._context_label(long))
+
     def test_cached_input_and_cache_write_fallback_rates(self):
         deepseek = self.plugin.calculate_price(
             (
