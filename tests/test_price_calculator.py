@@ -291,8 +291,8 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-08-06.1", self.plugin._PRICING_CATALOG.version)
-        self.assertEqual(18, len(self.plugin._PRICING_CATALOG.rules))
+        self.assertEqual("2026-08-12.2", self.plugin._PRICING_CATALOG.version)
+        self.assertEqual(21, len(self.plugin._PRICING_CATALOG.rules))
 
     def test_bundled_catalog_does_not_cross_provider_boundaries(self):
         price = self.plugin.calculate_price(
@@ -556,6 +556,19 @@ class PriceCalculatorTests(unittest.TestCase):
         )
         self.assertAlmostEqual(0.0196, deepseek.usd)
 
+        deepseek_pro = self.plugin.calculate_price(
+            (
+                _turn(
+                    "deepseek/deepseek-v4-pro",
+                    prompt=100_000,
+                    output=20_000,
+                    provider="deepseek",
+                ),
+            )
+        )
+        self.assertEqual(0, deepseek_pro.unpriced_calls)
+        self.assertAlmostEqual(0.0609, deepseek_pro.usd)
+
     def test_muse_spark_tier_rates(self):
         for model, expected in (
             ("muse-spark-1.1", 5.28),
@@ -578,7 +591,11 @@ class PriceCalculatorTests(unittest.TestCase):
                 self.assertAlmostEqual(expected, price.usd)
 
     def test_grok_long_context_rates_start_above_200k(self):
-        for model in ("grok-4.3", "xai.grok-4.5"):
+        for model, expected_short, expected_long in (
+            ("grok-4.3", 0.375, 0.750004),
+            ("xai.grok-4.5", 0.375, 0.750004),
+            ("xai.grok-4.6", 0.385, 0.770004),
+        ):
             with self.subTest(model=model):
                 short = _turn(
                     model,
@@ -599,10 +616,10 @@ class PriceCalculatorTests(unittest.TestCase):
                 long_price = self.plugin.calculate_price((long,))
 
                 self.assertEqual(0, short_price.unpriced_calls)
-                self.assertAlmostEqual(0.375, short_price.usd)
+                self.assertAlmostEqual(expected_short, short_price.usd)
                 self.assertEqual("short", self.plugin._context_label(short))
                 self.assertEqual(0, long_price.unpriced_calls)
-                self.assertAlmostEqual(0.750004, long_price.usd)
+                self.assertAlmostEqual(expected_long, long_price.usd)
                 self.assertEqual("long", self.plugin._context_label(long))
 
     def test_cached_input_and_cache_write_fallback_rates(self):
@@ -610,6 +627,17 @@ class PriceCalculatorTests(unittest.TestCase):
             (
                 _turn(
                     "deepseek-v4-flash",
+                    prompt=100_000,
+                    output=20_000,
+                    cached=20_000,
+                    provider="deepseek",
+                ),
+            )
+        )
+        deepseek_pro = self.plugin.calculate_price(
+            (
+                _turn(
+                    "deepseek-v4-pro",
                     prompt=100_000,
                     output=20_000,
                     cached=20_000,
@@ -641,6 +669,7 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertAlmostEqual(0.01684, deepseek.usd)
+        self.assertAlmostEqual(0.0522725, deepseek_pro.usd)
         self.assertAlmostEqual(0.546, kimi_cached.usd)
         self.assertAlmostEqual(0.6, kimi_write.usd)
 
