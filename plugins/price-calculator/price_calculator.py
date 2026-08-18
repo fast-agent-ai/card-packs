@@ -674,11 +674,50 @@ def _format_price(price: Price) -> str:
     return _format_adaptive_usd(price.usd)
 
 
-def _session_cost_token(price: Price, *, has_usage: bool) -> str | None:
-    if not has_usage or (price.unpriced_calls and price.usd == 0):
+def _format_compact_count(value: int) -> str:
+    magnitude = abs(value)
+    if magnitude < 1_000_000:
+        return f"{value:,}"
+
+    units = ((1_000_000, "M"), (1_000_000_000, "B"), (1_000_000_000_000, "T"))
+    unit_index = 0
+    for index, (candidate_divisor, _suffix) in enumerate(units[1:], start=1):
+        if magnitude < candidate_divisor:
+            break
+        unit_index = index
+
+    divisor, suffix = units[unit_index]
+    scaled = value / divisor
+    decimals = max(0, 3 - len(str(int(abs(scaled)))))
+    if round(abs(scaled), decimals) >= 1_000 and unit_index < len(units) - 1:
+        divisor, suffix = units[unit_index + 1]
+        scaled = value / divisor
+        decimals = max(0, 3 - len(str(int(abs(scaled)))))
+    return f"{scaled:.{decimals}f}{suffix}"
+
+
+def _session_token_usage(turns: tuple[TurnUsage, ...]) -> str | None:
+    if not turns:
         return None
-    incomplete = "+" if price.unpriced_calls else ""
-    return f"{_format_adaptive_usd(price.usd)}{incomplete} session"
+    prompt = _complete_token_sum(tuple(turn.prompt.total for turn in turns))
+    completion = _complete_token_sum(tuple(turn.completion.total for turn in turns))
+    parts: list[str] = []
+    if prompt is not None:
+        parts.append(f"{_format_compact_count(prompt)} in")
+    if completion is not None:
+        parts.append(f"{_format_compact_count(completion)} out")
+    return " · ".join(parts) or None
+
+
+def _herdr_usage_token(
+    turn: Price,
+    session: Price,
+    *,
+    session_usage: tuple[TurnUsage, ...],
+) -> str | None:
+    if session_usage and not turn.unpriced_calls and not session.unpriced_calls:
+        return f"{_format_adaptive_usd(turn.usd)} ({_format_adaptive_usd(session.usd)})"
+    return _session_token_usage(session_usage)
 
 
 def _herdr_metadata_command(value: str | None) -> list[str] | None:
@@ -1205,7 +1244,7 @@ async def display_cost(ctx: PluginPostUserTurnContext) -> str | None:
     turn = calculate_price(ctx.turn_usage)
     session = calculate_price(ctx.session_usage)
     await _report_session_cost_to_herdr(
-        _session_cost_token(session, has_usage=bool(ctx.session_usage))
+        _herdr_usage_token(turn, session, session_usage=ctx.session_usage)
     )
     unpriced = max(turn.unpriced_calls, session.unpriced_calls)
     suffix = (

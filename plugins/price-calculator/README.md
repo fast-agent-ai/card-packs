@@ -6,11 +6,12 @@ Displays estimated model cost after each successful top-level interactive turn:
 Cost: $0.002400 last · $0.0137 session
 ```
 
-When running inside Herdr, the plugin also reports the current session total as
-the custom `$cost` pane token, for example `$0.0137 session`. A partial total
-with one or more unpriced model calls includes a trailing `+`; a wholly
-unpriced or empty session clears the token. Add `$cost` to a Herdr sidebar row
-to display it.
+When running inside Herdr, the plugin also reports a compact custom `$cost`
+pane token. Fully priced usage shows the last turn followed by the session
+total, for example `$0.002400 ($0.0137)`. If either cost is incomplete because
+of unpriced model calls, the token falls back to cumulative input/output usage,
+for example `12.1M in · 56,028 out`. An empty session clears the token. Add
+`$cost` to a Herdr sidebar row to display it.
 
 Requires fast-agent 0.10.2 or later for post-user-turn plugin hooks, command
 usage access, and Rich presentation styles.

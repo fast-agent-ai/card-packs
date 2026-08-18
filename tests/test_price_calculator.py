@@ -756,12 +756,12 @@ class PriceCalculatorTests(unittest.TestCase):
             argument_pairs,
         )
         self.assertIn(
-            ["--token", "cost=$0.0516 session"],
+            ["--token", "cost=$0.0320 ($0.0516)"],
             argument_pairs,
         )
 
-    def test_display_clears_unavailable_herdr_cost(self):
-        unknown = _turn("unknown", prompt=100, output=10)
+    def test_display_falls_back_to_tokens_for_unavailable_herdr_cost(self):
+        unknown = _turn("unknown", prompt=12_100_000, output=56_028)
         ctx = SimpleNamespace(
             turn_usage=(unknown,),
             session_usage=(unknown,),
@@ -783,10 +783,34 @@ class PriceCalculatorTests(unittest.TestCase):
 
         command = run.call_args.args[0]
         self.assertIn(
-            ["--clear-token", "cost"],
+            ["--token", "cost=12.1M in · 56,028 out"],
             [command[index : index + 2] for index in range(len(command) - 1)],
         )
         self.assertIn("n/a", line)
+
+    def test_display_clears_herdr_usage_without_turn_usage(self):
+        ctx = SimpleNamespace(turn_usage=(), session_usage=())
+
+        with (
+            mock.patch.dict(
+                self.plugin.os.environ,
+                {
+                    "HERDR_ENV": "1",
+                    "HERDR_PANE_ID": "w1:p2",
+                    "HERDR_BIN_PATH": "/opt/herdr",
+                },
+                clear=True,
+            ),
+            mock.patch.object(self.plugin.subprocess, "run") as run,
+        ):
+            line = asyncio.run(self.plugin.display_cost(ctx))
+
+        command = run.call_args.args[0]
+        self.assertIn(
+            ["--clear-token", "cost"],
+            [command[index : index + 2] for index in range(len(command) - 1)],
+        )
+        self.assertIsNone(line)
 
     def test_display_does_not_invoke_herdr_outside_herdr(self):
         turn = _turn("gpt-5.6-luna", prompt=100_000, output=10_000)
