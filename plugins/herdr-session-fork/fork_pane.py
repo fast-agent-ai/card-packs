@@ -15,7 +15,8 @@ from fast_agent.command_actions import (
 )
 
 _PLUGIN_NAME = "herdr-session-fork"
-_VALID_DIRECTIONS = {"right", "down"}
+_VALID_DIRECTIONS = {"auto", "right", "down"}
+_VALID_FOCUS_TARGETS = {"fork", "original"}
 
 
 def _title(arguments: str) -> str | None:
@@ -32,16 +33,44 @@ def _fast_agent_binary() -> str:
     return shutil.which("fast-agent") or "fast-agent"
 
 
-def _direction(ctx: PluginCommandActionContext) -> str:
+def _config(ctx: PluginCommandActionContext) -> dict[str, Any]:
     if ctx.settings is None:
-        return "right"
+        return {}
     config = ctx.settings.plugins.config.get(_PLUGIN_NAME, {})
-    direction = config.get("direction", "right")
+    return config if isinstance(config, dict) else {}
+
+
+def _direction(ctx: PluginCommandActionContext) -> str:
+    direction = _config(ctx).get("direction", "auto")
     return (
         direction
         if isinstance(direction, str) and direction in _VALID_DIRECTIONS
-        else "right"
+        else "auto"
     )
+
+
+def _focus_target(ctx: PluginCommandActionContext) -> str:
+    target = _config(ctx).get("focus", "original")
+    return (
+        target
+        if isinstance(target, str) and target in _VALID_FOCUS_TARGETS
+        else "original"
+    )
+
+
+def _split_ratio(ctx: PluginCommandActionContext) -> float | None:
+    ratio = _config(ctx).get("ratio")
+    if isinstance(ratio, int | float) and not isinstance(ratio, bool):
+        value = float(ratio)
+        return value if 0.1 <= value <= 0.9 else None
+    return None
+
+
+def _startup_timeout_ms(ctx: PluginCommandActionContext) -> int:
+    timeout = _config(ctx).get("startup_timeout_ms", 5_000)
+    if isinstance(timeout, int) and not isinstance(timeout, bool):
+        return min(max(timeout, 0), 30_000)
+    return 5_000
 
 
 def _decode_response(
@@ -97,6 +126,54 @@ def _pane_id(payload: dict[str, Any]) -> str:
     return pane_id
 
 
+def _auto_direction(payload: dict[str, Any], pane_id: str) -> str:
+    try:
+        panes = payload["result"]["layout"]["panes"]
+    except (KeyError, TypeError) as exc:
+        raise RuntimeError("Herdr layout response did not include panes") from exc
+    if not isinstance(panes, list):
+        raise TypeError("Herdr layout response included invalid panes")
+    for pane in panes:
+        if not isinstance(pane, dict) or pane.get("pane_id") != pane_id:
+            continue
+        rect = pane.get("rect")
+        if not isinstance(rect, dict):
+            break
+        width = rect.get("width")
+        height = rect.get("height")
+        if (
+            isinstance(width, int)
+            and isinstance(height, int)
+            and width > 0
+            and height > 0
+        ):
+            return "right" if width >= height * 2 else "down"
+        break
+    raise RuntimeError(
+        "Herdr layout response did not include the current pane geometry"
+    )
+
+
+async def _split_direction(
+    herdr: str,
+    ctx: PluginCommandActionContext,
+    pane_id: str,
+) -> str:
+    configured = _direction(ctx)
+    if configured != "auto":
+        return configured
+    layout = await _run_herdr(herdr, "pane", "layout", "--pane", pane_id)
+    assert layout is not None
+    return _auto_direction(layout, pane_id)
+
+
+def _shell_join(arguments: list[str], *, windows: bool | None = None) -> str:
+    use_windows_quoting = os.name == "nt" if windows is None else windows
+    if use_windows_quoting:
+        return subprocess.list2cmdline(arguments)
+    return shlex.join(arguments)
+
+
 def _resume_command(
     *,
     workspace: Path,
@@ -104,7 +181,7 @@ def _resume_command(
     session_id: str,
     model: str,
 ) -> str:
-    return shlex.join(
+    return _shell_join(
         [
             _fast_agent_binary(),
             "go",
@@ -153,6 +230,60 @@ async def _report_session_presentation(
     await _run_herdr(herdr, *arguments, expect_json=False)
 
 
+def _pane_agent(payload: dict[str, Any]) -> str | None:
+    try:
+        agent = payload["result"]["pane"].get("agent")
+    except (KeyError, TypeError, AttributeError):
+        return None
+    return agent if isinstance(agent, str) else None
+
+
+def _pane_output(payload: dict[str, Any]) -> str | None:
+    try:
+        output = payload["result"]["output"]
+    except (KeyError, TypeError):
+        return None
+    if not isinstance(output, str):
+        return None
+    normalized = " / ".join(
+        line.strip() for line in output.splitlines() if line.strip()
+    )
+    return normalized[-400:] or None
+
+
+async def _confirm_child_startup(
+    herdr: str,
+    *,
+    pane_id: str,
+    timeout_ms: int,
+) -> str | None:
+    if timeout_ms == 0:
+        return None
+    deadline = asyncio.get_running_loop().time() + (timeout_ms / 1_000)
+    while True:
+        pane = await _run_herdr(herdr, "pane", "get", pane_id)
+        assert pane is not None
+        if _pane_agent(pane) == "fast-agent":
+            return None
+        if asyncio.get_running_loop().time() >= deadline:
+            break
+        await asyncio.sleep(0.1)
+
+    output = await _run_herdr(
+        herdr,
+        "pane",
+        "read",
+        pane_id,
+        "--source",
+        "recent-unwrapped",
+        "--lines",
+        "20",
+    )
+    detail = _pane_output(output) if output is not None else None
+    suffix = f"; recent output: {detail}" if detail else ""
+    return f"fast-agent startup was not confirmed within {timeout_ms}ms{suffix}"
+
+
 async def fork_pane(ctx: PluginCommandActionContext) -> PluginCommandActionResult:
     if not ctx.is_tui:
         return PluginCommandActionResult(
@@ -194,6 +325,7 @@ async def fork_pane(ctx: PluginCommandActionContext) -> PluginCommandActionResul
         current = await _run_herdr(herdr, "pane", "current", "--current")
         assert current is not None
         current_pane_id = _pane_id(current)
+        direction = await _split_direction(herdr, ctx, current_pane_id)
     except (RuntimeError, OSError, subprocess.TimeoutExpired, TypeError) as exc:
         return PluginCommandActionResult(message=f"Could not connect to Herdr: {exc}")
 
@@ -228,16 +360,24 @@ async def fork_pane(ctx: PluginCommandActionContext) -> PluginCommandActionResul
 
     pane_id: str | None = None
     try:
-        split = await _run_herdr(
-            herdr,
+        split_arguments = [
             "pane",
             "split",
             "--current",
             "--direction",
-            _direction(ctx),
+            direction,
             "--cwd",
             str(ctx.session_cwd or workspace),
-            "--focus",
+        ]
+        ratio = _split_ratio(ctx)
+        if ratio is not None:
+            split_arguments.extend(["--ratio", str(ratio)])
+        split_arguments.append(
+            "--focus" if _focus_target(ctx) == "original" else "--no-focus"
+        )
+        split = await _run_herdr(
+            herdr,
+            *split_arguments,
         )
         assert split is not None
         pane_id = _pane_id(split)
@@ -259,6 +399,16 @@ async def fork_pane(ctx: PluginCommandActionContext) -> PluginCommandActionResul
             command,
             expect_json=False,
         )
+        try:
+            startup_warning = await _confirm_child_startup(
+                herdr,
+                pane_id=pane_id,
+                timeout_ms=_startup_timeout_ms(ctx),
+            )
+            if startup_warning is not None:
+                presentation_warnings.append(startup_warning)
+        except (RuntimeError, OSError, subprocess.TimeoutExpired, TypeError) as exc:
+            presentation_warnings.append(f"startup confirmation: {exc}")
     except (RuntimeError, OSError, subprocess.TimeoutExpired, TypeError) as exc:
         cleanup_notice = ""
         if pane_id is not None:

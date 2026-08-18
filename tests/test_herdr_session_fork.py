@@ -64,16 +64,18 @@ def _context(
     *,
     arguments: str = "",
     model: str | None = "provider.current-model?reasoning=high",
+    plugin_config: dict[str, object] | None = None,
 ) -> SimpleNamespace:
+    config = {"direction": "down", "startup_timeout_ms": 0}
+    if plugin_config is not None:
+        config.update(plugin_config)
     return SimpleNamespace(
         is_tui=True,
         arguments=arguments,
         agent=SimpleNamespace(config=SimpleNamespace(model=model)),
         context=SimpleNamespace(session_manager=manager),
         settings=SimpleNamespace(
-            plugins=SimpleNamespace(
-                config={"herdr-session-fork": {"direction": "down"}}
-            )
+            plugins=SimpleNamespace(config={"herdr-session-fork": config})
         ),
         session_cwd=Path("/tmp/shell cwd"),
     )
@@ -104,6 +106,47 @@ def test_run_herdr_accepts_empty_success_output(
     )
 
     assert result is None
+
+
+def test_auto_direction_uses_current_pane_geometry(plugin) -> None:
+    payload = {
+        "result": {
+            "layout": {
+                "panes": [
+                    {
+                        "pane_id": "w1:p1",
+                        "rect": {"width": 160, "height": 40},
+                    },
+                    {
+                        "pane_id": "w1:p2",
+                        "rect": {"width": 70, "height": 40},
+                    },
+                ]
+            }
+        }
+    }
+
+    assert plugin._auto_direction(payload, "w1:p1") == "right"
+    assert plugin._auto_direction(payload, "w1:p2") == "down"
+
+
+def test_windows_resume_command_uses_windows_quoting(plugin, monkeypatch) -> None:
+    monkeypatch.setattr(
+        plugin, "_fast_agent_binary", lambda: r"C:\Program Files\fast-agent.exe"
+    )
+    command = plugin._shell_join(
+        [
+            plugin._fast_agent_binary(),
+            "go",
+            "--workspace",
+            r"C:\work space",
+        ],
+        windows=True,
+    )
+
+    assert (
+        command == '"C:\\Program Files\\fast-agent.exe" go --workspace "C:\\work space"'
+    )
 
 
 @pytest.mark.asyncio
@@ -225,6 +268,90 @@ async def test_inherited_session_title_follows_the_forked_pane(
         "Current pane forked into session `fork-session` titled `Original branch`"
         in result.markdown
     )
+
+
+@pytest.mark.asyncio
+async def test_supports_ratio_and_keeps_focus_on_fork(
+    plugin, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = _Manager()
+    calls: list[tuple[str, tuple[str, ...], bool]] = []
+
+    async def run_herdr(binary: str, *arguments: str, expect_json: bool = True):
+        calls.append((binary, arguments, expect_json))
+        if arguments[:2] == ("pane", "current"):
+            return {"result": {"pane": {"pane_id": "w1:p1"}}}
+        if arguments[:2] == ("pane", "split"):
+            return {"result": {"pane": {"pane_id": "w1:p2"}}}
+        return {"result": {}} if expect_json else None
+
+    monkeypatch.setenv("HERDR_ENV", "1")
+    monkeypatch.setattr(plugin, "_herdr_binary", lambda: "/usr/bin/herdr")
+    monkeypatch.setattr(plugin, "_fast_agent_binary", lambda: "/venv/bin/fast-agent")
+    monkeypatch.setattr(plugin, "_run_herdr", run_herdr)
+
+    await plugin.fork_pane(
+        _context(
+            manager,
+            plugin_config={"focus": "fork", "ratio": 0.4},
+        )
+    )
+
+    split_call = next(call for call in calls if call[1][:2] == ("pane", "split"))
+    assert split_call[1][-3:] == ("--ratio", "0.4", "--no-focus")
+
+
+@pytest.mark.asyncio
+async def test_confirms_child_startup_from_herdr_agent_detection(
+    plugin, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    async def run_herdr(_binary: str, *arguments: str, expect_json: bool = True):
+        del expect_json
+        calls.append(arguments)
+        return {"result": {"pane": {"agent": "fast-agent"}}}
+
+    monkeypatch.setattr(plugin, "_run_herdr", run_herdr)
+
+    warning = await plugin._confirm_child_startup(
+        "/usr/bin/herdr",
+        pane_id="w1:p2",
+        timeout_ms=1_000,
+    )
+
+    assert warning is None
+    assert calls == [("pane", "get", "w1:p2")]
+
+
+@pytest.mark.asyncio
+async def test_startup_confirmation_failure_does_not_close_running_pane(
+    plugin, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = _Manager()
+    calls: list[tuple[str, tuple[str, ...], bool]] = []
+
+    async def run_herdr(binary: str, *arguments: str, expect_json: bool = True):
+        calls.append((binary, arguments, expect_json))
+        if arguments[:2] == ("pane", "current"):
+            return {"result": {"pane": {"pane_id": "w1:p1"}}}
+        if arguments[:2] == ("pane", "split"):
+            return {"result": {"pane": {"pane_id": "w1:p2"}}}
+        return {"result": {}} if expect_json else None
+
+    async def fail_confirmation(*_arguments, **_kwargs):
+        raise RuntimeError("status unavailable")
+
+    monkeypatch.setenv("HERDR_ENV", "1")
+    monkeypatch.setattr(plugin, "_herdr_binary", lambda: "/usr/bin/herdr")
+    monkeypatch.setattr(plugin, "_fast_agent_binary", lambda: "/venv/bin/fast-agent")
+    monkeypatch.setattr(plugin, "_run_herdr", run_herdr)
+    monkeypatch.setattr(plugin, "_confirm_child_startup", fail_confirmation)
+
+    result = await plugin.fork_pane(_context(manager))
+
+    assert not any(call[1][:2] == ("pane", "close") for call in calls)
+    assert "startup confirmation: status unavailable" in result.markdown
 
 
 @pytest.mark.asyncio

@@ -12,8 +12,9 @@ The command uses fast-agent's normal session-fork behavior:
   current Herdr pane keeps displaying it.
 
 The command passes the active fast-agent workspace and home explicitly to the
-new process, along with the current agent model. It creates and focuses the new
-pane before launching the resumed session there.
+new process, along with the current agent model. It confirms that Herdr detects
+fast-agent in the sibling pane after launch and includes recent pane output in
+the warning if startup cannot be confirmed.
 
 ```text
 /fork-pane
@@ -30,7 +31,8 @@ only in the interactive TUI.
 
 ## Configuration
 
-New panes split to the right by default. Set `direction` to `down` if preferred:
+New panes choose `right` for wide panes and `down` for narrower panes. Set an
+explicit direction to disable geometry-based selection:
 
 ```yaml
 plugins:
@@ -40,6 +42,22 @@ plugins:
     herdr-session-fork:
       direction: down
 ```
+
+The original session receives focus by default. Keep working in the current
+fork instead, choose a split ratio, or tune startup confirmation with:
+
+```yaml
+plugins:
+  config:
+    herdr-session-fork:
+      focus: fork
+      ratio: 0.4
+      startup_timeout_ms: 10000
+```
+
+Valid `focus` values are `original` and `fork`. Ratios from `0.1` through `0.9`
+are passed to Herdr. Set `startup_timeout_ms: 0` to skip launch confirmation;
+the maximum is 30000.
 
 If pane creation or launch fails after the session was forked, the command
 leaves the current pane on the valid fork and prints a command for manually
