@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
+import os
+import subprocess
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from itertools import combinations
@@ -32,6 +36,11 @@ if TYPE_CHECKING:
 _TOKENS_PER_MILLION = 1_000_000
 _CATALOG_SCHEMA = "fast-agent.pricing/v1"
 _CATALOG_PATH = Path(__file__).with_name("pricing_catalog.json")
+_HERDR_SOURCE = "herdr:fast-agent:price-calculator"
+_HERDR_AGENT_SOURCE = "herdr:fast-agent"
+_HERDR_AGENT_LABEL = "fast-agent"
+_HERDR_TIMEOUT_SECONDS = 1.0
+_WINDOWS_CREATE_NO_WINDOW = 0x08000000
 
 
 @dataclass(frozen=True, slots=True)
@@ -665,6 +674,64 @@ def _format_price(price: Price) -> str:
     return _format_adaptive_usd(price.usd)
 
 
+def _session_cost_token(price: Price, *, has_usage: bool) -> str | None:
+    if not has_usage or (price.unpriced_calls and price.usd == 0):
+        return None
+    incomplete = "+" if price.unpriced_calls else ""
+    return f"{_format_adaptive_usd(price.usd)}{incomplete} session"
+
+
+def _herdr_metadata_command(value: str | None) -> list[str] | None:
+    if os.environ.get("HERDR_ENV") != "1":
+        return None
+
+    pane_id = os.environ.get("HERDR_PANE_ID", "").strip()
+    if not pane_id:
+        return None
+
+    command = [
+        os.environ.get("HERDR_BIN_PATH", "").strip() or "herdr",
+        "pane",
+        "report-metadata",
+        pane_id,
+        "--source",
+        _HERDR_SOURCE,
+        "--applies-to-source",
+        _HERDR_AGENT_SOURCE,
+        "--agent",
+        _HERDR_AGENT_LABEL,
+    ]
+    if value is None:
+        command.extend(("--clear-token", "cost"))
+    else:
+        command.extend(("--token", f"cost={value}"))
+    command.extend(("--seq", str(time.time_ns())))
+    return command
+
+
+def _run_herdr_metadata_command(command: list[str]) -> None:
+    subprocess.run(
+        command,
+        check=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=_HERDR_TIMEOUT_SECONDS,
+        creationflags=_WINDOWS_CREATE_NO_WINDOW if os.name == "nt" else 0,
+    )
+
+
+async def _report_session_cost_to_herdr(value: str | None) -> None:
+    command = _herdr_metadata_command(value)
+    if command is None:
+        return
+    try:
+        await asyncio.to_thread(_run_herdr_metadata_command, command)
+    except (OSError, RuntimeError, subprocess.SubprocessError):
+        # Sidebar metadata is optional and must not suppress the normal cost line.
+        return
+
+
 def _tier_label(turn: TurnUsage) -> str:
     tier = turn.requested_service_tier or turn.service_tier
     return "standard" if tier in (None, "default", "standard") else tier
@@ -1132,10 +1199,14 @@ async def cost_breakdown(ctx: PluginCommandActionContext) -> PluginCommandAction
 
 async def display_cost(ctx: PluginPostUserTurnContext) -> str | None:
     if not ctx.turn_usage:
+        await _report_session_cost_to_herdr(None)
         return None
 
     turn = calculate_price(ctx.turn_usage)
     session = calculate_price(ctx.session_usage)
+    await _report_session_cost_to_herdr(
+        _session_cost_token(session, has_usage=bool(ctx.session_usage))
+    )
     unpriced = max(turn.unpriced_calls, session.unpriced_calls)
     suffix = (
         f" [dim]· {unpriced} unpriced model {'call' if unpriced == 1 else 'calls'}[/dim]"
