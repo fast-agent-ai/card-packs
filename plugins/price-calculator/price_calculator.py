@@ -9,7 +9,7 @@ import os
 import subprocess
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from itertools import combinations
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -49,6 +49,7 @@ class Rates:
     cached_input: float
     output: float
     cache_write: float | None = None
+    cache_write_1h: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +88,22 @@ class _ModelMatcher:
 
 
 @dataclass(frozen=True, slots=True)
+class _UtcTimeRange:
+    start: int
+    until: int
+
+    def matches(self, second: int) -> bool:
+        if self.start < self.until:
+            return self.start <= second < self.until
+        return second >= self.start or second < self.until
+
+    def intervals(self) -> tuple[tuple[int, int], ...]:
+        if self.start < self.until:
+            return ((self.start, self.until),)
+        return ((self.start, 86_400), (0, self.until))
+
+
+@dataclass(frozen=True, slots=True)
 class _PricingRule:
     id: str
     model: _ModelMatcher
@@ -99,9 +116,10 @@ class _PricingRule:
     context: str | None = None
     effective_from: float | None = None
     effective_until: float | None = None
+    utc_time_ranges: tuple[_UtcTimeRange, ...] | None = None
 
     @property
-    def specificity(self) -> tuple[int, int, int, int, int, int, int]:
+    def specificity(self) -> tuple[int, int, int, int, int, int, int, int]:
         return (
             int(self.providers is not None) + int(self.upstream_providers is not None),
             int(self.upstream_providers is not None),
@@ -110,6 +128,7 @@ class _PricingRule:
             int(self.prompt_min > 0) + int(self.prompt_max is not None),
             int(self.effective_from is not None)
             + int(self.effective_until is not None),
+            int(self.utc_time_ranges is not None),
             int(not self.model.path_suffix),
         )
 
@@ -134,16 +153,25 @@ class _PricingRule:
             and upstream_provider not in self.upstream_providers
         ):
             return False
-        if include_tier and self.service_tiers is not None:
-            if _normalized_service_tier(turn) not in self.service_tiers:
-                return False
+        if (
+            include_tier
+            and self.service_tiers is not None
+            and _normalized_service_tier(turn) not in self.service_tiers
+        ):
+            return False
         if prompt_total < self.prompt_min:
             return False
         if self.prompt_max is not None and prompt_total > self.prompt_max:
             return False
         if self.effective_from is not None and turn.timestamp < self.effective_from:
             return False
-        return self.effective_until is None or turn.timestamp < self.effective_until
+        if self.effective_until is not None and turn.timestamp >= self.effective_until:
+            return False
+        if self.utc_time_ranges is None:
+            return True
+        instant = datetime.fromtimestamp(turn.timestamp, UTC)
+        second = instant.hour * 3600 + instant.minute * 60 + instant.second
+        return any(time_range.matches(second) for time_range in self.utc_time_ranges)
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,7 +201,9 @@ class _PricingCatalog:
             return "—"
         best_specificity = max(rule.specificity for rule in matches)
         contexts = {
-            rule.context for rule in matches if rule.specificity == best_specificity
+            rule.context
+            for rule in matches
+            if rule.context is not None and rule.specificity == best_specificity
         }
         return contexts.pop() if len(contexts) == 1 else "—"
 
@@ -195,14 +225,26 @@ def _provider_name(turn: TurnUsage) -> str:
 
 
 def _normalized_service_tier(turn: TurnUsage) -> str:
-    tier = turn.requested_service_tier or turn.service_tier
-    return "standard" if tier in (None, "default", "standard") else tier.casefold()
+    raw_usage = turn.raw_usage
+    if isinstance(raw_usage, dict) and raw_usage.get("speed") == "fast":
+        return "fast"
+    tier = turn.service_tier or turn.requested_service_tier
+    if tier in (None, "default", "standard"):
+        return "standard"
+    normalized = tier.casefold()
+    if normalized == "priority" and _provider_name(turn) in {
+        "codexresponses",
+        "openai",
+        "responses",
+    }:
+        return "fast"
+    return normalized
 
 
 def _require_object(value: object, label: str) -> dict[str, object]:
     if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
         raise ValueError(f"{label} must be an object")
-    return value
+    return {str(key): item for key, item in value.items()}
 
 
 def _check_keys(value: dict[str, object], allowed: set[str], label: str) -> None:
@@ -236,6 +278,39 @@ def _optional_token_limit(value: object, label: str) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValueError(f"{label} must be a non-negative integer or null")
     return value
+
+
+def _utc_second(value: object, label: str) -> int:
+    text = _require_string(value, label)
+    try:
+        parsed = datetime.strptime(text, "%H:%M").replace(tzinfo=UTC)
+    except ValueError as exc:
+        raise ValueError(f"{label} must use HH:MM") from exc
+    return parsed.hour * 3600 + parsed.minute * 60
+
+
+def _utc_time_ranges(
+    value: object,
+    label: str,
+) -> tuple[_UtcTimeRange, ...] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"{label} must be a non-empty list")
+    ranges: list[_UtcTimeRange] = []
+    for index, item in enumerate(value):
+        item_label = f"{label}[{index}]"
+        payload = _require_object(item, item_label)
+        _check_keys(payload, {"from", "until"}, item_label)
+        start = _utc_second(payload.get("from"), f"{item_label}.from")
+        until = _utc_second(payload.get("until"), f"{item_label}.until")
+        if start == until:
+            raise ValueError(f"{item_label} must not span a full day")
+        ranges.append(_UtcTimeRange(start=start, until=until))
+    for left, right in combinations(ranges, 2):
+        if _utc_ranges_overlap((left,), (right,)):
+            raise ValueError(f"{label} contains overlapping ranges")
+    return tuple(ranges)
 
 
 def _rate(value: object, label: str) -> float:
@@ -292,16 +367,28 @@ def _parse_model_matcher(value: object, label: str) -> _ModelMatcher:
 
 def _parse_rates(value: object, label: str) -> Rates:
     payload = _require_object(value, label)
-    _check_keys(payload, {"input", "cache_read", "cache_write", "output"}, label)
+    _check_keys(
+        payload,
+        {"input", "cache_read", "cache_write", "cache_write_1h", "output"},
+        label,
+    )
     for required in ("input", "cache_read", "output"):
         if required not in payload:
             raise ValueError(f"{label}.{required} is required")
     cache_write = payload.get("cache_write")
+    cache_write_1h = payload.get("cache_write_1h")
+    if cache_write_1h is not None and cache_write is None:
+        raise ValueError(f"{label}.cache_write_1h requires cache_write")
     return Rates(
         input=_rate(payload["input"], f"{label}.input"),
         cached_input=_rate(payload["cache_read"], f"{label}.cache_read"),
         cache_write=(
             None if cache_write is None else _rate(cache_write, f"{label}.cache_write")
+        ),
+        cache_write_1h=(
+            None
+            if cache_write_1h is None
+            else _rate(cache_write_1h, f"{label}.cache_write_1h")
         ),
         output=_rate(payload["output"], f"{label}.output"),
     )
@@ -325,7 +412,13 @@ def _parse_rule(value: object, index: int) -> _PricingRule:
     match = _require_object(payload.get("match"), f"{label}.match")
     _check_keys(
         match,
-        {"model", "providers", "upstream_providers", "service_tiers"},
+        {
+            "model",
+            "providers",
+            "upstream_providers",
+            "service_tiers",
+            "utc_time_ranges",
+        },
         f"{label}.match",
     )
     prompt = _require_object(payload.get("prompt_tokens", {}), f"{label}.prompt_tokens")
@@ -380,6 +473,10 @@ def _parse_rule(value: object, index: int) -> _PricingRule:
         context=context,
         effective_from=effective_from,
         effective_until=effective_until,
+        utc_time_ranges=_utc_time_ranges(
+            match.get("utc_time_ranges"),
+            f"{label}.match.utc_time_ranges",
+        ),
         rates=_parse_rates(payload.get("rates"), f"{label}.rates"),
     )
 
@@ -414,6 +511,21 @@ def _times_overlap(left: _PricingRule, right: _PricingRule) -> bool:
     )
 
 
+def _utc_ranges_overlap(
+    left: tuple[_UtcTimeRange, ...] | None,
+    right: tuple[_UtcTimeRange, ...] | None,
+) -> bool:
+    if left is None or right is None:
+        return True
+    return any(
+        max(left_start, right_start) < min(left_until, right_until)
+        for left_range in left
+        for right_range in right
+        for left_start, left_until in left_range.intervals()
+        for right_start, right_until in right_range.intervals()
+    )
+
+
 def _model_examples(matcher: _ModelMatcher) -> set[str]:
     examples = set(matcher.values)
     for value in matcher.values:
@@ -444,6 +556,7 @@ def _rules_overlap(left: _PricingRule, right: _PricingRule) -> bool:
             right.prompt_max,
         )
         and _times_overlap(left, right)
+        and _utc_ranges_overlap(left.utc_time_ranges, right.utc_time_ranges)
     )
 
 
@@ -629,14 +742,45 @@ def _call_cost(turn: TurnUsage) -> float | None:
     if uncached < 0 or uncached + cache_read + cache_write != prompt_total:
         return None
 
+    cache_write_rate = (
+        rates.cache_write if rates.cache_write is not None else rates.input
+    )
+    cache_write_5m, cache_write_1h = _cache_write_partitions(turn, cache_write)
     total = (
         uncached * rates.input
         + cache_read * rates.cached_input
-        + cache_write
-        * (rates.cache_write if rates.cache_write is not None else rates.input)
+        + cache_write_5m * cache_write_rate
+        + cache_write_1h
+        * (
+            rates.cache_write_1h
+            if rates.cache_write_1h is not None
+            else cache_write_rate
+        )
         + output * rates.output
     )
     return total / _TOKENS_PER_MILLION
+
+
+def _cache_write_partitions(turn: TurnUsage, total: int) -> tuple[int, int]:
+    if total == 0:
+        return 0, 0
+    raw_usage = turn.raw_usage
+    if not isinstance(raw_usage, dict):
+        return total, 0
+    cache_creation = raw_usage.get("cache_creation")
+    if not isinstance(cache_creation, dict):
+        return total, 0
+    cache_write_5m = cache_creation.get("ephemeral_5m_input_tokens")
+    cache_write_1h = cache_creation.get("ephemeral_1h_input_tokens")
+    if (
+        type(cache_write_5m) is not int
+        or type(cache_write_1h) is not int
+        or cache_write_5m < 0
+        or cache_write_1h < 0
+        or cache_write_5m + cache_write_1h != total
+    ):
+        return total, 0
+    return cache_write_5m, cache_write_1h
 
 
 def calculate_price(turns: tuple[TurnUsage, ...]) -> Price:
@@ -772,8 +916,7 @@ async def _report_session_cost_to_herdr(value: str | None) -> None:
 
 
 def _tier_label(turn: TurnUsage) -> str:
-    tier = turn.requested_service_tier or turn.service_tier
-    return "standard" if tier in (None, "default", "standard") else tier
+    return _normalized_service_tier(turn)
 
 
 def _context_label(turn: TurnUsage) -> str:
