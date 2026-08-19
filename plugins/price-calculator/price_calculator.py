@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
+import os
+import subprocess
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from itertools import combinations
@@ -32,6 +36,11 @@ if TYPE_CHECKING:
 _TOKENS_PER_MILLION = 1_000_000
 _CATALOG_SCHEMA = "fast-agent.pricing/v1"
 _CATALOG_PATH = Path(__file__).with_name("pricing_catalog.json")
+_HERDR_SOURCE = "herdr:fast-agent:price-calculator"
+_HERDR_AGENT_SOURCE = "herdr:fast-agent"
+_HERDR_AGENT_LABEL = "fast-agent"
+_HERDR_TIMEOUT_SECONDS = 1.0
+_WINDOWS_CREATE_NO_WINDOW = 0x08000000
 
 
 @dataclass(frozen=True, slots=True)
@@ -665,6 +674,103 @@ def _format_price(price: Price) -> str:
     return _format_adaptive_usd(price.usd)
 
 
+def _format_compact_count(value: int) -> str:
+    magnitude = abs(value)
+    if magnitude < 1_000_000:
+        return f"{value:,}"
+
+    units = ((1_000_000, "M"), (1_000_000_000, "B"), (1_000_000_000_000, "T"))
+    unit_index = 0
+    for index, (candidate_divisor, _suffix) in enumerate(units[1:], start=1):
+        if magnitude < candidate_divisor:
+            break
+        unit_index = index
+
+    divisor, suffix = units[unit_index]
+    scaled = value / divisor
+    decimals = max(0, 3 - len(str(int(abs(scaled)))))
+    if round(abs(scaled), decimals) >= 1_000 and unit_index < len(units) - 1:
+        divisor, suffix = units[unit_index + 1]
+        scaled = value / divisor
+        decimals = max(0, 3 - len(str(int(abs(scaled)))))
+    return f"{scaled:.{decimals}f}{suffix}"
+
+
+def _session_token_usage(turns: tuple[TurnUsage, ...]) -> str | None:
+    if not turns:
+        return None
+    prompt = _complete_token_sum(tuple(turn.prompt.total for turn in turns))
+    completion = _complete_token_sum(tuple(turn.completion.total for turn in turns))
+    parts: list[str] = []
+    if prompt is not None:
+        parts.append(f"{_format_compact_count(prompt)} in")
+    if completion is not None:
+        parts.append(f"{_format_compact_count(completion)} out")
+    return " · ".join(parts) or None
+
+
+def _herdr_usage_token(
+    turn: Price,
+    session: Price,
+    *,
+    session_usage: tuple[TurnUsage, ...],
+) -> str | None:
+    if session_usage and not turn.unpriced_calls and not session.unpriced_calls:
+        return f"{_format_adaptive_usd(turn.usd)} ({_format_adaptive_usd(session.usd)})"
+    return _session_token_usage(session_usage)
+
+
+def _herdr_metadata_command(value: str | None) -> list[str] | None:
+    if os.environ.get("HERDR_ENV") != "1":
+        return None
+
+    pane_id = os.environ.get("HERDR_PANE_ID", "").strip()
+    if not pane_id:
+        return None
+
+    command = [
+        os.environ.get("HERDR_BIN_PATH", "").strip() or "herdr",
+        "pane",
+        "report-metadata",
+        pane_id,
+        "--source",
+        _HERDR_SOURCE,
+        "--applies-to-source",
+        _HERDR_AGENT_SOURCE,
+        "--agent",
+        _HERDR_AGENT_LABEL,
+    ]
+    if value is None:
+        command.extend(("--clear-token", "cost"))
+    else:
+        command.extend(("--token", f"cost={value}"))
+    command.extend(("--seq", str(time.time_ns())))
+    return command
+
+
+def _run_herdr_metadata_command(command: list[str]) -> None:
+    subprocess.run(
+        command,
+        check=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=_HERDR_TIMEOUT_SECONDS,
+        creationflags=_WINDOWS_CREATE_NO_WINDOW if os.name == "nt" else 0,
+    )
+
+
+async def _report_session_cost_to_herdr(value: str | None) -> None:
+    command = _herdr_metadata_command(value)
+    if command is None:
+        return
+    try:
+        await asyncio.to_thread(_run_herdr_metadata_command, command)
+    except (OSError, RuntimeError, subprocess.SubprocessError):
+        # Sidebar metadata is optional and must not suppress the normal cost line.
+        return
+
+
 def _tier_label(turn: TurnUsage) -> str:
     tier = turn.requested_service_tier or turn.service_tier
     return "standard" if tier in (None, "default", "standard") else tier
@@ -1132,10 +1238,14 @@ async def cost_breakdown(ctx: PluginCommandActionContext) -> PluginCommandAction
 
 async def display_cost(ctx: PluginPostUserTurnContext) -> str | None:
     if not ctx.turn_usage:
+        await _report_session_cost_to_herdr(None)
         return None
 
     turn = calculate_price(ctx.turn_usage)
     session = calculate_price(ctx.session_usage)
+    await _report_session_cost_to_herdr(
+        _herdr_usage_token(turn, session, session_usage=ctx.session_usage)
+    )
     unpriced = max(turn.unpriced_calls, session.unpriced_calls)
     suffix = (
         f" [dim]· {unpriced} unpriced model {'call' if unpriced == 1 else 'calls'}[/dim]"

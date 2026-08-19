@@ -7,6 +7,7 @@ import unittest
 from enum import Enum
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 
 class _Turn(SimpleNamespace):
@@ -704,11 +705,150 @@ class PriceCalculatorTests(unittest.TestCase):
             session_usage=(first, second),
         )
 
-        line = asyncio.run(self.plugin.display_cost(ctx))
+        with mock.patch.dict(self.plugin.os.environ, {}, clear=True):
+            line = asyncio.run(self.plugin.display_cost(ctx))
 
         self.assertIn("last", line)
         self.assertIn("session", line)
         self.assertNotIn("unpriced", line)
+
+    def test_display_reports_session_cost_to_herdr(self):
+        first = _turn(
+            "deepseek-v4-flash",
+            prompt=100_000,
+            output=20_000,
+            provider="deepseek",
+        )
+        second = _turn("gpt-5.6-luna", prompt=100_000, output=10_000)
+        ctx = SimpleNamespace(
+            turn_usage=(second,),
+            session_usage=(first, second),
+        )
+
+        with (
+            mock.patch.dict(
+                self.plugin.os.environ,
+                {
+                    "HERDR_ENV": "1",
+                    "HERDR_PANE_ID": "w1:p2",
+                    "HERDR_BIN_PATH": "/opt/herdr",
+                },
+                clear=True,
+            ),
+            mock.patch.object(self.plugin.subprocess, "run") as run,
+        ):
+            asyncio.run(self.plugin.display_cost(ctx))
+
+        command = run.call_args.args[0]
+        argument_pairs = [
+            command[index : index + 2] for index in range(len(command) - 1)
+        ]
+        self.assertEqual(
+            ["/opt/herdr", "pane", "report-metadata", "w1:p2"],
+            command[:4],
+        )
+        self.assertIn(
+            ["--source", "herdr:fast-agent:price-calculator"],
+            argument_pairs,
+        )
+        self.assertIn(
+            ["--applies-to-source", "herdr:fast-agent"],
+            argument_pairs,
+        )
+        self.assertIn(
+            ["--token", "cost=$0.0320 ($0.0516)"],
+            argument_pairs,
+        )
+
+    def test_display_falls_back_to_tokens_for_unavailable_herdr_cost(self):
+        unknown = _turn("unknown", prompt=12_100_000, output=56_028)
+        ctx = SimpleNamespace(
+            turn_usage=(unknown,),
+            session_usage=(unknown,),
+        )
+
+        with (
+            mock.patch.dict(
+                self.plugin.os.environ,
+                {
+                    "HERDR_ENV": "1",
+                    "HERDR_PANE_ID": "w1:p2",
+                    "HERDR_BIN_PATH": "/opt/herdr",
+                },
+                clear=True,
+            ),
+            mock.patch.object(self.plugin.subprocess, "run") as run,
+        ):
+            line = asyncio.run(self.plugin.display_cost(ctx))
+
+        command = run.call_args.args[0]
+        self.assertIn(
+            ["--token", "cost=12.1M in · 56,028 out"],
+            [command[index : index + 2] for index in range(len(command) - 1)],
+        )
+        self.assertIn("n/a", line)
+
+    def test_display_clears_herdr_usage_without_turn_usage(self):
+        ctx = SimpleNamespace(turn_usage=(), session_usage=())
+
+        with (
+            mock.patch.dict(
+                self.plugin.os.environ,
+                {
+                    "HERDR_ENV": "1",
+                    "HERDR_PANE_ID": "w1:p2",
+                    "HERDR_BIN_PATH": "/opt/herdr",
+                },
+                clear=True,
+            ),
+            mock.patch.object(self.plugin.subprocess, "run") as run,
+        ):
+            line = asyncio.run(self.plugin.display_cost(ctx))
+
+        command = run.call_args.args[0]
+        self.assertIn(
+            ["--clear-token", "cost"],
+            [command[index : index + 2] for index in range(len(command) - 1)],
+        )
+        self.assertIsNone(line)
+
+    def test_display_does_not_invoke_herdr_outside_herdr(self):
+        turn = _turn("gpt-5.6-luna", prompt=100_000, output=10_000)
+        ctx = SimpleNamespace(turn_usage=(turn,), session_usage=(turn,))
+
+        with (
+            mock.patch.dict(self.plugin.os.environ, {}, clear=True),
+            mock.patch.object(self.plugin.subprocess, "run") as run,
+        ):
+            line = asyncio.run(self.plugin.display_cost(ctx))
+
+        run.assert_not_called()
+        self.assertIn("Cost:", line)
+
+    def test_herdr_failure_does_not_suppress_cost_display(self):
+        turn = _turn("gpt-5.6-luna", prompt=100_000, output=10_000)
+        ctx = SimpleNamespace(turn_usage=(turn,), session_usage=(turn,))
+
+        with (
+            mock.patch.dict(
+                self.plugin.os.environ,
+                {
+                    "HERDR_ENV": "1",
+                    "HERDR_PANE_ID": "w1:p2",
+                    "HERDR_BIN_PATH": "/missing/herdr",
+                },
+                clear=True,
+            ),
+            mock.patch.object(
+                self.plugin.subprocess,
+                "run",
+                side_effect=OSError("not found"),
+            ),
+        ):
+            line = asyncio.run(self.plugin.display_cost(ctx))
+
+        self.assertIn("Cost:", line)
+        self.assertIn("session", line)
 
     def test_cost_command_returns_detailed_session_ledger(self):
         first = _turn(
