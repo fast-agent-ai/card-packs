@@ -53,29 +53,56 @@ top-level turn rather than once per subagent.
 
 The bundled, versioned `pricing_catalog.json` contains USD-per-million-token
 rates. Catalog rules can vary by fast-agent provider, upstream provider,
-service tier, effective date, and prompt-token band. This is important for
-Hugging Face routes, where the same model may have a different tariff through
-different upstream inference providers. Provider-specific rules take
-precedence over provider-neutral fallbacks.
+service tier, effective date, recurring UTC time range, and prompt-token band.
+This is important for Hugging Face routes, where the same model may have a
+different tariff through different upstream inference providers, and for
+DeepSeek's peak/off-peak schedule. Provider-specific rules take precedence over
+provider-neutral fallbacks.
 
 The bundled catalog currently includes:
 
-- GPT-5.6 Sol, Terra, and Luna, with Standard and Flex short/long-context rates.
+- GPT-5.6 Sol, Terra, and Luna, with Standard, Flex, and Fast short/long-context
+  rates.
+- First-party Anthropic Claude Fable 5, Mythos 5, Opus 5 and 4.x, Sonnet 5 and
+  4.x, and Haiku 4.5. The catalog includes Standard/Priority token rates,
+  5-minute and 1-hour cache writes, cache reads, and Fast mode for Opus 5 and
+  Opus 4.8.
 - Kimi K3 through the Moonshot provider.
-- DeepSeek V4 Flash (`$0.14` input, `$0.002` cached input, `$0.28` output).
+- Muse Glimmer 30B through Hugging Face and Together (`$0.35` input, `$0.04`
+  cached input, `$1.50` output).
+- DeepSeek V4 Flash and Pro with recurring UTC peak/off-peak rates. Peak hours
+  are `01:00–04:00` and `06:00–10:00` UTC.
 - Muse Spark 1.1 and 1.2 Standard (`$1.25` input, `$0.15` cached input,
   `$4.25` output) and Muse Spark 1.2 Contributor (`$0.10` input, `$0.002`
   cached input, `$0.20` output).
-- Grok 4.3 and 4.5 (`$2.00` input, `$0.30` cached input, `$6.00` output);
-  prompts over 200,000 tokens use `$4.00` input, `$0.60` cached input, and
-  `$12.00` output.
+- Grok 4.3 and 4.20 (`$1.25` input, `$0.20` cached input, `$2.50` output),
+  Grok 4.5 (`$2.00`, `$0.30`, `$6.00`), Grok 4.6 (`$2.00`, `$0.50`, `$6.00`),
+  and Grok Build (`$1.00`, `$0.20`, `$2.00`). Prompts at or above 200,000
+  tokens use each model's long-context rates.
 
 GPT-5.6 prompts over 272,000 tokens use long-context rates. Where a provider
 does not publish a separate cache-write tariff, cache-write tokens use the
-normal input rate. Fast-tier calls, unknown models, and incomplete token
-partitions are labeled unpriced instead of being counted as free.
+normal input rate. The effective service tier reported by the provider takes
+precedence over the requested tier, so Fast requests processed at Standard
+speed use Standard rates. Unknown models and incomplete token partitions are
+labeled unpriced instead of being counted as free.
+
+Anthropic cache-creation usage includes separate 5-minute and 1-hour token
+counts. The calculator applies each tariff when that provider detail is
+complete; older usage records without a complete split use the default
+5-minute cache-write tariff. Anthropic Vertex and Bedrock calls remain unpriced
+because their cloud-platform tariffs are provider-specific.
 
 Hugging Face routes require a catalog rule for the specific
 `provider=hf`/`upstream_provider` combination. When that upstream tariff is not
 listed, the call remains unpriced rather than inheriting another provider's
 rate.
+
+Primary pricing sources:
+
+- [OpenAI API pricing](https://developers.openai.com/api/docs/pricing)
+- [Anthropic pricing](https://platform.claude.com/docs/en/about-claude/pricing)
+- [Kimi K3 pricing](https://platform.kimi.ai/docs/pricing/chat-k3)
+- [DeepSeek pricing](https://api-docs.deepseek.com/quick_start/pricing/)
+- [xAI models and pricing](https://docs.x.ai/developers/models)
+- [Hugging Face inference provider pricing](https://huggingface.co/docs/inference-providers/pricing)

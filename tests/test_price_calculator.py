@@ -4,6 +4,7 @@ import json
 import sys
 import types
 import unittest
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from types import SimpleNamespace
@@ -189,11 +190,13 @@ def _turn(
     cache_write=0,
     uncached=None,
     tier=None,
+    service_tier=None,
     cost_usd=None,
     tool_calls=0,
     timestamp=0.0,
     provider="codexresponses",
     upstream_provider=None,
+    raw_usage=None,
 ):
     return _Turn(
         provider=provider,
@@ -201,7 +204,7 @@ def _turn(
         usage_schema="openai-responses",
         model=model,
         requested_service_tier=tier,
-        service_tier=None,
+        service_tier=service_tier,
         cost_usd=cost_usd,
         prompt=SimpleNamespace(
             total=prompt,
@@ -214,7 +217,7 @@ def _turn(
         tool_calls=tool_calls,
         reasoning_effort=None,
         timestamp=timestamp,
-        raw_usage=None,
+        raw_usage=raw_usage,
     )
 
 
@@ -292,8 +295,8 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-08-12.2", self.plugin._PRICING_CATALOG.version)
-        self.assertEqual(21, len(self.plugin._PRICING_CATALOG.rules))
+        self.assertEqual("2026-08-19.1", self.plugin._PRICING_CATALOG.version)
+        self.assertEqual(40, len(self.plugin._PRICING_CATALOG.rules))
 
     def test_bundled_catalog_does_not_cross_provider_boundaries(self):
         price = self.plugin.calculate_price(
@@ -451,6 +454,48 @@ class PriceCalculatorTests(unittest.TestCase):
         self.assertEqual(1, catalog.resolve(flex).input)
         self.assertEqual(3, catalog.resolve(long_standard).input)
 
+    def test_pricing_catalog_resolves_recurring_utc_time_ranges(self):
+        catalog = self.plugin._parse_catalog(
+            {
+                "schema": "fast-agent.pricing/v1",
+                "catalog_version": "test",
+                "currency": "USD",
+                "unit": "usd_per_million_tokens",
+                "rules": [
+                    {
+                        "id": "baseline",
+                        "match": {"model": {"values": ["timed-model"]}},
+                        "rates": {"input": "1", "cache_read": "0", "output": "0"},
+                    },
+                    {
+                        "id": "peak",
+                        "match": {
+                            "model": {"values": ["timed-model"]},
+                            "utc_time_ranges": [
+                                {"from": "01:00", "until": "04:00"},
+                                {"from": "23:00", "until": "00:30"},
+                            ],
+                        },
+                        "rates": {"input": "2", "cache_read": "0", "output": "0"},
+                    },
+                ],
+            }
+        )
+
+        def turn(hour, minute=0):
+            return _turn(
+                "timed-model",
+                prompt=1,
+                output=1,
+                timestamp=datetime(2026, 8, 19, hour, minute, tzinfo=UTC).timestamp(),
+            )
+
+        self.assertEqual(1, catalog.resolve(turn(0, 30)).input)
+        self.assertEqual(2, catalog.resolve(turn(2)).input)
+        self.assertEqual(1, catalog.resolve(turn(4)).input)
+        self.assertEqual(2, catalog.resolve(turn(23, 30)).input)
+        self.assertEqual(2, catalog.resolve(turn(0, 15)).input)
+
     def test_pricing_catalog_rejects_unknown_fields(self):
         with self.assertRaisesRegex(ValueError, "unknown fields"):
             self.plugin._parse_catalog(
@@ -515,6 +560,117 @@ class PriceCalculatorTests(unittest.TestCase):
         self.assertAlmostEqual(272_000 * 5 / 1_000_000 + 0.3, short.usd)
         self.assertAlmostEqual(272_001 * 10 / 1_000_000 + 0.45, long.usd)
 
+    def test_gpt_56_fast_rates_and_effective_tier(self):
+        fast = _turn(
+            "gpt-5.6-sol",
+            prompt=100_000,
+            output=10_000,
+            cached=20_000,
+            cache_write=10_000,
+            tier="fast",
+            service_tier="priority",
+        )
+        downgraded = _turn(
+            "gpt-5.6-sol",
+            prompt=100_000,
+            output=10_000,
+            cached=20_000,
+            cache_write=10_000,
+            tier="fast",
+            service_tier="default",
+        )
+
+        fast_price = self.plugin.calculate_price((fast,))
+        downgraded_price = self.plugin.calculate_price((downgraded,))
+
+        self.assertEqual(0, fast_price.unpriced_calls)
+        self.assertAlmostEqual(0.7 + 0.02 + 0.125 + 0.6, fast_price.usd)
+        self.assertAlmostEqual(0.35 + 0.01 + 0.0625 + 0.3, downgraded_price.usd)
+        self.assertEqual("fast", self.plugin._tier_label(fast))
+        self.assertEqual("standard", self.plugin._tier_label(downgraded))
+
+    def test_anthropic_current_models_cache_ttls_and_fast_mode(self):
+        fable = _turn(
+            "claude-fable-5",
+            prompt=1_000_000,
+            output=100_000,
+            cached=200_000,
+            cache_write=300_000,
+            uncached=500_000,
+            provider="anthropic",
+            raw_usage={
+                "cache_creation": {
+                    "ephemeral_5m_input_tokens": 100_000,
+                    "ephemeral_1h_input_tokens": 200_000,
+                }
+            },
+        )
+        sonnet = _turn(
+            "claude-sonnet-5",
+            prompt=1_000_000,
+            output=100_000,
+            cached=200_000,
+            cache_write=300_000,
+            uncached=500_000,
+            provider="anthropic",
+        )
+        opus_fast = _turn(
+            "claude-opus-4-8",
+            prompt=100_000,
+            output=10_000,
+            provider="anthropic",
+            service_tier="standard",
+            raw_usage={"speed": "fast"},
+        )
+        opus_priority = _turn(
+            "claude-opus-4-8",
+            prompt=100_000,
+            output=10_000,
+            provider="anthropic",
+            service_tier="priority",
+        )
+
+        self.assertAlmostEqual(15.45, self.plugin.calculate_price((fable,)).usd)
+        self.assertAlmostEqual(2.79, self.plugin.calculate_price((sonnet,)).usd)
+        self.assertAlmostEqual(1.5, self.plugin.calculate_price((opus_fast,)).usd)
+        self.assertAlmostEqual(0.75, self.plugin.calculate_price((opus_priority,)).usd)
+        self.assertEqual("fast", self.plugin._tier_label(opus_fast))
+        self.assertEqual("priority", self.plugin._tier_label(opus_priority))
+
+    def test_anthropic_model_aliases_and_provider_boundary(self):
+        models = (
+            "claude-mythos-5",
+            "anthropic.claude-opus-5",
+            "claude-opus-4-5-20251101",
+            "claude-sonnet-4-5-20250929",
+            "claude-haiku-4-5-20251001",
+        )
+        for model in models:
+            with self.subTest(model=model):
+                price = self.plugin.calculate_price(
+                    (
+                        _turn(
+                            model,
+                            prompt=100_000,
+                            output=10_000,
+                            provider="anthropic",
+                        ),
+                    )
+                )
+                self.assertEqual(0, price.unpriced_calls)
+
+        wrong_provider = self.plugin.calculate_price(
+            (
+                _turn(
+                    "claude-sonnet-5",
+                    prompt=100_000,
+                    output=10_000,
+                    provider="anthropic-vertex",
+                ),
+            )
+        )
+        self.assertEqual(1, wrong_provider.unpriced_calls)
+
     def test_kimi_provider_routes_and_deepseek(self):
         for model in ("kimi-k3", "moonshotai/kimi-k3"):
             with self.subTest(model=model):
@@ -555,7 +711,7 @@ class PriceCalculatorTests(unittest.TestCase):
                 ),
             )
         )
-        self.assertAlmostEqual(0.0196, deepseek.usd)
+        self.assertAlmostEqual(0.0352, deepseek.usd)
 
         deepseek_pro = self.plugin.calculate_price(
             (
@@ -568,7 +724,32 @@ class PriceCalculatorTests(unittest.TestCase):
             )
         )
         self.assertEqual(0, deepseek_pro.unpriced_calls)
-        self.assertAlmostEqual(0.0609, deepseek_pro.usd)
+        self.assertAlmostEqual(0.1056, deepseek_pro.usd)
+
+    def test_deepseek_peak_and_off_peak_rates(self):
+        off_peak = datetime(2026, 8, 19, 0, tzinfo=UTC).timestamp()
+        peak = datetime(2026, 8, 19, 2, tzinfo=UTC).timestamp()
+        boundary = datetime(2026, 8, 19, 4, tzinfo=UTC).timestamp()
+
+        def price(model, timestamp):
+            return self.plugin.calculate_price(
+                (
+                    _turn(
+                        model,
+                        prompt=1_000_000,
+                        output=1_000_000,
+                        cached=200_000,
+                        provider="deepseek",
+                        timestamp=timestamp,
+                    ),
+                )
+            ).usd
+
+        self.assertAlmostEqual(0.8374, price("deepseek-v4-flash", off_peak))
+        self.assertAlmostEqual(1.6748, price("deepseek-v4-flash", peak))
+        self.assertAlmostEqual(0.8374, price("deepseek-v4-flash", boundary))
+        self.assertAlmostEqual(2.5124, price("deepseek-v4-pro", off_peak))
+        self.assertAlmostEqual(5.0248, price("deepseek-v4-pro", peak))
 
     def test_muse_spark_tier_rates(self):
         for model, expected in (
@@ -591,23 +772,55 @@ class PriceCalculatorTests(unittest.TestCase):
                 self.assertEqual(0, price.unpriced_calls)
                 self.assertAlmostEqual(expected, price.usd)
 
-    def test_grok_long_context_rates_start_above_200k(self):
+    def test_muse_glimmer_together_rates(self):
+        glimmer = self.plugin.calculate_price(
+            (
+                _turn(
+                    "meta-models/Muse-Glimmer-30B:together",
+                    prompt=1_000_000,
+                    output=1_000_000,
+                    cached=200_000,
+                    provider="hf",
+                    upstream_provider="together",
+                ),
+            )
+        )
+        wrong_upstream = self.plugin.calculate_price(
+            (
+                _turn(
+                    "meta-models/Muse-Glimmer-30B:fireworks-ai",
+                    prompt=1_000_000,
+                    output=1_000_000,
+                    cached=200_000,
+                    provider="hf",
+                    upstream_provider="fireworks-ai",
+                ),
+            )
+        )
+
+        self.assertEqual(0, glimmer.unpriced_calls)
+        self.assertAlmostEqual(1.788, glimmer.usd)
+        self.assertEqual(1, wrong_upstream.unpriced_calls)
+
+    def test_grok_long_context_rates_start_at_200k(self):
         for model, expected_short, expected_long in (
-            ("grok-4.3", 0.375, 0.750004),
-            ("xai.grok-4.5", 0.375, 0.750004),
-            ("xai.grok-4.6", 0.385, 0.770004),
+            ("grok-4.3", 0.22249875, 0.445),
+            ("xai.grok-4.20-beta-latest", 0.22249875, 0.445),
+            ("xai.grok-4.5", 0.374998, 0.75),
+            ("xai.grok-4.6", 0.384998, 0.77),
+            ("xai.grok-code-fast", 0.179999, 0.36),
         ):
             with self.subTest(model=model):
                 short = _turn(
                     model,
-                    prompt=200_000,
+                    prompt=199_999,
                     output=10_000,
                     cached=50_000,
                     provider="xai",
                 )
                 long = _turn(
                     model,
-                    prompt=200_001,
+                    prompt=200_000,
                     output=10_000,
                     cached=50_000,
                     provider="xai",
@@ -669,15 +882,14 @@ class PriceCalculatorTests(unittest.TestCase):
             )
         )
 
-        self.assertAlmostEqual(0.01684, deepseek.usd)
-        self.assertAlmostEqual(0.0522725, deepseek_pro.usd)
+        self.assertAlmostEqual(0.03094, deepseek.usd)
+        self.assertAlmostEqual(0.09284, deepseek_pro.usd)
         self.assertAlmostEqual(0.546, kimi_cached.usd)
         self.assertAlmostEqual(0.6, kimi_write.usd)
 
-    def test_unknown_fast_and_incomplete_partitions_are_unpriced(self):
+    def test_unknown_and_incomplete_partitions_are_unpriced(self):
         turns = (
             _turn("unknown", prompt=1, output=1),
-            _turn("gpt-5.6-sol", prompt=1, output=1, tier="fast"),
             _turn(
                 "gpt-5.6-sol",
                 prompt=100_000,
@@ -690,7 +902,7 @@ class PriceCalculatorTests(unittest.TestCase):
         price = self.plugin.calculate_price(turns)
 
         self.assertEqual(0, price.usd)
-        self.assertEqual(3, price.unpriced_calls)
+        self.assertEqual(2, price.unpriced_calls)
 
     def test_display_reports_last_and_session(self):
         first = _turn(
@@ -756,7 +968,7 @@ class PriceCalculatorTests(unittest.TestCase):
             argument_pairs,
         )
         self.assertIn(
-            ["--token", "cost=$0.0320 ($0.0516)"],
+            ["--token", "cost=$0.0320 ($0.0672)"],
             argument_pairs,
         )
 
@@ -916,7 +1128,7 @@ class PriceCalculatorTests(unittest.TestCase):
         self.assertIn("subagents (included)", result.markdown)
         self.assertIn("### Model cost by model", result.markdown)
         self.assertIn(
-            "| `deepseek-v4-flash` | 1 | 20,000 | 0 (0%) | 2,000 | **$0.003360** |",
+            "| `deepseek-v4-flash` | 1 | 20,000 | 0 (0%) | 2,000 | **$0.005720** |",
             result.markdown,
         )
         self.assertIn(
@@ -931,7 +1143,7 @@ class PriceCalculatorTests(unittest.TestCase):
         self.assertNotIn(" low", result.markdown)
         self.assertIn(
             "|  | **Cumulative** | **2** | **120,000** | **0 (0%)** | "
-            "**12,000** | **$0.323360** |",
+            "**12,000** | **$0.325720** |",
             result.markdown,
         )
         self.assertNotIn("Cumulative tokens", result.markdown)

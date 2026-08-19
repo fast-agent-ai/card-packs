@@ -1,6 +1,6 @@
 {
   "schema": "fast-agent.pricing/v1",
-  "catalog_version": "2026-08-06.1",
+  "catalog_version": "2026-08-19.1",
   "currency": "USD",
   "unit": "usd_per_million_tokens",
   "rules": [
@@ -69,6 +69,38 @@
       }
     },
     {
+      "id": "gpt-5.6-sol-fast-short",
+      "match": {
+        "model": {"values": ["gpt-5.6", "gpt-5.6-sol"]},
+        "providers": ["codexresponses", "openai", "responses"],
+        "service_tiers": ["fast"]
+      },
+      "prompt_tokens": {"maximum": 272000},
+      "context": "short",
+      "rates": {
+        "input": "10.00",
+        "cache_read": "1.00",
+        "cache_write": "12.50",
+        "output": "60.00"
+      }
+    },
+    {
+      "id": "gpt-5.6-sol-fast-long",
+      "match": {
+        "model": {"values": ["gpt-5.6", "gpt-5.6-sol"]},
+        "providers": ["codexresponses", "openai", "responses"],
+        "service_tiers": ["fast"]
+      },
+      "prompt_tokens": {"minimum": 272001},
+      "context": "long",
+      "rates": {
+        "input": "20.00",
+        "cache_read": "2.00",
+        "cache_write": "25.00",
+        "output": "90.00"
+      }
+    },
+    {
       "id": "gpt-5.6-terra-standard-short",
       "match": {
         "model": {"values": ["gpt-5.6-terra"]},
@@ -130,6 +162,38 @@
         "cache_read": "0.20",
         "cache_write": "2.50",
         "output": "9.00"
+      }
+    },
+    {
+      "id": "gpt-5.6-terra-fast-short",
+      "match": {
+        "model": {"values": ["gpt-5.6-terra"]},
+        "providers": ["codexresponses", "openai", "responses"],
+        "service_tiers": ["fast"]
+      },
+      "prompt_tokens": {"maximum": 272000},
+      "context": "short",
+      "rates": {
+        "input": "4.00",
+        "cache_read": "0.40",
+        "cache_write": "5.00",
+        "output": "24.00"
+      }
+    },
+    {
+      "id": "gpt-5.6-terra-fast-long",
+      "match": {
+        "model": {"values": ["gpt-5.6-terra"]},
+        "providers": ["codexresponses", "openai", "responses"],
+        "service_tiers": ["fast"]
+      },
+      "prompt_tokens": {"minimum": 272001},
+      "context": "long",
+      "rates": {
+        "input": "8.00",
+        "cache_read": "0.80",
+        "cache_write": "10.00",
+        "output": "36.00"
       }
     },
     {
@@ -197,6 +261,157 @@
       }
     },
     {
+      "id": "gpt-5.6-luna-fast-short",
+      "match": {
+        "model": {"values": ["gpt-5.6-luna"]},
+        "providers": ["codexresponses", "openai", "responses"],
+        "service_tiers": ["fast"]
+      },
+      "prompt_tokens": {"maximum": 272000},
+      "context": "short",
+      "rates": {
+        "input": "0.40",
+        "cache_read": "0.04",
+        "cache_write": "0.50",
+        "output": "2.40"
+      }
+    },
+    {
+      "id": "gpt-5.6-luna-fast-long",
+      "match": {
+        "model": {"values": ["gpt-5.6-luna"]},
+        "providers": ["codexresponses", "openai", "responses"],
+        "service_tiers": ["fast"]
+      },
+      "prompt_tokens": {"minimum": 272001},
+      "context": "long",
+      "rates": {
+        "input": "0.80",
+        "cache_read": "0.08",
+        "cache_write": "1.00",
+        "output": "3.60"
+      }
+    },
+    {
+      "id": "claude-fable-standard",
+      "match": {
+        "model": {
+          "values": ["claude-fable-5", "claude-mythos-5"],
+          "strip_prefixes": ["anthropic."]
+        },
+        "providers": ["anthropic"],
+        "service_tiers": ["standard", "priority"]
+      },
+      "rates": {
+        "input": "10.00",
+        "cache_read": "1.00",
+        "cache_write": "12.50",
+        "cache_write_1h": "20.00",
+        "output": "50.00"
+      }
+    },
+    {
+      "id": "claude-opus-standard",
+      "match": {
+        "model": {
+          "values": [
+            "claude-opus-5",
+            "claude-opus-4-8",
+            "claude-opus-4-7",
+            "claude-opus-4-6",
+            "claude-opus-4-5",
+            "claude-opus-4-5-20251101"
+          ],
+          "strip_prefixes": ["anthropic."]
+        },
+        "providers": ["anthropic"],
+        "service_tiers": ["standard", "priority"]
+      },
+      "rates": {
+        "input": "5.00",
+        "cache_read": "0.50",
+        "cache_write": "6.25",
+        "cache_write_1h": "10.00",
+        "output": "25.00"
+      }
+    },
+    {
+      "id": "claude-opus-fast",
+      "match": {
+        "model": {
+          "values": ["claude-opus-5", "claude-opus-4-8"],
+          "strip_prefixes": ["anthropic."]
+        },
+        "providers": ["anthropic"],
+        "service_tiers": ["fast"]
+      },
+      "rates": {
+        "input": "10.00",
+        "cache_read": "1.00",
+        "cache_write": "12.50",
+        "cache_write_1h": "20.00",
+        "output": "50.00"
+      }
+    },
+    {
+      "id": "claude-sonnet-5-standard",
+      "match": {
+        "model": {
+          "values": ["claude-sonnet-5"],
+          "strip_prefixes": ["anthropic."]
+        },
+        "providers": ["anthropic"],
+        "service_tiers": ["standard", "priority"]
+      },
+      "rates": {
+        "input": "2.00",
+        "cache_read": "0.20",
+        "cache_write": "2.50",
+        "cache_write_1h": "4.00",
+        "output": "10.00"
+      }
+    },
+    {
+      "id": "claude-sonnet-4-standard",
+      "match": {
+        "model": {
+          "values": [
+            "claude-sonnet-4-6",
+            "claude-sonnet-4-5",
+            "claude-sonnet-4-5-20250929"
+          ],
+          "strip_prefixes": ["anthropic."]
+        },
+        "providers": ["anthropic"],
+        "service_tiers": ["standard", "priority"]
+      },
+      "rates": {
+        "input": "3.00",
+        "cache_read": "0.30",
+        "cache_write": "3.75",
+        "cache_write_1h": "6.00",
+        "output": "15.00"
+      }
+    },
+    {
+      "id": "claude-haiku-standard",
+      "match": {
+        "model": {
+          "values": ["claude-haiku-4-5", "claude-haiku-4-5-20251001"],
+          "strip_prefixes": ["anthropic."]
+        },
+        "providers": ["anthropic"],
+        "service_tiers": ["standard", "priority"]
+      },
+      "rates": {
+        "input": "1.00",
+        "cache_read": "0.10",
+        "cache_write": "1.25",
+        "cache_write_1h": "2.00",
+        "output": "5.00"
+      }
+    },
+    {
       "id": "kimi-k3",
       "match": {
         "model": {
@@ -213,7 +428,23 @@
       }
     },
     {
-      "id": "deepseek-v4-flash",
+      "id": "muse-glimmer-together",
+      "match": {
+        "model": {
+          "values": ["meta-models/muse-glimmer-30b"],
+          "strip_after": ":"
+        },
+        "providers": ["hf"],
+        "upstream_providers": ["together"]
+      },
+      "rates": {
+        "input": "0.35",
+        "cache_read": "0.04",
+        "output": "1.50"
+      }
+    },
+    {
+      "id": "deepseek-v4-flash-off-peak",
       "match": {
         "model": {
           "values": ["deepseek-v4-flash"],
@@ -222,9 +453,62 @@
         "providers": ["deepseek"]
       },
       "rates": {
-        "input": "0.14",
-        "cache_read": "0.002",
-        "output": "0.28"
+        "input": "0.22",
+        "cache_read": "0.007",
+        "output": "0.66"
+      }
+    },
+    {
+      "id": "deepseek-v4-flash-peak",
+      "match": {
+        "model": {
+          "values": ["deepseek-v4-flash"],
+          "path_suffix": true
+        },
+        "providers": ["deepseek"],
+        "utc_time_ranges": [
+          {"from": "01:00", "until": "04:00"},
+          {"from": "06:00", "until": "10:00"}
+        ]
+      },
+      "rates": {
+        "input": "0.44",
+        "cache_read": "0.014",
+        "output": "1.32"
+      }
+    },
+    {
+      "id": "deepseek-v4-pro-off-peak",
+      "match": {
+        "model": {
+          "values": ["deepseek-v4-pro"],
+          "path_suffix": true
+        },
+        "providers": ["deepseek"]
+      },
+      "rates": {
+        "input": "0.66",
+        "cache_read": "0.022",
+        "output": "1.98"
+      }
+    },
+    {
+      "id": "deepseek-v4-pro-peak",
+      "match": {
+        "model": {
+          "values": ["deepseek-v4-pro"],
+          "path_suffix": true
+        },
+        "providers": ["deepseek"],
+        "utc_time_ranges": [
+          {"from": "01:00", "until": "04:00"},
+          {"from": "06:00", "until": "10:00"}
+        ]
+      },
+      "rates": {
+        "input": "1.32",
+        "cache_read": "0.044",
+        "output": "3.96"
       }
     },
     {
@@ -258,15 +542,119 @@
       }
     },
     {
-      "id": "grok-standard",
+      "id": "grok-43-and-420-standard",
       "match": {
         "model": {
-          "values": ["grok-4.3", "grok-4.5"],
+          "values": [
+            "grok-4.3",
+            "grok-4.3-latest",
+            "grok-4.20",
+            "grok-4.20-0309",
+            "grok-4.20-0309-reasoning",
+            "grok-4.20-reasoning",
+            "grok-4.20-reasoning-latest",
+            "grok-4.20-reasoning-gv2",
+            "grok-4.20-beta",
+            "grok-4.20-beta-0309",
+            "grok-4.20-beta-0309-reasoning",
+            "grok-4.20-beta-latest",
+            "grok-4.20-beta-latest-reasoning",
+            "grok-4.20-beta-reasoning",
+            "grok-4.20-experimental-beta-0304",
+            "grok-4.20-experimental-beta-0304-reasoning",
+            "grok-4.20-experimental-beta-latest",
+            "grok-4.20-experimental-beta-reasoning-latest",
+            "grok-4.20-0309-non-reasoning",
+            "grok-4.20-non-reasoning",
+            "grok-4.20-non-reasoning-latest",
+            "grok-4.20-non-reasoning-gv2",
+            "grok-4.20-beta-0309-non-reasoning",
+            "grok-4.20-beta-latest-non-reasoning",
+            "grok-4.20-beta-non-reasoning",
+            "grok-4.20-experimental-beta-0304-non-reasoning",
+            "grok-4.20-experimental-beta-non-reasoning-latest",
+            "grok-4.20-multi-agent-0309",
+            "grok-4.20-multi-agent",
+            "grok-4.20-multi-agent-latest",
+            "grok-4.20-multi-agent-beta-0309",
+            "grok-4.20-multi-agent-beta-latest",
+            "grok-4.20-multi-agent-experimental-beta-0304",
+            "grok-4.20-multi-agent-experimental-beta-latest"
+          ],
           "strip_prefixes": ["xai."]
         },
         "providers": ["xai"]
       },
-      "prompt_tokens": {"maximum": 200000},
+      "prompt_tokens": {"maximum": 199999},
+      "context": "short",
+      "rates": {
+        "input": "1.25",
+        "cache_read": "0.20",
+        "output": "2.50"
+      }
+    },
+    {
+      "id": "grok-43-and-420-long-context",
+      "match": {
+        "model": {
+          "values": [
+            "grok-4.3",
+            "grok-4.3-latest",
+            "grok-4.20",
+            "grok-4.20-0309",
+            "grok-4.20-0309-reasoning",
+            "grok-4.20-reasoning",
+            "grok-4.20-reasoning-latest",
+            "grok-4.20-reasoning-gv2",
+            "grok-4.20-beta",
+            "grok-4.20-beta-0309",
+            "grok-4.20-beta-0309-reasoning",
+            "grok-4.20-beta-latest",
+            "grok-4.20-beta-latest-reasoning",
+            "grok-4.20-beta-reasoning",
+            "grok-4.20-experimental-beta-0304",
+            "grok-4.20-experimental-beta-0304-reasoning",
+            "grok-4.20-experimental-beta-latest",
+            "grok-4.20-experimental-beta-reasoning-latest",
+            "grok-4.20-0309-non-reasoning",
+            "grok-4.20-non-reasoning",
+            "grok-4.20-non-reasoning-latest",
+            "grok-4.20-non-reasoning-gv2",
+            "grok-4.20-beta-0309-non-reasoning",
+            "grok-4.20-beta-latest-non-reasoning",
+            "grok-4.20-beta-non-reasoning",
+            "grok-4.20-experimental-beta-0304-non-reasoning",
+            "grok-4.20-experimental-beta-non-reasoning-latest",
+            "grok-4.20-multi-agent-0309",
+            "grok-4.20-multi-agent",
+            "grok-4.20-multi-agent-latest",
+            "grok-4.20-multi-agent-beta-0309",
+            "grok-4.20-multi-agent-beta-latest",
+            "grok-4.20-multi-agent-experimental-beta-0304",
+            "grok-4.20-multi-agent-experimental-beta-latest"
+          ],
+          "strip_prefixes": ["xai."]
+        },
+        "providers": ["xai"]
+      },
+      "prompt_tokens": {"minimum": 200000},
+      "context": "long",
+      "rates": {
+        "input": "2.50",
+        "cache_read": "0.40",
+        "output": "5.00"
+      }
+    },
+    {
+      "id": "grok-45-standard",
+      "match": {
+        "model": {
+          "values": ["grok-4.5", "grok-4.5-latest", "grok-build-latest"],
+          "strip_prefixes": ["xai."]
+        },
+        "providers": ["xai"]
+      },
+      "prompt_tokens": {"maximum": 199999},
       "context": "short",
       "rates": {
         "input": "2.00",
@@ -275,20 +663,98 @@
       }
     },
     {
-      "id": "grok-long-context",
+      "id": "grok-45-long-context",
       "match": {
         "model": {
-          "values": ["grok-4.3", "grok-4.5"],
+          "values": ["grok-4.5", "grok-4.5-latest", "grok-build-latest"],
           "strip_prefixes": ["xai."]
         },
         "providers": ["xai"]
       },
-      "prompt_tokens": {"minimum": 200001},
+      "prompt_tokens": {"minimum": 200000},
       "context": "long",
       "rates": {
         "input": "4.00",
         "cache_read": "0.60",
         "output": "12.00"
+      }
+    },
+    {
+      "id": "grok-46-standard",
+      "match": {
+        "model": {
+          "values": ["grok-4.6"],
+          "strip_prefixes": ["xai."]
+        },
+        "providers": ["xai"]
+      },
+      "prompt_tokens": {"maximum": 199999},
+      "context": "short",
+      "rates": {
+        "input": "2.00",
+        "cache_read": "0.50",
+        "output": "6.00"
+      }
+    },
+    {
+      "id": "grok-46-long-context",
+      "match": {
+        "model": {
+          "values": ["grok-4.6"],
+          "strip_prefixes": ["xai."]
+        },
+        "providers": ["xai"]
+      },
+      "prompt_tokens": {"minimum": 200000},
+      "context": "long",
+      "rates": {
+        "input": "4.00",
+        "cache_read": "1.00",
+        "output": "12.00"
+      }
+    },
+    {
+      "id": "grok-build-standard",
+      "match": {
+        "model": {
+          "values": [
+            "grok-build-0.1",
+            "grok-code-fast-1",
+            "grok-code-fast",
+            "grok-code-fast-1-0825"
+          ],
+          "strip_prefixes": ["xai."]
+        },
+        "providers": ["xai"]
+      },
+      "prompt_tokens": {"maximum": 199999},
+      "context": "short",
+      "rates": {
+        "input": "1.00",
+        "cache_read": "0.20",
+        "output": "2.00"
+      }
+    },
+    {
+      "id": "grok-build-long-context",
+      "match": {
+        "model": {
+          "values": [
+            "grok-build-0.1",
+            "grok-code-fast-1",
+            "grok-code-fast",
+            "grok-code-fast-1-0825"
+          ],
+          "strip_prefixes": ["xai."]
+        },
+        "providers": ["xai"]
+      },
+      "prompt_tokens": {"minimum": 200000},
+      "context": "long",
+      "rates": {
+        "input": "2.00",
+        "cache_read": "0.40",
+        "output": "4.00"
       }
     }
   ]
