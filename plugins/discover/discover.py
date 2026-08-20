@@ -3,20 +3,27 @@
 from __future__ import annotations
 
 import asyncio
+import functools
+import hashlib
 import io
+import ipaddress
 import json
 import re
 import shlex
 import shutil
+import socket
 import tarfile
+import zipfile
 from contextlib import nullcontext
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import unquote, urlparse
-from urllib.request import Request, urlopen
+from urllib.parse import unquote, urljoin, urlparse, urlsplit, urlunsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from prompt_toolkit import PromptSession
 from prompt_toolkit.application import Application
 from prompt_toolkit.application.current import get_app_or_none
 from prompt_toolkit.data_structures import Point
@@ -31,18 +38,21 @@ from fast_agent.command_actions import PluginCommandActionContext, PluginCommand
 from fast_agent.config import MCPServerSettings
 from fast_agent.marketplace.formatting import iso_utc_now
 from fast_agent.skills.direct_sources import is_direct_skill_source
-from fast_agent.skills.models import SKILL_SOURCE_SCHEMA_VERSION, InstalledSkillSource
+from fast_agent.skills.models import (
+    SKILL_NAME_PATTERN,
+    SKILL_SOURCE_SCHEMA_VERSION,
+    InstalledSkillSource,
+)
 from fast_agent.skills.provenance import (
     compute_skill_content_fingerprint,
     write_installed_skill_source,
 )
+from fast_agent.skills.registry import SkillRegistry
 from fast_agent.skills.scope import get_manager_directory
 from fast_agent.skills.service import install_direct_skill
 from fast_agent.ui.picker_theme import build_picker_style
 
-ARD_REGISTRY_URLS = (
-    "https://huggingface-hf-discover.hf.space/search",
-)
+ARD_REGISTRY_URLS = ("https://huggingface-hf-discover.hf.space/search",)
 ARD_SERVICE_URL_REWRITES = {
     "https://evalstate-hf-discover.hf.space": "https://huggingface-hf-discover.hf.space",
 }
@@ -51,8 +61,19 @@ MCP_SERVER_MEDIA_TYPE = "application/mcp-server-card+json"
 LEGACY_MCP_SERVER_MEDIA_TYPE = "application/mcp-server+json"
 A2A_AGENT_CARD_MEDIA_TYPE = "application/a2a-agent-card+json"
 AI_REGISTRY_MEDIA_TYPE = "application/ai-registry+json"
+AI_CATALOG_MEDIA_TYPE = "application/ai-catalog+json"
+AGENT_SKILLS_MARKDOWN_MEDIA_TYPE = "application/agent-skills+md"
+AGENT_SKILLS_ZIP_MEDIA_TYPE = "application/agent-skills+zip"
+AGENT_SKILLS_GZIP_MEDIA_TYPE = "application/agent-skills+gzip"
+AGENT_SKILLS_SCHEMA_URI = "https://schemas.agentskills.io/discovery/0.2.0/schema.json"
+AGENT_SKILLS_MEDIA_TYPES = {
+    AGENT_SKILLS_MARKDOWN_MEDIA_TYPE,
+    AGENT_SKILLS_ZIP_MEDIA_TYPE,
+    AGENT_SKILLS_GZIP_MEDIA_TYPE,
+}
 MAX_SKILL_ARCHIVE_BYTES = 50 * 1024 * 1024
 MAX_SKILL_ARCHIVE_UNPACKED_BYTES = 100 * 1024 * 1024
+MAX_DOCUMENT_BYTES = 2 * 1024 * 1024
 MAX_ERROR_SNIPPET_CHARS = 240
 FEDERATION_MODES = {"auto", "referrals", "none"}
 
@@ -80,6 +101,49 @@ class DiscoverOptions:
     query: str
     federation: str = "auto"
     follow_referrals: bool = False
+    url: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class FetchedDocument:
+    url: str
+    content_type: str
+    headers: str
+    body: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoveryItem:
+    name: str
+    description: str
+    media_type: str
+    url: str | None
+    data: dict[str, Any] | None
+    digest: str | None
+    source_kind: str
+    source_method: str
+    document_url: str
+
+    @property
+    def kind(self) -> str:
+        if self.media_type in {MCP_SERVER_MEDIA_TYPE, LEGACY_MCP_SERVER_MEDIA_TYPE}:
+            return "mcp"
+        if self.media_type in {AI_SKILL_MEDIA_TYPE, *AGENT_SKILLS_MEDIA_TYPES}:
+            return "skill"
+        if self.media_type == AI_CATALOG_MEDIA_TYPE:
+            return "catalog"
+        if self.media_type in {AI_REGISTRY_MEDIA_TYPE, "application/ai-registry"}:
+            return "registry"
+        return self.media_type.rsplit("/", 1)[-1][:12] or "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoverySource:
+    title: str
+    kind: str
+    method: str
+    document_url: str
+    items: list[DiscoveryItem]
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +179,9 @@ async def discover(ctx: PluginCommandActionContext) -> PluginCommandActionResult
     except ValueError as exc:
         return PluginCommandActionResult(message=str(exc))
 
+    if options.url is not None:
+        return await _discover_url(ctx, options)
+
     try:
         registry_url = await _select_registry(ctx)
     except KeyboardInterrupt:
@@ -130,7 +197,7 @@ async def discover(ctx: PluginCommandActionContext) -> PluginCommandActionResult
             federation=options.federation,
             follow_referrals=options.follow_referrals,
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return PluginCommandActionResult(message=f"Agent Resource Discovery search failed: {exc}")
 
     if not results:
@@ -148,18 +215,17 @@ async def discover(ctx: PluginCommandActionContext) -> PluginCommandActionResult
             if selected is None or selected.media_type != AI_REGISTRY_MEDIA_TYPE:
                 break
 
-            nested_url = _registry_result_search_url(selected)
+            nested_url = _registry_result_search_url(selected, source_url=registry_url)
             if nested_url is None:
                 return PluginCommandActionResult(
                     message="Selected registry did not include a search URL."
                 )
             if nested_url in visited_registries:
-                return PluginCommandActionResult(
-                    message=f"Registry already visited: {nested_url}"
-                )
+                return PluginCommandActionResult(message=f"Registry already visited: {nested_url}")
             visited_registries.add(nested_url)
+            registry_url = nested_url
             results = await _search_ard(
-                nested_url,
+                registry_url,
                 options.query,
                 federation="none",
                 follow_referrals=False,
@@ -170,7 +236,7 @@ async def discover(ctx: PluginCommandActionContext) -> PluginCommandActionResult
                 )
     except KeyboardInterrupt:
         return PluginCommandActionResult()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return PluginCommandActionResult(message=f"Agent Resource Discovery search failed: {exc}")
 
     if selected is None:
@@ -221,18 +287,734 @@ def _parse_discover_arguments(arguments: str) -> DiscoverOptions:
         index += 1
 
     query = " ".join(query_parts).strip()
-    if not query:
+    url = query_parts[0] if query_parts and _is_absolute_http_url(query_parts[0]) else None
+    if url is not None:
+        query = " ".join(query_parts[1:]).strip()
+    elif not query:
         raise ValueError(_discover_usage())
     if follow_referrals and federation == "none":
         federation = "referrals"
-    return DiscoverOptions(query=query, federation=federation, follow_referrals=follow_referrals)
+    return DiscoverOptions(
+        query=query,
+        federation=federation,
+        follow_referrals=follow_referrals,
+        url=url,
+    )
 
 
 def _discover_usage() -> str:
     return (
         "Usage: /discover [--federation none|auto|referrals] "
-        "[--follow-referrals] <thing you need>"
+        "[--follow-referrals] <thing you need>\n"
+        "   or: /discover <http(s) URL> [registry query]"
     )
+
+
+def _is_absolute_http_url(value: str) -> bool:
+    parsed = urlsplit(value)
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+async def _discover_url(
+    ctx: PluginCommandActionContext, options: DiscoverOptions
+) -> PluginCommandActionResult:
+    assert options.url is not None
+    try:
+        sources = await asyncio.to_thread(_discover_url_sources, options.url)
+    except Exception as exc:
+        return PluginCommandActionResult(message=f"URL discovery failed: {exc}")
+    if not sources:
+        return PluginCommandActionResult(message=f"No discoverable resources at: {options.url}")
+    if not ctx.is_tui:
+        return PluginCommandActionResult(markdown=_render_sources_markdown(options.url, sources))
+    return await _navigate_sources(ctx, options, sources)
+
+
+async def _navigate_sources(
+    ctx: PluginCommandActionContext,
+    options: DiscoverOptions,
+    sources: list[DiscoverySource],
+) -> PluginCommandActionResult:
+    while True:
+        source = await _SourcePicker(sources).run_async()
+        if source is None:
+            return PluginCommandActionResult()
+        result = await _navigate_source(ctx, options, source)
+        if result is not None:
+            return result
+
+
+async def _navigate_source(
+    ctx: PluginCommandActionContext,
+    options: DiscoverOptions,
+    source: DiscoverySource,
+) -> PluginCommandActionResult | None:
+    levels: list[DiscoverySource] = [source]
+    while levels:
+        current = levels[-1]
+        choice = await _DiscoveryPicker(
+            current,
+            breadcrumb=tuple(level.title for level in levels),
+        ).run_async()
+        if choice == "back":
+            levels.pop()
+            continue
+        if choice is None:
+            return PluginCommandActionResult()
+        assert isinstance(choice, DiscoveryItem)
+        if choice.media_type == AI_CATALOG_MEDIA_TYPE:
+            if len(levels) >= 5:
+                return PluginCommandActionResult(
+                    message="AI Catalog nesting is limited to four levels."
+                )
+            try:
+                if choice.data is not None:
+                    nested = _catalog_source_from_payload(
+                        choice.data,
+                        document_url=f"{choice.document_url}#{choice.name}",
+                        parent=choice,
+                    )
+                elif choice.url is not None:
+                    nested = await asyncio.to_thread(
+                        _catalog_source, _fetch_document(choice.url), choice
+                    )
+                else:
+                    return PluginCommandActionResult(
+                        message="Nested AI Catalog requires data or a URL."
+                    )
+            except Exception as exc:
+                return PluginCommandActionResult(message=f"Failed to load AI Catalog: {exc}")
+            if nested.document_url in {level.document_url for level in levels}:
+                return PluginCommandActionResult(
+                    message=f"AI Catalog already visited: {nested.document_url}"
+                )
+            levels.append(nested)
+            continue
+        if choice.kind == "registry":
+            query = options.query or await _prompt_registry_query()
+            if query is None:
+                continue
+            return await _navigate_url_registry(ctx, choice, query, options)
+        if choice.kind == "mcp":
+            return await _handle_mcp_result(ctx, _item_result(choice))
+        if choice.kind == "skill":
+            if choice.media_type == AI_SKILL_MEDIA_TYPE:
+                return await _handle_skill_result(ctx, options.query, _item_result(choice))
+            return await _handle_url_skill(ctx, options.query, choice)
+        return PluginCommandActionResult(
+            message=f"Selected resource has unsupported media type: {choice.media_type}"
+        )
+    return None
+
+
+async def _prompt_registry_query() -> str | None:
+    query = (await PromptSession().prompt_async("Registry query: ")).strip()
+    return query or None
+
+
+async def _navigate_url_registry(
+    ctx: PluginCommandActionContext,
+    item: DiscoveryItem,
+    query: str,
+    options: DiscoverOptions,
+) -> PluginCommandActionResult:
+    if item.url is None:
+        return PluginCommandActionResult(message="Registry entry did not include a search URL.")
+    registry_url = _registry_search_url(item.url)
+    visited = {registry_url}
+    while True:
+        try:
+            results = await _search_ard(
+                registry_url,
+                query,
+                federation=options.federation if len(visited) == 1 else "none",
+                follow_referrals=options.follow_referrals if len(visited) == 1 else False,
+            )
+        except Exception as exc:
+            return PluginCommandActionResult(
+                message=f"Agent Resource Discovery search failed: {exc}"
+            )
+        if not results:
+            return PluginCommandActionResult(
+                message=f"No Agent Resource Discovery results for: {query}"
+            )
+        if not ctx.is_tui:
+            return PluginCommandActionResult(markdown=_render_results_markdown(query, results))
+        selected = await _select_result(query, results)
+        if selected is None:
+            return PluginCommandActionResult()
+        if selected.kind == "registry":
+            nested_url = _registry_result_search_url(selected, source_url=registry_url)
+            if nested_url is None:
+                return PluginCommandActionResult(
+                    message="Selected registry did not include a search URL."
+                )
+            if nested_url in visited:
+                return PluginCommandActionResult(message=f"Registry already visited: {nested_url}")
+            visited.add(nested_url)
+            registry_url = nested_url
+            continue
+        if selected.kind == "mcp":
+            return await _handle_mcp_result(ctx, selected)
+        if selected.kind == "skill":
+            return await _handle_skill_result(ctx, query, selected)
+        return PluginCommandActionResult(
+            message=f"Selected result has unsupported media type: {selected.media_type}"
+        )
+
+
+def _discover_url_sources(url: str) -> list[DiscoverySource]:
+    _validate_http_target(url, source_url=url)
+    if urlparse(url).path.rstrip("/").endswith("/search"):
+        return [
+            _single_item_source(
+                FetchedDocument(url, "", "", b""),
+                "ARD registry",
+                "direct",
+                "application/ai-registry",
+            )
+        ]
+    document = _fetch_optional(url) or FetchedDocument(url, "", "", b"")
+    direct = _direct_source(document)
+    if direct is not None:
+        return [direct]
+
+    sources: list[DiscoverySource] = []
+    catalog_url, method = _catalog_link(document)
+    if catalog_url is None:
+        catalog_url = urljoin(_origin_url(document.url), "/.well-known/ai-catalog.json")
+        method = "well-known"
+    try:
+        catalog = _fetch_optional(catalog_url)
+    except RuntimeError:
+        catalog = None
+    if catalog is not None:
+        try:
+            sources.append(_catalog_source(catalog, None, method=method))
+        except RuntimeError:
+            pass
+
+    skills_url = urljoin(_origin_url(document.url), "/.well-known/agent-skills/index.json")
+    try:
+        skills = _fetch_optional(skills_url)
+    except RuntimeError:
+        skills = None
+    if skills is not None:
+        try:
+            sources.append(_agent_skills_source(skills, method="well-known"))
+        except RuntimeError as exc:
+            sources.append(
+                _unsupported_source(
+                    title="Agent Skills",
+                    kind="Agent Skills",
+                    method="well-known",
+                    document_url=skills.url,
+                    error=str(exc),
+                )
+            )
+    return sources
+
+
+def _unsupported_source(
+    *,
+    title: str,
+    kind: str,
+    method: str,
+    document_url: str,
+    error: str,
+) -> DiscoverySource:
+    return DiscoverySource(
+        title=title,
+        kind=kind,
+        method=method,
+        document_url=document_url,
+        items=[
+            DiscoveryItem(
+                name="Unsupported document",
+                description=error,
+                media_type="unsupported",
+                url=document_url,
+                data=None,
+                digest=None,
+                source_kind=kind,
+                source_method=method,
+                document_url=document_url,
+            )
+        ],
+    )
+
+
+def _direct_source(document: FetchedDocument) -> DiscoverySource | None:
+    media_type = _media_type(document.content_type)
+    if urlparse(document.url).path.rstrip("/").endswith("/search"):
+        return _single_item_source(document, "ARD registry", "direct", "application/ai-registry")
+    if _is_catalog_document(document):
+        return _catalog_source(document, None, method="direct")
+    if _is_agent_skills_document(document):
+        return _agent_skills_source(document, method="direct")
+    if media_type in {MCP_SERVER_MEDIA_TYPE, LEGACY_MCP_SERVER_MEDIA_TYPE} or _is_mcp_card(
+        document
+    ):
+        return _single_item_source(document, "MCP Server Card", "direct", MCP_SERVER_MEDIA_TYPE)
+    if media_type == AGENT_SKILLS_MARKDOWN_MEDIA_TYPE or urlparse(
+        document.url
+    ).path.lower().endswith("/skill.md"):
+        return _direct_markdown_skill_source(document)
+    if media_type in {AGENT_SKILLS_ZIP_MEDIA_TYPE, AGENT_SKILLS_GZIP_MEDIA_TYPE}:
+        return _single_item_source(document, "Agent Skills archive", "direct", media_type)
+    return None
+
+
+def _direct_markdown_skill_source(document: FetchedDocument) -> DiscoverySource:
+    try:
+        text = document.body.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RuntimeError("Direct SKILL.md is not valid UTF-8.") from exc
+    manifest, error = SkillRegistry.parse_manifest_text(
+        text, path=Path(urlparse(document.url).path)
+    )
+    if manifest is None:
+        raise RuntimeError(f"Invalid SKILL.md: {error or 'invalid frontmatter'}")
+    item = DiscoveryItem(
+        name=manifest.name,
+        description=manifest.description,
+        media_type=AGENT_SKILLS_MARKDOWN_MEDIA_TYPE,
+        url=document.url,
+        data=None,
+        digest=None,
+        source_kind="Direct skill",
+        source_method="direct",
+        document_url=document.url,
+    )
+    return DiscoverySource("Direct skill", "Direct skill", "direct", document.url, [item])
+
+
+def _single_item_source(
+    document: FetchedDocument, title: str, method: str, media_type: str
+) -> DiscoverySource:
+    item = DiscoveryItem(
+        name=title,
+        description="Direct URL",
+        media_type=media_type,
+        url=document.url,
+        data=None,
+        digest=None,
+        source_kind=title,
+        source_method=method,
+        document_url=document.url,
+    )
+    return DiscoverySource(title, title, method, document.url, [item])
+
+
+def _catalog_link(document: FetchedDocument) -> tuple[str | None, str]:
+    header = _link_header_catalog_url(document.headers, document.url)
+    if header is not None:
+        return header, "Link header"
+    html = _html_catalog_url(document)
+    if html is not None:
+        return html, "HTML link"
+    return None, "well-known"
+
+
+def _link_header_catalog_url(headers: str, base_url: str) -> str | None:
+    for link_value in _split_http_list(headers):
+        match = re.fullmatch(r"\s*<([^>]+)>\s*(.*)", link_value)
+        if match is None:
+            continue
+        target, params = match.groups()
+        relation = re.search(
+            r"""\brel\s*=\s*(?:"([^"]*)"|'([^']*)'|([^;\s,]+))""",
+            params,
+            flags=re.IGNORECASE,
+        )
+        if relation is None:
+            continue
+        relations = next(value for value in relation.groups() if value is not None)
+        if "ai-catalog" in relations.lower().split():
+            return _resolved_discovery_url(target, base_url)
+    return None
+
+
+def _split_http_list(value: str) -> list[str]:
+    items: list[str] = []
+    start = 0
+    quote: str | None = None
+    escaped = False
+    in_angle = False
+    for index, char in enumerate(value):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and quote is not None:
+            escaped = True
+            continue
+        if quote is not None:
+            if char == quote:
+                quote = None
+            continue
+        if char in {'"', "'"}:
+            quote = char
+        elif char == "<":
+            in_angle = True
+        elif char == ">":
+            in_angle = False
+        elif char == "," and not in_angle:
+            if item := value[start:index].strip():
+                items.append(item)
+            start = index + 1
+    if item := value[start:].strip():
+        items.append(item)
+    return items
+
+
+class _CatalogLinkParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.href: str | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() != "link" or self.href is not None:
+            return
+        values = {key.lower(): value or "" for key, value in attrs}
+        relations = values.get("rel", "").lower().split()
+        if "ai-catalog" in relations:
+            self.href = values.get("href") or None
+
+
+def _html_catalog_url(document: FetchedDocument) -> str | None:
+    if not _is_html_response(document.content_type, document.body.decode("utf-8", errors="ignore")):
+        return None
+    parser = _CatalogLinkParser()
+    parser.feed(document.body.decode("utf-8", errors="replace"))
+    return _resolved_discovery_url(parser.href, document.url) if parser.href else None
+
+
+def _catalog_source(
+    document: FetchedDocument,
+    parent: DiscoveryItem | None,
+    *,
+    method: str | None = None,
+) -> DiscoverySource:
+    if (parent is not None or method not in {None, "direct"}) and _media_type(
+        document.content_type
+    ) != AI_CATALOG_MEDIA_TYPE:
+        raise RuntimeError("Discovered AI Catalog must use application/ai-catalog+json.")
+    payload = _document_json(document, "AI Catalog")
+    return _catalog_source_from_payload(
+        payload,
+        document_url=document.url,
+        parent=parent,
+        method=method,
+    )
+
+
+def _catalog_source_from_payload(
+    payload: dict[str, Any],
+    *,
+    document_url: str,
+    parent: DiscoveryItem | None,
+    method: str | None = None,
+) -> DiscoverySource:
+    version = _str(payload.get("specVersion"))
+    if not re.fullmatch(r"1\.\d+", version):
+        raise RuntimeError("AI Catalog must declare specVersion with major version 1.")
+    raw_entries = payload.get("entries")
+    if not isinstance(raw_entries, list):
+        raise RuntimeError("AI Catalog must contain an entries array.")
+    source_method = method or (parent.source_method if parent else "direct")
+    source_kind = parent.source_kind if parent else "AI Catalog"
+    items = [
+        _catalog_item(entry, index, source_kind, source_method, document_url)
+        for index, entry in enumerate(raw_entries, start=1)
+        if isinstance(entry, dict)
+    ]
+    return DiscoverySource(
+        _catalog_host_name(payload) or (parent.name if parent is not None else "") or "AI Catalog",
+        source_kind,
+        source_method,
+        document_url,
+        items,
+    )
+
+
+def _catalog_item(
+    entry: dict[str, Any], index: int, source_kind: str, source_method: str, document_url: str
+) -> DiscoveryItem:
+    media_type = _str(entry.get("type") or entry.get("mediaType"))
+    url = _optional_absolute_url(entry.get("url"), document_url)
+    data = entry.get("data") if isinstance(entry.get("data"), dict) else None
+    identifier = _str(entry.get("identifier"))
+    valid_reference = (url is None) != (data is None)
+    if not identifier or not valid_reference:
+        media_type = "invalid"
+    if media_type == "application/ai-registry":
+        media_type = AI_REGISTRY_MEDIA_TYPE
+    if media_type == "application/ai-catalog":
+        media_type = AI_CATALOG_MEDIA_TYPE
+    return DiscoveryItem(
+        _str(entry.get("displayName")) or _identifier_display_name(identifier) or f"Entry {index}",
+        _str(entry.get("description")),
+        media_type or "unsupported",
+        url,
+        data,
+        None,
+        source_kind,
+        source_method,
+        document_url,
+    )
+
+
+def _catalog_host_name(payload: dict[str, Any]) -> str:
+    host = payload.get("host")
+    return _str(host.get("displayName")) if isinstance(host, dict) else ""
+
+
+def _identifier_display_name(identifier: str) -> str:
+    return identifier.rstrip("/").rsplit(":", 1)[-1].rsplit("/", 1)[-1]
+
+
+def _agent_skills_source(document: FetchedDocument, *, method: str) -> DiscoverySource:
+    if method != "direct" and _media_type(document.content_type) != "application/json":
+        raise RuntimeError("Agent Skills index must use application/json.")
+    payload = _document_json(document, "Agent Skills index")
+    if _str(payload.get("$schema")) != AGENT_SKILLS_SCHEMA_URI:
+        raise RuntimeError(f"Agent Skills index must declare {AGENT_SKILLS_SCHEMA_URI}.")
+    raw_skills = payload.get("skills")
+    if not isinstance(raw_skills, list):
+        raise RuntimeError("Agent Skills index must contain a skills array.")
+    items: list[DiscoveryItem] = []
+    for index, entry in enumerate(raw_skills, start=1):
+        if not isinstance(entry, dict):
+            continue
+        items.append(_agent_skill_item(entry, index, document, method))
+    return DiscoverySource(
+        _str(payload.get("name")) or "Agent Skills",
+        "Agent Skills v0.2",
+        method,
+        document.url,
+        items,
+    )
+
+
+def _agent_skill_item(
+    skill: dict[str, Any],
+    index: int,
+    document: FetchedDocument,
+    method: str,
+) -> DiscoveryItem:
+    artifact_type = _str(skill.get("type"))
+    artifact_url = _optional_absolute_url(skill.get("url"), document.url)
+    archive_media_type = (
+        AGENT_SKILLS_GZIP_MEDIA_TYPE
+        if artifact_url is not None and _looks_like_tar_archive(artifact_url)
+        else AGENT_SKILLS_ZIP_MEDIA_TYPE
+    )
+    media_type = {
+        "skill-md": AGENT_SKILLS_MARKDOWN_MEDIA_TYPE,
+        "archive": archive_media_type,
+    }.get(artifact_type, artifact_type or "unsupported")
+    url = artifact_url
+    digest = _optional_str(skill.get("digest"))
+    name = _str(skill.get("name"))
+    description = _str(skill.get("description"))
+    if (
+        media_type not in AGENT_SKILLS_MEDIA_TYPES
+        or url is None
+        or not _valid_digest(digest)
+        or not SKILL_NAME_PATTERN.fullmatch(name)
+        or "--" in name
+        or not description
+        or len(description) > 1024
+    ):
+        media_type = "unsupported"
+    return DiscoveryItem(
+        name or f"Skill {index}",
+        description,
+        media_type,
+        url,
+        None,
+        digest,
+        "Agent Skills v0.2",
+        method,
+        document.url,
+    )
+
+
+def _is_catalog_document(document: FetchedDocument) -> bool:
+    if _media_type(document.content_type) in {AI_CATALOG_MEDIA_TYPE, "application/ai-catalog"}:
+        return True
+    try:
+        payload = _document_json(document, "document")
+    except RuntimeError:
+        return False
+    return isinstance(payload.get("entries"), list) and bool(_str(payload.get("specVersion")))
+
+
+def _is_agent_skills_document(document: FetchedDocument) -> bool:
+    try:
+        return _str(_document_json(document, "document").get("$schema")) == AGENT_SKILLS_SCHEMA_URI
+    except RuntimeError:
+        return False
+
+
+def _is_mcp_card(document: FetchedDocument) -> bool:
+    try:
+        payload = _document_json(document, "document")
+    except RuntimeError:
+        return False
+    return isinstance(payload.get("remotes"), list) or isinstance(payload.get("transport"), dict)
+
+
+def _document_json(document: FetchedDocument, label: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(document.body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"{label} returned invalid JSON.") from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError(f"{label} returned a non-object JSON response.")
+    return parsed
+
+
+def _fetch_document(url: str, *, max_bytes: int = MAX_DOCUMENT_BYTES) -> FetchedDocument:
+    _validate_http_target(url, source_url=url)
+    request = Request(url, headers={"User-Agent": "fast-agent-discover-plugin/0.2"})
+    try:
+        with _open_url(request, timeout=30) as response:
+            body = response.read(max_bytes + 1)
+            if len(body) > max_bytes:
+                raise RuntimeError(f"Response exceeds {max_bytes} bytes.")
+            return FetchedDocument(
+                response.url,
+                response.headers.get_content_type() or "",
+                ", ".join(response.headers.get_all("Link", [])),
+                body,
+            )
+    except HTTPError as exc:
+        raise RuntimeError(_http_error_message(exc)) from exc
+    except URLError as exc:
+        raise RuntimeError(str(exc.reason)) from exc
+
+
+def _fetch_optional(url: str) -> FetchedDocument | None:
+    try:
+        return _fetch_document(url)
+    except RuntimeError as exc:
+        if str(exc).startswith("HTTP 404"):
+            return None
+        raise
+
+
+def _origin_url(url: str) -> str:
+    parsed = urlsplit(url)
+    return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+
+
+def _media_type(value: str) -> str:
+    return value.partition(";")[0].strip().lower()
+
+
+def _optional_absolute_url(value: object, base_url: str) -> str | None:
+    url = _optional_str(value)
+    return _resolved_discovery_url(url, base_url) if url is not None else None
+
+
+def _resolved_discovery_url(value: str, base_url: str) -> str:
+    resolved = urljoin(base_url, value)
+    _validate_http_target(resolved, source_url=base_url)
+    return resolved
+
+
+def _validate_http_target(url: str, *, source_url: str) -> None:
+    parsed = urlsplit(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise RuntimeError("Discovered URLs must use HTTP or HTTPS.")
+    if parsed.username is not None or parsed.password is not None:
+        raise RuntimeError("Discovered URLs must not contain credentials.")
+    source_hostname = urlsplit(source_url).hostname
+    if source_hostname is not None and parsed.hostname.casefold() == source_hostname.casefold():
+        return
+    if _hostname_is_private(parsed.hostname):
+        if source_hostname and _hostname_is_private(source_hostname):
+            raise RuntimeError(
+                "A private discovery source cannot reference a different private host."
+            )
+        raise RuntimeError("A public discovery source cannot reference a private network URL.")
+
+
+@functools.lru_cache(maxsize=256)
+def _hostname_is_private(hostname: str) -> bool:
+    if hostname.casefold() == "localhost" or hostname.casefold().endswith(".localhost"):
+        return True
+    try:
+        return not ipaddress.ip_address(hostname).is_global
+    except ValueError:
+        pass
+    try:
+        addresses = {
+            item[4][0] for item in socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
+        }
+    except OSError:
+        return False
+    return any(not ipaddress.ip_address(address).is_global for address in addresses)
+
+
+class _SafeRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        resolved = urljoin(req.full_url, newurl)
+        _validate_http_target(resolved, source_url=req.full_url)
+        return super().redirect_request(req, fp, code, msg, headers, resolved)
+
+
+def _open_url(request: Request, *, timeout: int):
+    return build_opener(_SafeRedirectHandler()).open(request, timeout=timeout)
+
+
+def _valid_digest(value: str | None) -> bool:
+    return bool(value and re.fullmatch(r"sha256:[0-9a-f]{64}", value))
+
+
+def _looks_like_tar_archive(url: str) -> bool:
+    return urlparse(url).path.lower().endswith((".tar.gz", ".tgz", ".tar"))
+
+
+def _item_result(item: DiscoveryItem) -> FinderResult:
+    return FinderResult(
+        index=1,
+        identifier=item.name,
+        display_name=item.name,
+        media_type=item.media_type,
+        description=item.description,
+        score=0,
+        url=item.url,
+        data=item.data,
+        metadata=None,
+        source=item.document_url,
+    )
+
+
+def _render_sources_markdown(url: str, sources: list[DiscoverySource]) -> str:
+    lines = [f"# URL discovery for `{url}`", ""]
+    for source in sources:
+        lines.extend(
+            [
+                f"## {source.title}",
+                "",
+                f"Provenance: **{source.kind}** via **{source.method}**  ",
+                f"Document: <{source.document_url}>",
+                "",
+                "| type | resource | URL |",
+                "| --- | --- | --- |",
+            ]
+        )
+        for item in source.items:
+            name = item.name.replace("|", "\\|")
+            resource = f"**{name}**"
+            if item.description:
+                resource += f" — {item.description.replace('|', '\\|')}"
+            lines.append(f"| {item.kind} | {resource} | {item.url or 'embedded'} |")
+        lines.append("")
+    lines.append("Interactive selection is only available from the terminal UI.")
+    return "\n".join(lines)
 
 
 async def _select_registry(ctx: PluginCommandActionContext) -> str | None:
@@ -263,7 +1045,9 @@ def _configured_registry_urls(ctx: PluginCommandActionContext) -> list[str]:
     elif isinstance(configured_registries, list):
         urls.extend(url for url in configured_registries if isinstance(url, str))
 
-    return list(dict.fromkeys(_registry_search_url(_normalize_ard_service_url(url)) for url in urls))
+    return list(
+        dict.fromkeys(_registry_search_url(_normalize_ard_service_url(url)) for url in urls)
+    )
 
 
 def _discover_plugin_config(ctx: PluginCommandActionContext) -> dict[str, Any]:
@@ -304,7 +1088,9 @@ async def _search_ard(
     for referral in referrals:
         if not referral.url:
             continue
-        nested_url = _registry_search_url(referral.url)
+        nested_url = _registry_result_search_url(referral, source_url=registry_url)
+        if nested_url is None:
+            continue
         nested_body = await asyncio.to_thread(
             _post_json,
             nested_url,
@@ -354,12 +1140,19 @@ def _registry_search_url(url: str) -> str:
     return stripped if stripped.endswith("/search") else f"{stripped}/search"
 
 
-def _registry_result_search_url(result: FinderResult) -> str | None:
+def _registry_result_search_url(
+    result: FinderResult,
+    *,
+    source_url: str,
+) -> str | None:
     url = result.url or _optional_url((result.data or {}).get("url"))
-    return _registry_search_url(url) if url else None
+    if not url:
+        return None
+    return _registry_search_url(_resolved_discovery_url(url, source_url))
 
 
 def _post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
+    _validate_http_target(url, source_url=url)
     data = json.dumps(payload).encode("utf-8")
     request = Request(
         url,
@@ -372,8 +1165,11 @@ def _post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
         method="POST",
     )
     try:
-        with urlopen(request, timeout=30) as response:  # noqa: S310 - user-invoked registry URL
-            raw = response.read().decode("utf-8")
+        with _open_url(request, timeout=30) as response:
+            raw_bytes = response.read(MAX_DOCUMENT_BYTES + 1)
+            if len(raw_bytes) > MAX_DOCUMENT_BYTES:
+                raise RuntimeError(f"Response exceeds {MAX_DOCUMENT_BYTES} bytes.")
+            raw = raw_bytes.decode("utf-8")
     except HTTPError as exc:
         raise RuntimeError(_http_error_message(exc)) from exc
     except URLError as exc:
@@ -399,6 +1195,157 @@ def _row_label(result: FinderResult) -> str:
     name = _truncate(result.display_name, 32).ljust(32)
     description = _truncate(result.description, 82)
     return f"{score}  {kind}  {name}  {description}"
+
+
+class _SourcePicker:
+    def __init__(self, sources: list[DiscoverySource]) -> None:
+        self.sources = sources
+        self.index = 0
+        control = FormattedTextControl(
+            self._render,
+            focusable=True,
+            show_cursor=False,
+            get_cursor_position=self._cursor_position,
+        )
+        window = Window(control, height=Dimension.exact(max(1, min(10, len(sources) * 2))))
+        self.app: Application[DiscoverySource | None] = Application(
+            layout=Layout(Frame(window, title="URL discovery sources")),
+            key_bindings=self._bindings(),
+            style=build_picker_style(),
+            full_screen=False,
+            erase_when_done=True,
+        )
+
+    def _render(self) -> list[tuple[str, str]]:
+        return [
+            (
+                "class:selected" if index == self.index else "",
+                (
+                    f"{'❯' if index == self.index else ' '} {source.title} · "
+                    f"{source.kind} via {source.method}\n"
+                    f"   {source.document_url}\n"
+                ),
+            )
+            for index, source in enumerate(self.sources)
+        ]
+
+    def _cursor_position(self) -> Point:
+        return Point(x=0, y=self.index * 2)
+
+    def _bindings(self) -> KeyBindings:
+        kb = KeyBindings()
+
+        @kb.add("up")
+        def _up(event) -> None:
+            self.index = (self.index - 1) % len(self.sources)
+            event.app.invalidate()
+
+        @kb.add("down")
+        def _down(event) -> None:
+            self.index = (self.index + 1) % len(self.sources)
+            event.app.invalidate()
+
+        @kb.add("enter")
+        def _enter(event) -> None:
+            event.app.exit(result=self.sources[self.index])
+
+        @kb.add("q")
+        @kb.add("escape")
+        @kb.add("c-c")
+        def _quit(event) -> None:
+            event.app.exit(result=None)
+
+        return kb
+
+    async def run_async(self) -> DiscoverySource | None:
+        with nullcontext():
+            return await self.app.run_async()
+
+
+class _DiscoveryPicker:
+    def __init__(self, source: DiscoverySource, *, breadcrumb: tuple[str, ...]) -> None:
+        self.source = source
+        self.breadcrumb = breadcrumb
+        self.index = 0
+        control = FormattedTextControl(
+            self._render,
+            focusable=True,
+            show_cursor=False,
+            get_cursor_position=self._cursor_position,
+        )
+        window = Window(
+            control,
+            height=Dimension.exact(max(1, min(10, len(source.items) * 2))),
+            right_margins=[ScrollbarMargin(display_arrows=False)],
+        )
+        self.app: Application[DiscoveryItem | str | None] = Application(
+            layout=Layout(Frame(window, title=self._title())),
+            key_bindings=self._bindings(),
+            style=build_picker_style(),
+            full_screen=False,
+            erase_when_done=True,
+        )
+
+    def _title(self) -> str:
+        breadcrumb = " › ".join(("sources", *self.breadcrumb))
+        return f"{breadcrumb} · {self.source.kind} via {self.source.method}"
+
+    def _render(self) -> list[tuple[str, str]]:
+        rows: list[tuple[str, str]] = []
+        for index, item in enumerate(self.source.items):
+            selected = index == self.index
+            rows.append(
+                (
+                    "class:selected" if selected else "",
+                    (
+                        f"{'❯' if selected else ' '} {item.kind:<8} "
+                        f"{_truncate(item.name, 42):<42} {_truncate(item.description, 45)}\n"
+                        f"   source: {item.source_kind} via {item.source_method} · "
+                        f"{item.document_url}\n"
+                    ),
+                )
+            )
+        return rows or [("class:muted", "No entries.\n")]
+
+    def _cursor_position(self) -> Point:
+        return Point(x=0, y=self.index * 2)
+
+    def _bindings(self) -> KeyBindings:
+        kb = KeyBindings()
+
+        @kb.add("up")
+        def _up(event) -> None:
+            if self.source.items:
+                self.index = (self.index - 1) % len(self.source.items)
+                event.app.invalidate()
+
+        @kb.add("down")
+        def _down(event) -> None:
+            if self.source.items:
+                self.index = (self.index + 1) % len(self.source.items)
+                event.app.invalidate()
+
+        @kb.add("enter")
+        def _enter(event) -> None:
+            event.app.exit(result=self.source.items[self.index] if self.source.items else "back")
+
+        @kb.add("left")
+        @kb.add("backspace")
+        @kb.add("b")
+        def _back(event) -> None:
+            event.app.exit(result="back")
+
+        @kb.add("q")
+        @kb.add("escape")
+        @kb.add("c-c")
+        def _quit(event) -> None:
+            event.app.exit(result=None)
+
+        return kb
+
+    async def run_async(self) -> DiscoveryItem | str | None:
+        with nullcontext():
+            return await self.app.run_async()
 
 
 class _FinderPicker:
@@ -494,8 +1441,7 @@ class _FinderPicker:
 
     def _render_results(self) -> list[tuple[str, str]]:
         name_width, description_width = self._result_widths()
-        fragments: list[tuple[str, str]] = [
-        ]
+        fragments: list[tuple[str, str]] = []
 
         for index, result in enumerate(self.results):
             selected = index == self.index
@@ -508,10 +1454,12 @@ class _FinderPicker:
             fragments.append(
                 (
                     style,
-                    f"{cursor}{result.score:5.1f}  "
-                    f"{result.kind[:5]:<5}  "
-                    f"{_truncate(result.display_name, name_width):<{name_width}}  "
-                    f"{_truncate(result.description, description_width)}\n",
+                    (
+                        f"{cursor}{result.score:5.1f}  "
+                        f"{result.kind[:5]:<5}  "
+                        f"{_truncate(result.display_name, name_width):<{name_width}}  "
+                        f"{_truncate(result.description, description_width)}\n"
+                    ),
                 )
             )
         return fragments
@@ -985,7 +1933,7 @@ async def _attach_mcp_result(
     server_name = _server_name(result)
     try:
         server_config = await _mcp_server_settings(result, server_name)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return PluginCommandActionResult(message=f"Failed to prepare MCP server config: {exc}")
     await ctx.runtime.attach_mcp_server(
         server_name=server_name,
@@ -1020,6 +1968,11 @@ async def _handle_mcp_result(
 
 async def _mcp_server_settings(result: FinderResult, server_name: str) -> MCPServerSettings:
     data = dict(result.data or {})
+    if result.media_type == MCP_SERVER_MEDIA_TYPE and isinstance(data.get("remotes"), list):
+        data = {
+            "url": _mcp_url_from_card(data),
+            "description": result.description or result.display_name,
+        }
     data.setdefault("name", server_name)
     data.setdefault("description", result.description or result.display_name)
     if not data.get("url") and result.url:
@@ -1049,7 +2002,7 @@ async def _prefill_mcp_result(result: FinderResult) -> PluginCommandActionResult
 
     try:
         payload, label = await _mcp_prompt_payload(result)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return PluginCommandActionResult(message=f"Failed to prepare MCP prompt config: {exc}")
 
     prefill = (
@@ -1072,6 +2025,8 @@ async def _mcp_prompt_payload(result: FinderResult) -> tuple[dict[str, Any], str
     if result.media_type == MCP_SERVER_MEDIA_TYPE and result.url:
         card = await asyncio.to_thread(_get_json, result.url)
         return card, "MCP server card"
+    if result.media_type == MCP_SERVER_MEDIA_TYPE and result.data:
+        return dict(result.data), "MCP server card"
 
     data = dict(result.data or {})
     data.setdefault("name", server_name)
@@ -1101,6 +2056,139 @@ async def _handle_skill_result(
             return await _prefill_skill_result(query, result)
 
     return await _prefill_skill_result(query, result)
+
+
+async def _handle_url_skill(
+    ctx: PluginCommandActionContext, query: str, item: DiscoveryItem
+) -> PluginCommandActionResult:
+    result = _item_result(item)
+    if ctx.is_tui:
+        action = await _SkillActionPicker(result=result).run_async()
+        if action in {None, "cancel"}:
+            return PluginCommandActionResult()
+        if action == "install":
+            return await _install_url_skill(ctx, item)
+        if action == "prompt":
+            return await _prefill_url_skill(query, item)
+    return await _prefill_url_skill(query, item)
+
+
+async def _install_url_skill(
+    ctx: PluginCommandActionContext, item: DiscoveryItem
+) -> PluginCommandActionResult:
+    if item.url is None:
+        return PluginCommandActionResult(message="Selected skill did not include an install URL.")
+    destination_root = get_manager_directory(ctx.settings, cwd=ctx.session_cwd or Path.cwd())
+    try:
+        skill_dir = await asyncio.to_thread(_install_discovery_skill, item, destination_root)
+    except Exception as exc:
+        return PluginCommandActionResult(message=f"Failed to install skill: {exc}")
+    return PluginCommandActionResult(
+        message=f"Installed skill: {skill_dir.name}\n\nlocation: {skill_dir}",
+        refresh_agents=True,
+    )
+
+
+def _install_discovery_skill(item: DiscoveryItem, destination_root: Path) -> Path:
+    assert item.url is not None
+    destination_root.mkdir(parents=True, exist_ok=True)
+    skill_dir = destination_root / _slug(item.name).lower()
+    if skill_dir.exists():
+        raise FileExistsError(f"Skill already exists: {skill_dir}")
+    max_bytes = (
+        MAX_SKILL_ARCHIVE_BYTES
+        if item.media_type != AGENT_SKILLS_MARKDOWN_MEDIA_TYPE
+        else MAX_DOCUMENT_BYTES
+    )
+    artifact = _get_bytes(item.url, max_bytes=max_bytes)
+    _verify_artifact_digest(artifact, item.digest)
+    try:
+        if item.media_type == AGENT_SKILLS_MARKDOWN_MEDIA_TYPE:
+            skill_dir.mkdir()
+            (skill_dir / "SKILL.md").write_bytes(artifact)
+        else:
+            _extract_skill_archive(artifact, skill_dir)
+        if not (skill_dir / "SKILL.md").is_file():
+            raise RuntimeError("Skill archive must contain SKILL.md at the root.")
+        _validate_discovery_skill_manifest(
+            skill_dir,
+            expected_name=item.name if item.source_kind == "Agent Skills v0.2" else None,
+        )
+        _write_discovery_skill_provenance(skill_dir, item)
+    except Exception:
+        if skill_dir.exists():
+            shutil.rmtree(skill_dir)
+        raise
+    return skill_dir
+
+
+def _validate_discovery_skill_manifest(
+    skill_dir: Path,
+    *,
+    expected_name: str | None,
+) -> None:
+    manifest_path = skill_dir / "SKILL.md"
+    try:
+        manifest_text = manifest_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise RuntimeError(f"Invalid SKILL.md: {exc}") from exc
+    manifest, error = SkillRegistry.parse_manifest_text(manifest_text, path=manifest_path)
+    if manifest is None:
+        raise RuntimeError(f"Invalid SKILL.md: {error or 'invalid frontmatter'}")
+    if expected_name is not None and manifest.name != expected_name:
+        raise RuntimeError(
+            f"SKILL.md name '{manifest.name}' does not match index name '{expected_name}'."
+        )
+
+
+def _verify_artifact_digest(artifact: bytes, digest: str | None) -> None:
+    if digest is None:
+        return
+    expected = digest.removeprefix("sha256:").lower()
+    actual = hashlib.sha256(artifact).hexdigest()
+    if actual != expected:
+        raise RuntimeError("Skill artifact SHA-256 digest did not match the index.")
+
+
+def _write_discovery_skill_provenance(skill_dir: Path, item: DiscoveryItem) -> None:
+    source = InstalledSkillSource(
+        schema_version=SKILL_SOURCE_SCHEMA_VERSION,
+        installed_via="marketplace",
+        source_origin="remote",
+        repo_url=item.document_url,
+        repo_ref=None,
+        repo_path=_slug(item.name).lower(),
+        source_url=item.url,
+        installed_commit=None,
+        installed_path_oid=None,
+        installed_revision=item.digest or item.url or "url-discovery",
+        installed_at=iso_utc_now(),
+        content_fingerprint=compute_skill_content_fingerprint(skill_dir),
+    )
+    write_installed_skill_source(skill_dir, source)
+
+
+async def _prefill_url_skill(query: str, item: DiscoveryItem) -> PluginCommandActionResult:
+    if item.url is None:
+        return PluginCommandActionResult(message="Selected skill did not include a download URL.")
+    if item.media_type != AGENT_SKILLS_MARKDOWN_MEDIA_TYPE:
+        return PluginCommandActionResult(
+            message="Add to User Prompt is only available for SKILL.md resources."
+        )
+    try:
+        artifact = await asyncio.to_thread(_get_bytes, item.url, max_bytes=MAX_DOCUMENT_BYTES)
+        _verify_artifact_digest(artifact, item.digest)
+        skill_markdown = artifact.decode("utf-8")
+    except Exception as exc:
+        return PluginCommandActionResult(message=f"Failed to download selected skill: {exc}")
+    prefill = (
+        "Use this discovered skill to help with the task below.\n\n"
+        f"Task: {query}\n\nDiscovered skill:\n\n{skill_markdown.strip()}\n"
+    )
+    return PluginCommandActionResult(
+        message=f"Downloaded skill: {item.name}",
+        buffer_prefill=prefill,
+    )
 
 
 async def _install_skill_result(
@@ -1133,7 +2221,7 @@ async def _install_skill_result(
                     f"Try `/skills add {result.url}`."
                 )
             )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return PluginCommandActionResult(message=f"Failed to install skill: {exc}")
 
     return PluginCommandActionResult(
@@ -1153,7 +2241,7 @@ async def _prefill_skill_result(query: str, result: FinderResult) -> PluginComma
 
     try:
         skill_markdown = await asyncio.to_thread(_get_text, result.url)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return PluginCommandActionResult(message=f"Failed to download selected skill: {exc}")
 
     prefill = (
@@ -1205,8 +2293,6 @@ def _write_ard_skill_provenance(skill_dir: Path, result: FinderResult) -> None:
         installed_revision=_ard_installed_revision(result),
         installed_at=iso_utc_now(),
         content_fingerprint=compute_skill_content_fingerprint(skill_dir),
-        artifact_digest=_optional_str(metadata.get("digest")),
-        artifact_type=_optional_str(metadata.get("agentSkillsType")),
     )
     write_installed_skill_source(skill_dir, source)
 
@@ -1244,6 +2330,9 @@ def _ard_installed_revision(result: FinderResult) -> str:
 
 def _extract_skill_archive(archive_bytes: bytes, destination: Path) -> None:
     destination.mkdir(parents=True, exist_ok=False)
+    if zipfile.is_zipfile(io.BytesIO(archive_bytes)):
+        _extract_zip_skill_archive(archive_bytes, destination)
+        return
     total_size = 0
     with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:*") as archive:
         for member in archive.getmembers():
@@ -1253,6 +2342,23 @@ def _extract_skill_archive(archive_bytes: bytes, destination: Path) -> None:
                 if total_size > MAX_SKILL_ARCHIVE_UNPACKED_BYTES:
                     raise RuntimeError("Skill archive unpacked size exceeds limit.")
         archive.extractall(destination, filter="data")
+
+
+def _extract_zip_skill_archive(archive_bytes: bytes, destination: Path) -> None:
+    total_size = 0
+    with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
+        for member in archive.infolist():
+            path = Path(member.filename)
+            if path.is_absolute() or ".." in path.parts:
+                raise RuntimeError(f"Unsafe path in skill archive: {member.filename}")
+            if member.is_dir():
+                continue
+            if member.external_attr >> 16 & 0o170000 == 0o120000:
+                raise RuntimeError("Skill archives must not contain links.")
+            total_size += member.file_size
+            if total_size > MAX_SKILL_ARCHIVE_UNPACKED_BYTES:
+                raise RuntimeError("Skill archive unpacked size exceeds limit.")
+        archive.extractall(destination)
 
 
 def _validate_archive_member(member: tarfile.TarInfo) -> None:
@@ -1280,7 +2386,10 @@ def _filename_stem(url: str | None) -> str:
 
 
 def _mcp_url_from_ard_reference(url: str) -> str:
-    descriptor = _get_json(url)
+    return _mcp_url_from_card(_get_json(url))
+
+
+def _mcp_url_from_card(descriptor: dict[str, Any]) -> str:
     remotes = descriptor.get("remotes")
     if isinstance(remotes, list):
         for remote in remotes:
@@ -1313,11 +2422,12 @@ def _get_text(url: str) -> str:
 
 
 def _get_bytes(url: str, *, max_bytes: int | None = None) -> bytes:
+    _validate_http_target(url, source_url=url)
     request = Request(url, headers={"User-Agent": "fast-agent-discover-plugin/0.2"})
     try:
-        with urlopen(request, timeout=30) as response:  # noqa: S310 - Agent Resource Discovery result URL
+        with _open_url(request, timeout=30) as response:
             if max_bytes is None:
-                return response.read()
+                max_bytes = MAX_DOCUMENT_BYTES
             data = response.read(max_bytes + 1)
             if len(data) > max_bytes:
                 raise RuntimeError(f"Response exceeds {max_bytes} bytes.")
@@ -1407,7 +2517,7 @@ def _optional_url(value: object) -> str | None:
 def _normalize_ard_service_url(url: str) -> str:
     for old, new in ARD_SERVICE_URL_REWRITES.items():
         if url.startswith(old):
-            return f"{new}{url[len(old):]}"
+            return f"{new}{url[len(old) :]}"
     return url
 
 
@@ -1433,7 +2543,7 @@ def _looks_like_text_skill(url: str) -> bool:
 
 def _looks_like_skill_archive(url: str) -> bool:
     path = url.split("?", 1)[0].lower()
-    return path.endswith((".tar.gz", ".tgz", ".tar"))
+    return path.endswith((".tar.gz", ".tgz", ".tar", ".zip"))
 
 
 def _can_add_skill_to_prompt(result: FinderResult) -> bool:
