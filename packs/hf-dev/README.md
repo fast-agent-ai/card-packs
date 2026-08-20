@@ -2,7 +2,23 @@
 
 Code with Hugging Face Inference providers.
 
-[Create](https://huggingface.co/settings/tokens) or set your `HF_TOKEN` for inference providers (or use `hf auth login`).
+## Authentication
+
+Use the Hugging Face CLI to authenticate:
+
+```bash
+hf auth login
+hf auth whoami
+```
+
+fast-agent uses the active token managed by `huggingface_hub` for Hugging Face
+Inference Providers, model-picker readiness, Hub URLs, Spaces, and the
+preconfigured Hugging Face MCP servers. There is no separate
+`fast-agent auth login hf` flow.
+
+For automation, set `HF_TOKEN` or configure `hf.api_key`. An explicit configured
+token takes precedence over the token from `hf auth login`. You can create a
+token at [Hugging Face settings](https://huggingface.co/settings/tokens).
 
 ## CLI Commands 
 
@@ -19,4 +35,3 @@ From the fast-agent prompt:
 - **Recommended**: Use `/skills add lsp-setup` and ask your agent to configure LSP for this workspace.
 - Create new agents or subagents in this environment by asking the assistant, or add markdown files to `.fast-agent/agent-cards/`. Switch agents with `@`. 
 - Use `/connect` to connect to MCP Servers (Hugging Face preconfigured). Enter a URL, npx/uvx package or stdio command.
-

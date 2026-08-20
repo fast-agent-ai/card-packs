@@ -11,8 +11,6 @@ mcp:
   servers:
     hf:
       target: "https://huggingface.co/mcp"
-    hf_docs_only:
-      target: "https://huggingface.co/mcp?bouquet=docs"
     # github:
     #   target: "https://api.githubcopilot.com/mcp/"
     #   headers:

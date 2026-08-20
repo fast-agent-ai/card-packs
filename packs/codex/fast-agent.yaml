@@ -2,7 +2,7 @@ default_model: "$system.default"
 git_aware: true
 model_references:
   system:
-    default: codexresponses.gpt-5.6-terra?reasoning=high
+    default: codexresponses.gpt-5.6-sol?reasoning=high
     fast: codexspark
 
 # Default MCP Servers - these appear in the /connect menu
@@ -12,5 +12,3 @@ mcp:
       target: "https://developers.openai.com/mcp"
     hf:
       target: "https://huggingface.co/mcp"
-    hf_docs_only:
-      target: "https://huggingface.co/mcp?bouquet=docs"
