@@ -295,8 +295,69 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-08-19.1", self.plugin._PRICING_CATALOG.version)
-        self.assertEqual(40, len(self.plugin._PRICING_CATALOG.rules))
+        self.assertEqual("2026-08-26.1", self.plugin._PRICING_CATALOG.version)
+        self.assertEqual(44, len(self.plugin._PRICING_CATALOG.rules))
+
+    def test_zai_glm_53_family_rates_and_flash_promotion(self):
+        promotion_end = datetime(2026, 9, 9, 16, tzinfo=UTC).timestamp()
+
+        def priced_turn(model, *, timestamp):
+            return _turn(
+                model,
+                prompt=1_000_000,
+                output=1_000_000,
+                cached=200_000,
+                cache_write=100_000,
+                provider="zai",
+                timestamp=timestamp,
+            )
+
+        flash_promotion = self.plugin.calculate_price(
+            (
+                priced_turn(
+                    "zai.glm-5.3-flash",
+                    timestamp=promotion_end - 1,
+                ),
+            )
+        )
+        flash_list = self.plugin.calculate_price(
+            (
+                priced_turn(
+                    "glm-5.3-flash",
+                    timestamp=promotion_end,
+                ),
+            )
+        )
+        glm_53 = self.plugin.calculate_price(
+            (priced_turn("glm-5.3", timestamp=promotion_end),)
+        )
+        glm_52 = self.plugin.calculate_price(
+            (priced_turn("glm-5.2", timestamp=promotion_end),)
+        )
+
+        self.assertEqual(0, flash_promotion.unpriced_calls)
+        self.assertEqual(0, flash_list.unpriced_calls)
+        self.assertEqual(0, glm_53.unpriced_calls)
+        self.assertEqual(0, glm_52.unpriced_calls)
+        self.assertAlmostEqual(0.3055, flash_promotion.usd)
+        self.assertAlmostEqual(0.611, flash_list.usd)
+        self.assertAlmostEqual(5.432, glm_53.usd)
+        self.assertAlmostEqual(5.432, glm_52.usd)
+
+    def test_zai_prices_do_not_cross_provider_boundaries(self):
+        price = self.plugin.calculate_price(
+            (
+                _turn(
+                    "glm-5.3",
+                    prompt=1_000_000,
+                    output=1_000_000,
+                    provider="hf",
+                ),
+            )
+        )
+
+        self.assertEqual(0, price.usd)
+        self.assertEqual(1, price.unpriced_calls)
 
     def test_bundled_catalog_does_not_cross_provider_boundaries(self):
         price = self.plugin.calculate_price(

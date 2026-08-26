@@ -1,6 +1,6 @@
 {
   "schema": "fast-agent.pricing/v1",
-  "catalog_version": "2026-08-19.1",
+  "catalog_version": "2026-08-26.1",
   "currency": "USD",
   "unit": "usd_per_million_tokens",
   "rules": [
@@ -409,6 +409,76 @@
         "cache_write": "1.25",
         "cache_write_1h": "2.00",
         "output": "5.00"
+      }
+    },
+    {
+      "id": "zai-glm-53-flash-promotion",
+      "match": {
+        "model": {
+          "values": ["glm-5.3-flash"],
+          "strip_prefixes": ["zai."]
+        },
+        "providers": ["zai"]
+      },
+      "effective": {
+        "until": "2026-09-09T16:00:00Z"
+      },
+      "rates": {
+        "input": "0.075",
+        "cache_read": "0.015",
+        "cache_write": "0",
+        "output": "0.25"
+      }
+    },
+    {
+      "id": "zai-glm-53-flash-list",
+      "match": {
+        "model": {
+          "values": ["glm-5.3-flash"],
+          "strip_prefixes": ["zai."]
+        },
+        "providers": ["zai"]
+      },
+      "effective": {
+        "from": "2026-09-09T16:00:00Z"
+      },
+      "rates": {
+        "input": "0.15",
+        "cache_read": "0.03",
+        "cache_write": "0",
+        "output": "0.50"
+      }
+    },
+    {
+      "id": "zai-glm-53",
+      "match": {
+        "model": {
+          "values": ["glm-5.3"],
+          "strip_prefixes": ["zai."]
+        },
+        "providers": ["zai"]
+      },
+      "rates": {
+        "input": "1.4",
+        "cache_read": "0.26",
+        "cache_write": "0",
+        "output": "4.4"
+      }
+    },
+    {
+      "id": "zai-glm-52",
+      "match": {
+        "model": {
+          "values": ["glm-5.2"],
+          "strip_prefixes": ["zai."]
+        },
+        "providers": ["zai"]
+      },
+      "rates": {
+        "input": "1.4",
+        "cache_read": "0.26",
+        "cache_write": "0",
+        "output": "4.4"
       }
     },
     {

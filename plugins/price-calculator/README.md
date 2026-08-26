@@ -68,6 +68,9 @@ The bundled catalog currently includes:
   5-minute and 1-hour cache writes, cache reads, and Fast mode for Opus 5 and
   Opus 4.8.
 - Kimi K3 through the Moonshot provider.
+- Z.ai GLM-5.3, GLM-5.2, and GLM-5.3-Flash. Flash uses its 50%-discounted
+  tariff until September 9, 2026 at 16:00 UTC, then switches to list pricing.
+  Published cached-input storage is currently free.
 - Muse Glimmer 30B through Hugging Face and Together (`$0.35` input, `$0.04`
   cached input, `$1.50` output).
 - DeepSeek V4 Flash and Pro with recurring UTC peak/off-peak rates. Peak hours
@@ -103,6 +106,7 @@ Primary pricing sources:
 - [OpenAI API pricing](https://developers.openai.com/api/docs/pricing)
 - [Anthropic pricing](https://platform.claude.com/docs/en/about-claude/pricing)
 - [Kimi K3 pricing](https://platform.kimi.ai/docs/pricing/chat-k3)
+- [Z.ai model pricing](https://docs.z.ai/guides/overview/pricing)
 - [DeepSeek pricing](https://api-docs.deepseek.com/quick_start/pricing/)
 - [xAI models and pricing](https://docs.x.ai/developers/models)
 - [Hugging Face inference provider pricing](https://huggingface.co/docs/inference-providers/pricing)
