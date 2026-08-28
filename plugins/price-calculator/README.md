@@ -53,7 +53,8 @@ top-level turn rather than once per subagent.
 
 The bundled, versioned `pricing_catalog.json` contains USD-per-million-token
 rates. Catalog rules can vary by fast-agent provider, upstream provider,
-service tier, effective date, recurring UTC time range, and prompt-token band.
+service tier, effective date, recurring UTC weekday/time range, and prompt-token
+band.
 This is important for Hugging Face routes, where the same model may have a
 different tariff through different upstream inference providers, and for
 DeepSeek's peak/off-peak schedule. Provider-specific rules take precedence over
@@ -73,8 +74,10 @@ The bundled catalog currently includes:
   Published cached-input storage is currently free.
 - Muse Glimmer 30B through Hugging Face and Together (`$0.35` input, `$0.04`
   cached input, `$1.50` output).
-- DeepSeek V4 Flash and Pro with recurring UTC peak/off-peak rates. Peak hours
-  are `01:00–04:00` and `06:00–10:00` UTC.
+- DeepSeek V4 Flash, experimental Flash Vision, and Pro with recurring UTC
+  peak/off-peak rates. Peak hours are `01:00–04:00` and `06:00–10:00` UTC.
+  Effective August 23, 2026 Beijing time, Saturdays and Sundays are entirely
+  off-peak.
 - Muse Spark 1.1 and 1.2 Standard (`$1.25` input, `$0.15` cached input,
   `$4.25` output) and Muse Spark 1.2 Contributor (`$0.10` input, `$0.002`
   cached input, `$0.20` output).

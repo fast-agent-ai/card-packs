@@ -41,6 +41,12 @@ _HERDR_AGENT_SOURCE = "herdr:fast-agent"
 _HERDR_AGENT_LABEL = "fast-agent"
 _HERDR_TIMEOUT_SECONDS = 1.0
 _WINDOWS_CREATE_NO_WINDOW = 0x08000000
+_UTC_WEEKDAY_INDEX = {
+    name: index
+    for index, name in enumerate(
+        ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+    )
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,10 +122,11 @@ class _PricingRule:
     context: str | None = None
     effective_from: float | None = None
     effective_until: float | None = None
+    utc_weekdays: frozenset[int] | None = None
     utc_time_ranges: tuple[_UtcTimeRange, ...] | None = None
 
     @property
-    def specificity(self) -> tuple[int, int, int, int, int, int, int, int]:
+    def specificity(self) -> tuple[int, int, int, int, int, int, int, int, int]:
         return (
             int(self.providers is not None) + int(self.upstream_providers is not None),
             int(self.upstream_providers is not None),
@@ -128,6 +135,7 @@ class _PricingRule:
             int(self.prompt_min > 0) + int(self.prompt_max is not None),
             int(self.effective_from is not None)
             + int(self.effective_until is not None),
+            int(self.utc_weekdays is not None),
             int(self.utc_time_ranges is not None),
             int(not self.model.path_suffix),
         )
@@ -167,9 +175,13 @@ class _PricingRule:
             return False
         if self.effective_until is not None and turn.timestamp >= self.effective_until:
             return False
-        if self.utc_time_ranges is None:
+        if self.utc_weekdays is None and self.utc_time_ranges is None:
             return True
         instant = datetime.fromtimestamp(turn.timestamp, UTC)
+        if self.utc_weekdays is not None and instant.weekday() not in self.utc_weekdays:
+            return False
+        if self.utc_time_ranges is None:
+            return True
         second = instant.hour * 3600 + instant.minute * 60 + instant.second
         return any(time_range.matches(second) for time_range in self.utc_time_ranges)
 
@@ -313,6 +325,16 @@ def _utc_time_ranges(
     return tuple(ranges)
 
 
+def _utc_weekdays(value: object, label: str) -> frozenset[int] | None:
+    if value is None:
+        return None
+    names = _string_set(value, label)
+    invalid = names - _UTC_WEEKDAY_INDEX.keys()
+    if invalid:
+        raise ValueError(f"{label} has invalid weekdays: {', '.join(sorted(invalid))}")
+    return frozenset(_UTC_WEEKDAY_INDEX[name] for name in names)
+
+
 def _rate(value: object, label: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float, str)):
         raise ValueError(f"{label} must be a non-negative number")
@@ -417,6 +439,7 @@ def _parse_rule(value: object, index: int) -> _PricingRule:
             "providers",
             "upstream_providers",
             "service_tiers",
+            "utc_weekdays",
             "utc_time_ranges",
         },
         f"{label}.match",
@@ -473,6 +496,10 @@ def _parse_rule(value: object, index: int) -> _PricingRule:
         context=context,
         effective_from=effective_from,
         effective_until=effective_until,
+        utc_weekdays=_utc_weekdays(
+            match.get("utc_weekdays"),
+            f"{label}.match.utc_weekdays",
+        ),
         utc_time_ranges=_utc_time_ranges(
             match.get("utc_time_ranges"),
             f"{label}.match.utc_time_ranges",
@@ -526,6 +553,13 @@ def _utc_ranges_overlap(
     )
 
 
+def _utc_weekdays_overlap(
+    left: frozenset[int] | None,
+    right: frozenset[int] | None,
+) -> bool:
+    return left is None or right is None or bool(left & right)
+
+
 def _model_examples(matcher: _ModelMatcher) -> set[str]:
     examples = set(matcher.values)
     for value in matcher.values:
@@ -556,6 +590,7 @@ def _rules_overlap(left: _PricingRule, right: _PricingRule) -> bool:
             right.prompt_max,
         )
         and _times_overlap(left, right)
+        and _utc_weekdays_overlap(left.utc_weekdays, right.utc_weekdays)
         and _utc_ranges_overlap(left.utc_time_ranges, right.utc_time_ranges)
     )
 
