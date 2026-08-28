@@ -295,8 +295,8 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-08-26.1", self.plugin._PRICING_CATALOG.version)
-        self.assertEqual(44, len(self.plugin._PRICING_CATALOG.rules))
+        self.assertEqual("2026-08-28.1", self.plugin._PRICING_CATALOG.version)
+        self.assertEqual(46, len(self.plugin._PRICING_CATALOG.rules))
 
     def test_zai_glm_53_family_rates_and_flash_promotion(self):
         promotion_end = datetime(2026, 9, 9, 16, tzinfo=UTC).timestamp()
@@ -557,6 +557,43 @@ class PriceCalculatorTests(unittest.TestCase):
         self.assertEqual(2, catalog.resolve(turn(23, 30)).input)
         self.assertEqual(2, catalog.resolve(turn(0, 15)).input)
 
+    def test_pricing_catalog_resolves_recurring_utc_weekdays(self):
+        catalog = self.plugin._parse_catalog(
+            {
+                "schema": "fast-agent.pricing/v1",
+                "catalog_version": "test",
+                "currency": "USD",
+                "unit": "usd_per_million_tokens",
+                "rules": [
+                    {
+                        "id": "baseline",
+                        "match": {"model": {"values": ["weekday-model"]}},
+                        "rates": {"input": "1", "cache_read": "0", "output": "0"},
+                    },
+                    {
+                        "id": "weekday",
+                        "match": {
+                            "model": {"values": ["weekday-model"]},
+                            "utc_weekdays": ["monday", "friday"],
+                        },
+                        "rates": {"input": "2", "cache_read": "0", "output": "0"},
+                    },
+                ],
+            }
+        )
+
+        def turn(day):
+            return _turn(
+                "weekday-model",
+                prompt=1,
+                output=1,
+                timestamp=datetime(2026, 8, day, 2, tzinfo=UTC).timestamp(),
+            )
+
+        self.assertEqual(2, catalog.resolve(turn(21)).input)
+        self.assertEqual(1, catalog.resolve(turn(22)).input)
+        self.assertEqual(2, catalog.resolve(turn(24)).input)
+
     def test_pricing_catalog_rejects_unknown_fields(self):
         with self.assertRaisesRegex(ValueError, "unknown fields"):
             self.plugin._parse_catalog(
@@ -791,6 +828,9 @@ class PriceCalculatorTests(unittest.TestCase):
         off_peak = datetime(2026, 8, 19, 0, tzinfo=UTC).timestamp()
         peak = datetime(2026, 8, 19, 2, tzinfo=UTC).timestamp()
         boundary = datetime(2026, 8, 19, 4, tzinfo=UTC).timestamp()
+        legacy_saturday_peak = datetime(2026, 8, 22, 2, tzinfo=UTC).timestamp()
+        sunday_off_peak = datetime(2026, 8, 23, 2, tzinfo=UTC).timestamp()
+        monday_peak = datetime(2026, 8, 24, 2, tzinfo=UTC).timestamp()
 
         def price(model, timestamp):
             return self.plugin.calculate_price(
@@ -809,8 +849,19 @@ class PriceCalculatorTests(unittest.TestCase):
         self.assertAlmostEqual(0.8374, price("deepseek-v4-flash", off_peak))
         self.assertAlmostEqual(1.6748, price("deepseek-v4-flash", peak))
         self.assertAlmostEqual(0.8374, price("deepseek-v4-flash", boundary))
+        self.assertAlmostEqual(1.6748, price("deepseek-v4-flash", legacy_saturday_peak))
+        self.assertAlmostEqual(0.8374, price("deepseek-v4-flash", sunday_off_peak))
+        self.assertAlmostEqual(1.6748, price("deepseek-v4-flash", monday_peak))
+        self.assertAlmostEqual(
+            0.8374, price("deepseek-v4-flash-vision-exp", sunday_off_peak)
+        )
+        self.assertAlmostEqual(
+            1.6748, price("deepseek-v4-flash-vision-exp", monday_peak)
+        )
         self.assertAlmostEqual(2.5124, price("deepseek-v4-pro", off_peak))
         self.assertAlmostEqual(5.0248, price("deepseek-v4-pro", peak))
+        self.assertAlmostEqual(2.5124, price("deepseek-v4-pro", sunday_off_peak))
+        self.assertAlmostEqual(5.0248, price("deepseek-v4-pro", monday_peak))
 
     def test_muse_spark_tier_rates(self):
         for model, expected in (
