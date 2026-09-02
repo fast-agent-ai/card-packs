@@ -75,9 +75,9 @@ The bundled catalog currently includes:
   cached input, `$1.50` output).
 - DeepSeek V4 Flash and Pro with recurring UTC peak/off-peak rates. Peak hours
   are `01:00–04:00` and `06:00–10:00` UTC.
-- Muse Spark 1.1 and 1.2 Standard (`$1.25` input, `$0.15` cached input,
-  `$4.25` output) and Muse Spark 1.2 Contributor (`$0.10` input, `$0.002`
-  cached input, `$0.20` output).
+- Muse Spark 1.1–1.3 Standard (`$1.25` input, `$0.15` cached input, `$4.25`
+  output) and Muse Spark 1.2–1.3 Contributor (`$0.10` input, `$0.002` cached
+  input, `$0.20` output).
 - Grok 4.3 and 4.20 (`$1.25` input, `$0.20` cached input, `$2.50` output),
   Grok 4.5 (`$2.00`, `$0.30`, `$6.00`), Grok 4.6 (`$2.00`, `$0.50`, `$6.00`),
   and Grok Build (`$1.00`, `$0.20`, `$2.00`). Prompts at or above 200,000

@@ -295,7 +295,7 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-08-26.1", self.plugin._PRICING_CATALOG.version)
+        self.assertEqual("2026-09-02.1", self.plugin._PRICING_CATALOG.version)
         self.assertEqual(44, len(self.plugin._PRICING_CATALOG.rules))
 
     def test_zai_glm_53_family_rates_and_flash_promotion(self):
@@ -816,7 +816,9 @@ class PriceCalculatorTests(unittest.TestCase):
         for model, expected in (
             ("muse-spark-1.1", 5.28),
             ("metaai.muse-spark-1.2", 5.28),
+            ("metaai.muse-spark-1.3", 5.28),
             ("muse-spark-1.2-contributor", 0.2804),
+            ("muse-spark-1.3-contributor", 0.2804),
         ):
             with self.subTest(model=model):
                 price = self.plugin.calculate_price(
