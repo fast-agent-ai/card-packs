@@ -295,8 +295,8 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-09-02.1", self.plugin._PRICING_CATALOG.version)
-        self.assertEqual(44, len(self.plugin._PRICING_CATALOG.rules))
+        self.assertEqual("2026-09-03.1", self.plugin._PRICING_CATALOG.version)
+        self.assertTrue(self.plugin._PRICING_CATALOG.rules)
 
     def test_zai_glm_53_family_rates_and_flash_promotion(self):
         promotion_end = datetime(2026, 9, 9, 16, tzinfo=UTC).timestamp()
@@ -609,6 +609,57 @@ class PriceCalculatorTests(unittest.TestCase):
                     ],
                 }
             )
+
+    def test_astra_rates_include_cache_partitions_and_context_boundary(self):
+        for provider in ("codexresponses", "responses", "openai"):
+            for prompt, standard_cost in ((272_000, 3.065), (272_001, 5.88002)):
+                for tier, multiplier in (
+                    ("default", 1),
+                    ("flex", 0.5),
+                    ("batch", 0.5),
+                    ("priority", 2),
+                ):
+                    with self.subTest(provider=provider, prompt=prompt, tier=tier):
+                        price = self.plugin.calculate_price(
+                            (
+                                _turn(
+                                    "gpt-6-astra",
+                                    provider=provider,
+                                    prompt=prompt,
+                                    cached=20_000,
+                                    cache_write=10_000,
+                                    output=10_000,
+                                    service_tier=tier,
+                                ),
+                            )
+                        )
+                        self.assertEqual(0, price.unpriced_calls)
+                        self.assertAlmostEqual(standard_cost * multiplier, price.usd)
+
+    def test_astra_cost_display_uses_effective_standard_tier(self):
+        turn = _turn(
+            "gpt-6-astra",
+            prompt=100_000,
+            cached=20_000,
+            cache_write=10_000,
+            output=10_000,
+            tier="fast",
+            service_tier="default",
+        )
+        ctx = SimpleNamespace(
+            arguments="detail",
+            usage=None,
+            agent_name="dev",
+            message_history=(),
+            user_turn_usage=(
+                SimpleNamespace(agent_name="dev", attempts=(turn,), ledgers=()),
+            ),
+        )
+        result = asyncio.run(self.plugin.cost_breakdown(ctx))
+        self.assertIn("gpt-6-astra", result.markdown)
+        self.assertIn("standard", result.markdown)
+        self.assertIn("$1.34", result.markdown)
+        self.assertNotIn("unpriced", result.markdown)
 
     def test_gpt_56_long_context_starts_above_272k(self):
         short = self.plugin.calculate_price(

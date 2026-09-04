@@ -1,9 +1,105 @@
 {
   "schema": "fast-agent.pricing/v1",
-  "catalog_version": "2026-09-02.1",
+  "catalog_version": "2026-09-03.1",
   "currency": "USD",
   "unit": "usd_per_million_tokens",
   "rules": [
+    {
+      "id": "gpt-6-astra-standard-short",
+      "match": {
+        "model": {"values": ["gpt-6-astra"]},
+        "providers": ["codexresponses", "openai", "responses"],
+        "service_tiers": ["standard"]
+      },
+      "prompt_tokens": {"maximum": 272000},
+      "context": "short",
+      "rates": {
+        "input": "10.00",
+        "cache_read": "1.00",
+        "cache_write": "12.50",
+        "output": "50.00"
+      }
+    },
+    {
+      "id": "gpt-6-astra-standard-long",
+      "match": {
+        "model": {"values": ["gpt-6-astra"]},
+        "providers": ["codexresponses", "openai", "responses"],
+        "service_tiers": ["standard"]
+      },
+      "prompt_tokens": {"minimum": 272001},
+      "context": "long",
+      "rates": {
+        "input": "20.00",
+        "cache_read": "2.00",
+        "cache_write": "25.00",
+        "output": "75.00"
+      }
+    },
+    {
+      "id": "gpt-6-astra-flex-short",
+      "match": {
+        "model": {"values": ["gpt-6-astra"]},
+        "providers": ["codexresponses", "openai", "responses"],
+        "service_tiers": ["flex", "batch"]
+      },
+      "prompt_tokens": {"maximum": 272000},
+      "context": "short",
+      "rates": {
+        "input": "5.00",
+        "cache_read": "0.50",
+        "cache_write": "6.25",
+        "output": "25.00"
+      }
+    },
+    {
+      "id": "gpt-6-astra-flex-long",
+      "match": {
+        "model": {"values": ["gpt-6-astra"]},
+        "providers": ["codexresponses", "openai", "responses"],
+        "service_tiers": ["flex", "batch"]
+      },
+      "prompt_tokens": {"minimum": 272001},
+      "context": "long",
+      "rates": {
+        "input": "10.00",
+        "cache_read": "1.00",
+        "cache_write": "12.50",
+        "output": "37.50"
+      }
+    },
+    {
+      "id": "gpt-6-astra-fast-short",
+      "match": {
+        "model": {"values": ["gpt-6-astra"]},
+        "providers": ["codexresponses", "openai", "responses"],
+        "service_tiers": ["fast"]
+      },
+      "prompt_tokens": {"maximum": 272000},
+      "context": "short",
+      "rates": {
+        "input": "20.00",
+        "cache_read": "2.00",
+        "cache_write": "25.00",
+        "output": "100.00"
+      }
+    },
+    {
+      "id": "gpt-6-astra-fast-long",
+      "match": {
+        "model": {"values": ["gpt-6-astra"]},
+        "providers": ["codexresponses", "openai", "responses"],
+        "service_tiers": ["fast"]
+      },
+      "prompt_tokens": {"minimum": 272001},
+      "context": "long",
+      "rates": {
+        "input": "40.00",
+        "cache_read": "4.00",
+        "cache_write": "50.00",
+        "output": "150.00"
+      }
+    },
     {
       "id": "gpt-5.6-sol-standard-short",
       "match": {

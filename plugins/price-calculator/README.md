@@ -61,6 +61,11 @@ provider-neutral fallbacks.
 
 The bundled catalog currently includes:
 
+- GPT-6 Astra: Standard rates of `$10` input, `$1` cache reads, `$12.50`
+  cache writes, and `$50` output per million tokens. Above 272,000 input
+  tokens, input/cache rates double and output is 1.5× for the full request.
+  Batch/Flex cost 50% and Fast costs 2× the applicable rates. Codex OAuth
+  costs are API-equivalent estimates, not subscription charges.
 - GPT-5.6 Sol, Terra, and Luna, with Standard, Flex, and Fast short/long-context
   rates.
 - First-party Anthropic Claude Fable 5, Mythos 5, Opus 5 and 4.x, Sonnet 5 and
