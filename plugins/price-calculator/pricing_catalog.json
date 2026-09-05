@@ -1,6 +1,6 @@
 {
   "schema": "fast-agent.pricing/v1",
-  "catalog_version": "2026-09-03.1",
+  "catalog_version": "2026-09-05.1",
   "currency": "USD",
   "unit": "usd_per_million_tokens",
   "rules": [
@@ -386,6 +386,24 @@
         "cache_read": "0.08",
         "cache_write": "1.00",
         "output": "3.60"
+      }
+    },
+    {
+      "id": "claude-fable-5-1-standard",
+      "match": {
+        "model": {
+          "values": ["claude-fable-5-1", "claude-mythos-5-1"],
+          "strip_prefixes": ["anthropic."]
+        },
+        "providers": ["anthropic"],
+        "service_tiers": ["standard", "priority"]
+      },
+      "rates": {
+        "input": "10.00",
+        "cache_read": "0.25",
+        "cache_write": "12.50",
+        "cache_write_1h": "20.00",
+        "output": "50.00"
       }
     },
     {

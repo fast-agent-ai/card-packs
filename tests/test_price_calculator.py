@@ -295,7 +295,7 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-09-03.1", self.plugin._PRICING_CATALOG.version)
+        self.assertEqual("2026-09-05.1", self.plugin._PRICING_CATALOG.version)
         self.assertTrue(self.plugin._PRICING_CATALOG.rules)
 
     def test_zai_glm_53_family_rates_and_flash_promotion(self):
@@ -700,6 +700,28 @@ class PriceCalculatorTests(unittest.TestCase):
         self.assertAlmostEqual(0.35 + 0.01 + 0.0625 + 0.3, downgraded_price.usd)
         self.assertEqual("fast", self.plugin._tier_label(fast))
         self.assertEqual("standard", self.plugin._tier_label(downgraded))
+
+    def test_fable_51_pricing_preserves_cache_ttls(self):
+        for model in ("claude-fable-5-1", "anthropic.claude-fable-5-1", "claude-mythos-5-1"):
+            with self.subTest(model=model):
+                turn = _turn(
+                    model,
+                    provider="anthropic",
+                    prompt=1_000_000,
+                    output=100_000,
+                    cached=200_000,
+                    cache_write=300_000,
+                    uncached=500_000,
+                    raw_usage={
+                        "cache_creation": {
+                            "ephemeral_5m_input_tokens": 100_000,
+                            "ephemeral_1h_input_tokens": 200_000,
+                        }
+                    },
+                )
+                price = self.plugin.calculate_price((turn,))
+                self.assertEqual(0, price.unpriced_calls)
+                self.assertAlmostEqual(5 + 0.05 + 1.25 + 4 + 5, price.usd)
 
     def test_anthropic_current_models_cache_ttls_and_fast_mode(self):
         fable = _turn(
