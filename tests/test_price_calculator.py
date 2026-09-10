@@ -295,7 +295,7 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-09-05.1", self.plugin._PRICING_CATALOG.version)
+        self.assertEqual("2026-09-10.1", self.plugin._PRICING_CATALOG.version)
         self.assertTrue(self.plugin._PRICING_CATALOG.rules)
 
     def test_zai_glm_53_family_rates_and_flash_promotion(self):
@@ -556,6 +556,45 @@ class PriceCalculatorTests(unittest.TestCase):
         self.assertEqual(1, catalog.resolve(turn(4)).input)
         self.assertEqual(2, catalog.resolve(turn(23, 30)).input)
         self.assertEqual(2, catalog.resolve(turn(0, 15)).input)
+
+    def test_pricing_catalog_weekday_validation_and_overlap(self):
+        def rule(name, days, rate):
+            return {
+                "id": name,
+                "match": {
+                    "model": {"values": ["weekly-model"]},
+                    "utc_weekdays": days,
+                },
+                "rates": {"input": rate, "cache_read": "0", "output": "0"},
+            }
+
+        def catalog(*rules):
+            return self.plugin._parse_catalog(
+                {
+                    "schema": "fast-agent.pricing/v1",
+                    "catalog_version": "test",
+                    "currency": "USD",
+                    "unit": "usd_per_million_tokens",
+                    "rules": list(rules),
+                }
+            )
+
+        monday = rule("monday", ["mon"], "1")
+        sunday = rule("sunday", ["sun"], "2")
+        weekly = catalog(monday, sunday)
+        for day, expected in ((7, 1), (13, 2)):
+            turn = _turn(
+                "weekly-model",
+                prompt=1,
+                output=0,
+                timestamp=datetime(2026, 9, day, tzinfo=UTC).timestamp(),
+            )
+            self.assertEqual(expected, weekly.resolve(turn).input)
+        with self.assertRaises(ValueError):
+            catalog(monday, rule("overlap", ["mon", "tue"], "2"))
+        for invalid in ([], ["monday"], [0], "mon"):
+            with self.subTest(days=invalid), self.assertRaises(ValueError):
+                catalog(rule("invalid", invalid, "1"))
 
     def test_pricing_catalog_rejects_unknown_fields(self):
         with self.assertRaisesRegex(ValueError, "unknown fields"):
@@ -845,7 +884,7 @@ class PriceCalculatorTests(unittest.TestCase):
                 ),
             )
         )
-        self.assertAlmostEqual(0.0352, deepseek.usd)
+        self.assertAlmostEqual(0.027, deepseek.usd)
 
         deepseek_pro = self.plugin.calculate_price(
             (
@@ -879,11 +918,49 @@ class PriceCalculatorTests(unittest.TestCase):
                 )
             ).usd
 
-        self.assertAlmostEqual(0.8374, price("deepseek-v4-flash", off_peak))
-        self.assertAlmostEqual(1.6748, price("deepseek-v4-flash", peak))
-        self.assertAlmostEqual(0.8374, price("deepseek-v4-flash", boundary))
+        self.assertAlmostEqual(0.7206, price("deepseek-v4-flash", off_peak))
+        self.assertAlmostEqual(1.4412, price("deepseek-v4-flash", peak))
+        self.assertAlmostEqual(0.7206, price("deepseek-v4-flash", boundary))
         self.assertAlmostEqual(2.5124, price("deepseek-v4-pro", off_peak))
         self.assertAlmostEqual(5.0248, price("deepseek-v4-pro", peak))
+
+    def test_deepseek_flash_aliases_and_weekday_boundaries(self):
+        for model in (
+            "deepseek-flash",
+            "deepseek-v4-flash",
+            "deepseek-v4-flash-vision-exp",
+            "deepseek/deepseek-flash",
+        ):
+            # September 7–13 is a full Monday–Sunday UTC week.
+            for day in range(7, 14):
+                for hour, minute, peak_window in (
+                    (0, 59, False),
+                    (1, 0, True),
+                    (3, 59, True),
+                    (4, 0, False),
+                    (5, 59, False),
+                    (6, 0, True),
+                    (9, 59, True),
+                    (10, 0, False),
+                ):
+                    with self.subTest(model=model, day=day, hour=hour, minute=minute):
+                        price = self.plugin.calculate_price(
+                            (
+                                _turn(
+                                    model,
+                                    prompt=1_000_000,
+                                    cached=200_000,
+                                    output=1_000_000,
+                                    provider="deepseek",
+                                    timestamp=datetime(
+                                        2026, 9, day, hour, minute, tzinfo=UTC
+                                    ).timestamp(),
+                                ),
+                            )
+                        )
+                        self.assertEqual(0, price.unpriced_calls)
+                        expected = 1.4412 if day <= 11 and peak_window else 0.7206
+                        self.assertAlmostEqual(expected, price.usd)
 
     def test_muse_spark_tier_rates(self):
         for model, expected in (
@@ -1018,7 +1095,7 @@ class PriceCalculatorTests(unittest.TestCase):
             )
         )
 
-        self.assertAlmostEqual(0.03094, deepseek.usd)
+        self.assertAlmostEqual(0.02406, deepseek.usd)
         self.assertAlmostEqual(0.09284, deepseek_pro.usd)
         self.assertAlmostEqual(0.546, kimi_cached.usd)
         self.assertAlmostEqual(0.6, kimi_write.usd)
@@ -1104,7 +1181,7 @@ class PriceCalculatorTests(unittest.TestCase):
             argument_pairs,
         )
         self.assertIn(
-            ["--token", "cost=$0.0320 ($0.0672)"],
+            ["--token", "cost=$0.0320 ($0.0590)"],
             argument_pairs,
         )
 
@@ -1264,7 +1341,7 @@ class PriceCalculatorTests(unittest.TestCase):
         self.assertIn("subagents (included)", result.markdown)
         self.assertIn("### Model cost by model", result.markdown)
         self.assertIn(
-            "| `deepseek-v4-flash` | 1 | 20,000 | 0 (0%) | 2,000 | **$0.005720** |",
+            "| `deepseek-v4-flash` | 1 | 20,000 | 0 (0%) | 2,000 | **$0.004200** |",
             result.markdown,
         )
         self.assertIn(
@@ -1279,7 +1356,7 @@ class PriceCalculatorTests(unittest.TestCase):
         self.assertNotIn(" low", result.markdown)
         self.assertIn(
             "|  | **Cumulative** | **2** | **120,000** | **0 (0%)** | "
-            "**12,000** | **$0.325720** |",
+            "**12,000** | **$0.324200** |",
             result.markdown,
         )
         self.assertNotIn("Cumulative tokens", result.markdown)

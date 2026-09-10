@@ -116,6 +116,7 @@ class _PricingRule:
     context: str | None = None
     effective_from: float | None = None
     effective_until: float | None = None
+    utc_weekdays: frozenset[str] | None = None
     utc_time_ranges: tuple[_UtcTimeRange, ...] | None = None
 
     @property
@@ -128,7 +129,7 @@ class _PricingRule:
             int(self.prompt_min > 0) + int(self.prompt_max is not None),
             int(self.effective_from is not None)
             + int(self.effective_until is not None),
-            int(self.utc_time_ranges is not None),
+            int(self.utc_time_ranges is not None) + int(self.utc_weekdays is not None),
             int(not self.model.path_suffix),
         )
 
@@ -167,9 +168,16 @@ class _PricingRule:
             return False
         if self.effective_until is not None and turn.timestamp >= self.effective_until:
             return False
-        if self.utc_time_ranges is None:
+        if self.utc_weekdays is None and self.utc_time_ranges is None:
             return True
         instant = datetime.fromtimestamp(turn.timestamp, UTC)
+        if (
+            self.utc_weekdays is not None
+            and _UTC_WEEKDAYS[instant.weekday()] not in self.utc_weekdays
+        ):
+            return False
+        if self.utc_time_ranges is None:
+            return True
         second = instant.hour * 3600 + instant.minute * 60 + instant.second
         return any(time_range.matches(second) for time_range in self.utc_time_ranges)
 
@@ -278,6 +286,16 @@ def _optional_token_limit(value: object, label: str) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValueError(f"{label} must be a non-negative integer or null")
     return value
+
+
+_UTC_WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def _utc_weekdays(value: object, label: str) -> frozenset[str] | None:
+    weekdays = _optional_string_set(value, label)
+    if weekdays is not None and not weekdays.issubset(_UTC_WEEKDAYS):
+        raise ValueError(f"{label} must contain UTC weekdays: {', '.join(_UTC_WEEKDAYS)}")
+    return weekdays
 
 
 def _utc_second(value: object, label: str) -> int:
@@ -418,6 +436,7 @@ def _parse_rule(value: object, index: int) -> _PricingRule:
             "upstream_providers",
             "service_tiers",
             "utc_time_ranges",
+            "utc_weekdays",
         },
         f"{label}.match",
     )
@@ -473,6 +492,10 @@ def _parse_rule(value: object, index: int) -> _PricingRule:
         context=context,
         effective_from=effective_from,
         effective_until=effective_until,
+        utc_weekdays=_utc_weekdays(
+            match.get("utc_weekdays"),
+            f"{label}.match.utc_weekdays",
+        ),
         utc_time_ranges=_utc_time_ranges(
             match.get("utc_time_ranges"),
             f"{label}.match.utc_time_ranges",
@@ -556,6 +579,7 @@ def _rules_overlap(left: _PricingRule, right: _PricingRule) -> bool:
             right.prompt_max,
         )
         and _times_overlap(left, right)
+        and _sets_overlap(left.utc_weekdays, right.utc_weekdays)
         and _utc_ranges_overlap(left.utc_time_ranges, right.utc_time_ranges)
     )
 

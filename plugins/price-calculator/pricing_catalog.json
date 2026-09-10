@@ -1,6 +1,6 @@
 {
   "schema": "fast-agent.pricing/v1",
-  "catalog_version": "2026-09-05.1",
+  "catalog_version": "2026-09-10.1",
   "currency": "USD",
   "unit": "usd_per_million_tokens",
   "rules": [
@@ -628,37 +628,38 @@
       }
     },
     {
-      "id": "deepseek-v4-flash-off-peak",
+      "id": "deepseek-flash-off-peak",
       "match": {
         "model": {
-          "values": ["deepseek-v4-flash"],
+          "values": ["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"],
           "path_suffix": true
         },
         "providers": ["deepseek"]
       },
       "rates": {
-        "input": "0.22",
-        "cache_read": "0.007",
-        "output": "0.66"
+        "input": "0.15",
+        "cache_read": "0.003",
+        "output": "0.60"
       }
     },
     {
-      "id": "deepseek-v4-flash-peak",
+      "id": "deepseek-flash-peak",
       "match": {
         "model": {
-          "values": ["deepseek-v4-flash"],
+          "values": ["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"],
           "path_suffix": true
         },
         "providers": ["deepseek"],
+        "utc_weekdays": ["mon", "tue", "wed", "thu", "fri"],
         "utc_time_ranges": [
           {"from": "01:00", "until": "04:00"},
           {"from": "06:00", "until": "10:00"}
         ]
       },
       "rates": {
-        "input": "0.44",
-        "cache_read": "0.014",
-        "output": "1.32"
+        "input": "0.30",
+        "cache_read": "0.006",
+        "output": "1.20"
       }
     },
     {
