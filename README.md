@@ -40,4 +40,5 @@ fast-agent plugins add edit-assistant
 fast-agent plugins add session-html
 fast-agent plugins add discover
 fast-agent plugins add price-calculator
+fast-agent plugins add agent-guild-preflight
 ```

@@ -1,0 +1,9 @@
+schema_version: 1
+name: agent-guild-preflight
+version: 0.1.0
+description: Observe an explicitly chosen public endpoint before connecting.
+commands:
+  guild-preflight:
+    description: Request a free public endpoint observation from Agent Guild
+    input_hint: "<public HTTPS endpoint without credentials, query or fragment>"
+    handler: ./commands.py:preflight
