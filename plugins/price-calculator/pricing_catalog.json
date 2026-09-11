@@ -1,6 +1,6 @@
 {
   "schema": "fast-agent.pricing/v1",
-  "catalog_version": "2026-09-10.1",
+  "catalog_version": "2026-09-11.1",
   "currency": "USD",
   "unit": "usd_per_million_tokens",
   "rules": [
@@ -625,6 +625,22 @@
         "input": "0.35",
         "cache_read": "0.04",
         "output": "1.50"
+      }
+    },
+    {
+      "id": "deepseek-v4.1-flash-hf-novita",
+      "match": {
+        "model": {
+          "values": ["deepseek-ai/deepseek-v4.1-flash"],
+          "strip_after": ":"
+        },
+        "providers": ["hf"],
+        "upstream_providers": ["novita"]
+      },
+      "rates": {
+        "input": "0.03",
+        "cache_read": "0.006",
+        "output": "1.20"
       }
     },
     {

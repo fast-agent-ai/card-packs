@@ -295,7 +295,7 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-09-10.1", self.plugin._PRICING_CATALOG.version)
+        self.assertEqual("2026-09-11.1", self.plugin._PRICING_CATALOG.version)
         self.assertTrue(self.plugin._PRICING_CATALOG.rules)
 
     def test_zai_glm_53_family_rates_and_flash_promotion(self):
@@ -374,6 +374,78 @@ class PriceCalculatorTests(unittest.TestCase):
 
         self.assertEqual(0, price.usd)
         self.assertEqual(1, price.unpriced_calls)
+
+    def test_hf_novita_deepseek_routing_and_cost(self):
+        from fast_agent.config import Settings
+        from fast_agent.context import Context
+        from fast_agent.llm.model_factory import ModelFactory
+        from fast_agent.llm.provider.openai.llm_huggingface import HuggingFaceLLM
+        from fast_agent.llm.provider_types import Provider
+        from fast_agent.llm.usage_tracking import TurnUsage
+
+        parsed = ModelFactory.parse_model_string(
+            "hf.deepseek-ai/DeepSeek-V4.1-Flash:novita"
+        )
+        self.assertIs(Provider.HUGGINGFACE, parsed.provider)
+        llm = HuggingFaceLLM(
+            context=Context(config=Settings()), model=parsed.model_name
+        )
+        arguments = llm._prepare_api_request(
+            [{"role": "user", "content": "hello"}], None, llm.default_request_params
+        )
+        self.assertEqual("deepseek-ai/DeepSeek-V4.1-Flash:novita", arguments["model"])
+        model, upstream = llm._resolve_usage_attribution(parsed.model_name, arguments)
+        self.assertEqual("deepseek-ai/DeepSeek-V4.1-Flash", model)
+        self.assertEqual("novita", upstream)
+
+        for usage_model in (model, arguments["model"], model.upper()):
+            for cached, expected in ((0, 1.23), (200_000, 1.2252), (1_000_000, 1.206)):
+                for hour in (2, 12):
+                    with self.subTest(model=usage_model, cached=cached, hour=hour):
+                        turn = TurnUsage.model_validate(
+                            _turn(
+                                usage_model,
+                                prompt=1_000_000,
+                                output=1_000_000,
+                                cached=cached,
+                                provider=parsed.provider.config_name,
+                                upstream_provider=upstream,
+                                timestamp=datetime(
+                                    2026, 9, 11, hour, tzinfo=UTC
+                                ).timestamp(),
+                            ).model_dump(mode="json")
+                        )
+                        price = self.plugin.calculate_price((turn,))
+                        self.assertEqual(0, price.unpriced_calls)
+                        self.assertAlmostEqual(expected, price.usd)
+
+    def test_hf_novita_deepseek_does_not_cross_route_boundaries(self):
+        for model, provider, upstream in (
+            ("deepseek-ai/DeepSeek-V4.1-Flash:novita", "hf", None),
+            ("deepseek-ai/DeepSeek-V4.1-Flash", "hf", "together"),
+            ("deepseek-ai/DeepSeek-V4.1-Flash", "hf", "fireworks-ai"),
+            ("deepseek-ai/DeepSeek-V4.1-Flash", "deepseek", "novita"),
+            ("deepseek-ai/DeepSeek-V4.1-Flash", "openai", "novita"),
+            ("deepseek-ai/DeepSeek-V4.1-Flash", "novita", "novita"),
+            ("other/DeepSeek-V4.1-Flash", "hf", "novita"),
+            ("deepseek-ai/DeepSeek-V4.1-Flash-Other", "hf", "novita"),
+            ("deepseek-flash", "hf", "novita"),
+        ):
+            with self.subTest(model=model, provider=provider, upstream=upstream):
+                price = self.plugin.calculate_price(
+                    (
+                        _turn(
+                            model,
+                            prompt=1_000_000,
+                            output=1_000_000,
+                            cached=200_000,
+                            provider=provider,
+                            upstream_provider=upstream,
+                        ),
+                    )
+                )
+                self.assertEqual(1, price.unpriced_calls)
+                self.assertEqual(0, price.usd)
 
     def test_pricing_catalog_prefers_hf_upstream_specific_rates(self):
         def rule(rule_id, input_rate, *, providers=None, upstream_providers=None):
