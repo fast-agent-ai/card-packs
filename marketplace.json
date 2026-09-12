@@ -76,6 +76,13 @@
       "repo_url": "https://github.com/fast-agent-ai/card-packs",
       "repo_ref": "main",
       "repo_path": "plugins/price-calculator"
+    },
+    {
+      "name": "agent-guild-preflight",
+      "description": "Observe an explicitly chosen public endpoint before connecting.",
+      "repo_url": "https://github.com/fast-agent-ai/card-packs",
+      "repo_ref": "main",
+      "repo_path": "plugins/agent-guild-preflight"
     }
   ]
 }
