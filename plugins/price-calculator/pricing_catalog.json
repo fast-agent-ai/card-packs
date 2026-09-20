@@ -1,6 +1,6 @@
 {
   "schema": "fast-agent.pricing/v1",
-  "catalog_version": "2026-09-11.1",
+  "catalog_version": "2026-09-20.1",
   "currency": "USD",
   "unit": "usd_per_million_tokens",
   "rules": [
@@ -8,7 +8,7 @@
       "id": "gpt-6-astra-standard-short",
       "match": {
         "model": {"values": ["gpt-6-astra"]},
-        "providers": ["codexresponses", "openai", "responses"],
+        "providers": ["codexresponses", "copilot", "openai", "responses"],
         "service_tiers": ["standard"]
       },
       "prompt_tokens": {"maximum": 272000},
@@ -24,7 +24,7 @@
       "id": "gpt-6-astra-standard-long",
       "match": {
         "model": {"values": ["gpt-6-astra"]},
-        "providers": ["codexresponses", "openai", "responses"],
+        "providers": ["codexresponses", "copilot", "openai", "responses"],
         "service_tiers": ["standard"]
       },
       "prompt_tokens": {"minimum": 272001},
@@ -104,7 +104,7 @@
       "id": "gpt-5.6-sol-standard-short",
       "match": {
         "model": {"values": ["gpt-5.6", "gpt-5.6-sol"]},
-        "providers": ["codexresponses", "openai", "responses"],
+        "providers": ["codexresponses", "copilot", "openai", "responses"],
         "service_tiers": ["standard"]
       },
       "prompt_tokens": {"maximum": 272000},
@@ -120,7 +120,7 @@
       "id": "gpt-5.6-sol-standard-long",
       "match": {
         "model": {"values": ["gpt-5.6", "gpt-5.6-sol"]},
-        "providers": ["codexresponses", "openai", "responses"],
+        "providers": ["codexresponses", "copilot", "openai", "responses"],
         "service_tiers": ["standard"]
       },
       "prompt_tokens": {"minimum": 272001},
@@ -200,7 +200,7 @@
       "id": "gpt-5.6-terra-standard-short",
       "match": {
         "model": {"values": ["gpt-5.6-terra"]},
-        "providers": ["codexresponses", "openai", "responses"],
+        "providers": ["codexresponses", "copilot", "openai", "responses"],
         "service_tiers": ["standard"]
       },
       "prompt_tokens": {"maximum": 272000},
@@ -216,7 +216,7 @@
       "id": "gpt-5.6-terra-standard-long",
       "match": {
         "model": {"values": ["gpt-5.6-terra"]},
-        "providers": ["codexresponses", "openai", "responses"],
+        "providers": ["codexresponses", "copilot", "openai", "responses"],
         "service_tiers": ["standard"]
       },
       "prompt_tokens": {"minimum": 272001},
@@ -296,7 +296,7 @@
       "id": "gpt-5.6-luna-standard-short",
       "match": {
         "model": {"values": ["gpt-5.6-luna"]},
-        "providers": ["codexresponses", "openai", "responses"],
+        "providers": ["codexresponses", "copilot", "openai", "responses"],
         "service_tiers": ["standard"]
       },
       "prompt_tokens": {"maximum": 272000},
@@ -312,7 +312,7 @@
       "id": "gpt-5.6-luna-standard-long",
       "match": {
         "model": {"values": ["gpt-5.6-luna"]},
-        "providers": ["codexresponses", "openai", "responses"],
+        "providers": ["codexresponses", "copilot", "openai", "responses"],
         "service_tiers": ["standard"]
       },
       "prompt_tokens": {"minimum": 272001},
@@ -392,10 +392,10 @@
       "id": "claude-fable-5-1-standard",
       "match": {
         "model": {
-          "values": ["claude-fable-5-1", "claude-mythos-5-1"],
+          "values": ["claude-fable-5-1", "claude-mythos-5-1", "claude-fable-5.1"],
           "strip_prefixes": ["anthropic."]
         },
-        "providers": ["anthropic"],
+        "providers": ["anthropic", "copilot"],
         "service_tiers": ["standard", "priority"]
       },
       "rates": {
@@ -413,7 +413,7 @@
           "values": ["claude-fable-5", "claude-mythos-5"],
           "strip_prefixes": ["anthropic."]
         },
-        "providers": ["anthropic"],
+        "providers": ["anthropic", "copilot"],
         "service_tiers": ["standard", "priority"]
       },
       "rates": {
@@ -438,7 +438,7 @@
           ],
           "strip_prefixes": ["anthropic."]
         },
-        "providers": ["anthropic"],
+        "providers": ["anthropic", "copilot"],
         "service_tiers": ["standard", "priority"]
       },
       "rates": {
@@ -474,7 +474,7 @@
           "values": ["claude-sonnet-5"],
           "strip_prefixes": ["anthropic."]
         },
-        "providers": ["anthropic"],
+        "providers": ["anthropic", "copilot"],
         "service_tiers": ["standard", "priority"]
       },
       "rates": {
@@ -511,10 +511,10 @@
       "id": "claude-haiku-standard",
       "match": {
         "model": {
-          "values": ["claude-haiku-4-5", "claude-haiku-4-5-20251001"],
+          "values": ["claude-haiku-4-5", "claude-haiku-4-5-20251001", "claude-haiku-4.5"],
           "strip_prefixes": ["anthropic."]
         },
-        "providers": ["anthropic"],
+        "providers": ["anthropic", "copilot"],
         "service_tiers": ["standard", "priority"]
       },
       "rates": {

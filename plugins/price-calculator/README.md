@@ -72,6 +72,15 @@ The bundled catalog currently includes:
   4.x, and Haiku 4.5. The catalog includes Standard/Priority token rates,
   5-minute and 1-hour cache writes, cache reads, and Fast mode for Opus 5 and
   Opus 4.8.
+- GitHub Copilot (`provider=copilot`) calls are priced at the list rates of the
+  associated upstream model, covering Copilot's GPT-6 Astra, GPT-5.6 Sol, Terra,
+  and Luna, and Claude Opus 5, Sonnet 5, Fable 5, Fable 5.1, and Haiku 4.5
+  routes. The gateway does not expose service tiers, so Standard rates apply.
+  These are API-equivalent estimates, not Copilot subscription or premium-request
+  charges. The Claude route rates were verified on September 20, 2026 against the
+  `copilot_usage.token_details` rates the gateway reports on its Anthropic-wire
+  responses; the gateway reports no cost metadata for its GPT (Responses-wire)
+  routes, which use published OpenAI list rates.
 - Kimi K3 through the Moonshot provider.
 - Z.ai GLM-5.3, GLM-5.2, and GLM-5.3-Flash. Flash uses its 50%-discounted
   tariff until September 9, 2026 at 16:00 UTC, then switches to list pricing.

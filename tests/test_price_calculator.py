@@ -295,8 +295,47 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-09-11.1", self.plugin._PRICING_CATALOG.version)
+        self.assertEqual("2026-09-20.1", self.plugin._PRICING_CATALOG.version)
         self.assertTrue(self.plugin._PRICING_CATALOG.rules)
+
+    def test_copilot_uses_list_pricing_of_associated_models(self):
+        for model, reference_model, reference_provider in (
+            ("gpt-6-astra", "gpt-6-astra", "openai"),
+            ("gpt-5.6-sol", "gpt-5.6-sol", "openai"),
+            ("gpt-5.6-terra", "gpt-5.6-terra", "openai"),
+            ("gpt-5.6-luna", "gpt-5.6-luna", "openai"),
+            ("claude-opus-5", "claude-opus-5", "anthropic"),
+            ("claude-sonnet-5", "claude-sonnet-5", "anthropic"),
+            ("claude-fable-5", "claude-fable-5", "anthropic"),
+            ("claude-fable-5.1", "claude-fable-5-1", "anthropic"),
+            ("claude-haiku-4.5", "claude-haiku-4-5", "anthropic"),
+        ):
+            with self.subTest(model=model):
+                copilot = self.plugin.calculate_price(
+                    (
+                        _turn(
+                            model,
+                            prompt=100_000,
+                            output=10_000,
+                            cached=20_000,
+                            provider="copilot",
+                        ),
+                    )
+                )
+                reference = self.plugin.calculate_price(
+                    (
+                        _turn(
+                            reference_model,
+                            prompt=100_000,
+                            output=10_000,
+                            cached=20_000,
+                            provider=reference_provider,
+                        ),
+                    )
+                )
+
+                self.assertEqual(0, copilot.unpriced_calls)
+                self.assertEqual(reference.usd, copilot.usd)
 
     def test_zai_glm_53_family_rates_and_flash_promotion(self):
         promotion_end = datetime(2026, 9, 9, 16, tzinfo=UTC).timestamp()
