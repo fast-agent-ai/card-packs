@@ -295,7 +295,7 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-09-20.1", self.plugin._PRICING_CATALOG.version)
+        self.assertEqual("2026-09-21.1", self.plugin._PRICING_CATALOG.version)
         self.assertTrue(self.plugin._PRICING_CATALOG.rules)
 
     def test_copilot_uses_list_pricing_of_associated_models(self):
@@ -1159,6 +1159,29 @@ class PriceCalculatorTests(unittest.TestCase):
                 self.assertEqual(0, long_price.unpriced_calls)
                 self.assertAlmostEqual(expected_long, long_price.usd)
                 self.assertEqual("long", self.plugin._context_label(long))
+
+    def test_grok_47_published_prices_and_strict_long_context_boundary(self):
+        for model, short, boundary, long in (
+            ("grok-4.7", 0.384998, 0.385, 0.770004),
+            ("grok-4.7-build-fast", 0.769996, 0.77, 1.155006),
+        ):
+            for prefix in ("", "xai."):
+                for prompt, expected in ((199_999, short), (200_000, boundary), (200_001, long)):
+                    with self.subTest(model=prefix + model, prompt=prompt):
+                        turn = _turn(
+                            prefix + model,
+                            prompt=prompt,
+                            output=10_000,
+                            cached=50_000,
+                            provider="xai",
+                        )
+                        price = self.plugin.calculate_price((turn,))
+                        self.assertEqual(0, price.unpriced_calls)
+                        self.assertAlmostEqual(expected, price.usd)
+                        self.assertEqual(
+                            "long" if prompt > 200_000 else "short",
+                            self.plugin._context_label(turn),
+                        )
 
     def test_cached_input_and_cache_write_fallback_rates(self):
         deepseek = self.plugin.calculate_price(

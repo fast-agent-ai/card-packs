@@ -110,6 +110,23 @@ The bundled catalog currently includes:
   and Grok Build (`$1.00`, `$0.20`, `$2.00`). Prompts at or above 200,000
   tokens use each model's long-context rates.
 
+Grok 4.7 pricing (USD per million tokens, global endpoint):
+
+| Model | Prompt tokens | Input | Cached input | Output |
+| --- | --- | --- | --- | --- |
+| `grok-4.7` | ≤200,000 | $2.00 | $0.50 | $6.00 |
+| `grok-4.7` | >200,000 | $4.00 | $1.00 | $12.00 |
+| `grok-4.7-build-fast` (OAuth) | ≤200,000 | $4.00 | $1.00 | $12.00 |
+| `grok-4.7-build-fast` (OAuth) | >200,000 | $6.00 | $1.50 | $18.00 |
+
+Source: [xAI pricing](https://docs.x.ai/developers/pricing), checked September
+21, 2026. The page says long-context pricing starts when the prompt **exceeds**
+200k tokens; existing older-model thresholds are unchanged. Fast uses the
+explicit Fast table, which differs from the page's general “twice standard”
+claim for long contexts. Fast is not available with public API keys or in Grok
+Build's free tier. The US regional endpoint's 10% premium is not represented
+by these global-endpoint rules.
+
 GPT-5.6 prompts over 272,000 tokens use long-context rates. Where a provider
 does not publish a separate cache-write tariff, cache-write tokens use the
 normal input rate. The effective service tier reported by the provider takes
