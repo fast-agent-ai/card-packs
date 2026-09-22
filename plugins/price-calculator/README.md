@@ -66,6 +66,12 @@ The bundled catalog currently includes:
   tokens, input/cache rates double and output is 1.5× for the full request.
   Batch/Flex cost 50% and Fast costs 2× the applicable rates. Codex OAuth
   costs are API-equivalent estimates, not subscription charges.
+- GPT-6 Sol (`$2` input, `$10` output) and GPT-6 Luna (`$0.10` input, `$0.50`
+  output) per million tokens, from OpenAI's published list rates as of
+  September 22, 2026. Only input/output rates were published; cache reads
+  (10% of input), cache writes (125% of input), the >272,000-token long-context
+  band, Batch/Flex (50%) and Fast (2×) rates are derived with the same ratios
+  as GPT-6 Astra. Codex OAuth costs are API-equivalent estimates.
 - GPT-5.6 Sol, Terra, and Luna, with Standard, Flex, and Fast short/long-context
   rates.
 - First-party Anthropic Claude Fable 5, Mythos 5, Opus 5 and 4.x, Sonnet 5 and

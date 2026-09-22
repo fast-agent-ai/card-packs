@@ -295,7 +295,7 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-09-21.1", self.plugin._PRICING_CATALOG.version)
+        self.assertEqual("2026-09-22.1", self.plugin._PRICING_CATALOG.version)
         self.assertTrue(self.plugin._PRICING_CATALOG.rules)
 
     def test_copilot_uses_list_pricing_of_associated_models(self):
@@ -760,31 +760,37 @@ class PriceCalculatorTests(unittest.TestCase):
                 }
             )
 
-    def test_astra_rates_include_cache_partitions_and_context_boundary(self):
-        for provider in ("codexresponses", "responses", "openai"):
-            for prompt, standard_cost in ((272_000, 3.065), (272_001, 5.88002)):
-                for tier, multiplier in (
-                    ("default", 1),
-                    ("flex", 0.5),
-                    ("batch", 0.5),
-                    ("priority", 2),
-                ):
-                    with self.subTest(provider=provider, prompt=prompt, tier=tier):
-                        price = self.plugin.calculate_price(
-                            (
-                                _turn(
-                                    "gpt-6-astra",
-                                    provider=provider,
-                                    prompt=prompt,
-                                    cached=20_000,
-                                    cache_write=10_000,
-                                    output=10_000,
-                                    service_tier=tier,
-                                ),
+    def test_gpt_6_rates_include_cache_partitions_and_context_boundary(self):
+        # Sol and Luna list rates are Astra's divided by 5 and 100 respectively.
+        for model, divisor in (("gpt-6-astra", 1), ("gpt-6-sol", 5), ("gpt-6-luna", 100)):
+            for provider in ("codexresponses", "responses", "openai"):
+                for prompt, astra_cost in ((272_000, 3.065), (272_001, 5.88002)):
+                    for tier, multiplier in (
+                        ("default", 1),
+                        ("flex", 0.5),
+                        ("batch", 0.5),
+                        ("priority", 2),
+                    ):
+                        with self.subTest(
+                            model=model, provider=provider, prompt=prompt, tier=tier
+                        ):
+                            price = self.plugin.calculate_price(
+                                (
+                                    _turn(
+                                        model,
+                                        provider=provider,
+                                        prompt=prompt,
+                                        cached=20_000,
+                                        cache_write=10_000,
+                                        output=10_000,
+                                        service_tier=tier,
+                                    ),
+                                )
                             )
-                        )
-                        self.assertEqual(0, price.unpriced_calls)
-                        self.assertAlmostEqual(standard_cost * multiplier, price.usd)
+                            self.assertEqual(0, price.unpriced_calls)
+                            self.assertAlmostEqual(
+                                astra_cost * multiplier / divisor, price.usd
+                            )
 
     def test_astra_cost_display_uses_effective_standard_tier(self):
         turn = _turn(
