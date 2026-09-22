@@ -1,6 +1,6 @@
 {
   "schema": "fast-agent.pricing/v1",
-  "catalog_version": "2026-09-22.2",
+  "catalog_version": "2026-09-22.3",
   "currency": "USD",
   "unit": "usd_per_million_tokens",
   "rules": [
@@ -104,7 +104,7 @@
       "id": "gpt-6-sol-standard-short",
       "match": {
         "model": {"values": ["gpt-6-sol"]},
-        "providers": ["codexresponses", "openai", "responses"],
+        "providers": ["codexresponses", "copilot", "openai", "responses"],
         "service_tiers": ["standard"]
       },
       "prompt_tokens": {"maximum": 272000},
@@ -120,7 +120,7 @@
       "id": "gpt-6-sol-standard-long",
       "match": {
         "model": {"values": ["gpt-6-sol"]},
-        "providers": ["codexresponses", "openai", "responses"],
+        "providers": ["codexresponses", "copilot", "openai", "responses"],
         "service_tiers": ["standard"]
       },
       "prompt_tokens": {"minimum": 272001},
@@ -200,7 +200,7 @@
       "id": "gpt-6-luna-standard-short",
       "match": {
         "model": {"values": ["gpt-6-luna"]},
-        "providers": ["codexresponses", "openai", "responses"],
+        "providers": ["codexresponses", "copilot", "openai", "responses"],
         "service_tiers": ["standard"]
       },
       "prompt_tokens": {"maximum": 272000},
@@ -216,7 +216,7 @@
       "id": "gpt-6-luna-standard-long",
       "match": {
         "model": {"values": ["gpt-6-luna"]},
-        "providers": ["codexresponses", "openai", "responses"],
+        "providers": ["codexresponses", "copilot", "openai", "responses"],
         "service_tiers": ["standard"]
       },
       "prompt_tokens": {"minimum": 272001},

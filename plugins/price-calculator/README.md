@@ -71,7 +71,11 @@ The bundled catalog currently includes:
   September 22, 2026. Only input/output rates were published; cache reads
   (10% of input), cache writes (125% of input), the >272,000-token long-context
   band, Batch/Flex (50%) and Fast (2×) rates are derived with the same ratios
-  as GPT-6 Astra. Codex OAuth costs are API-equivalent estimates.
+  as GPT-6 Astra. On September 22, 2026 these rates were cross-checked
+  against the `billing.token_prices` the GitHub Copilot `/models` catalog
+  reports for both models, including cache and long-context rates (Copilot
+  rounds Luna's cache write to `$0.12`). Codex OAuth costs are
+  API-equivalent estimates.
 - GPT-5.6 Sol, Terra, and Luna, with Standard, Flex, and Fast short/long-context
   rates.
 - First-party Anthropic Claude Fable 5, Mythos 5, Opus 5.5, 5 and 4.x, Sonnet 5 and
@@ -79,7 +83,7 @@ The bundled catalog currently includes:
   5-minute and 1-hour cache writes, cache reads, and Fast mode for Opus 5 and
   Opus 4.8.
 - GitHub Copilot (`provider=copilot`) calls are priced at the list rates of the
-  associated upstream model, covering Copilot's GPT-6 Astra, GPT-5.6 Sol, Terra,
+  associated upstream model, covering Copilot's GPT-6 Astra, Sol, and Luna, GPT-5.6 Sol, Terra,
   and Luna, and Claude Opus 5.5, Opus 5, Sonnet 5, Fable 5, Fable 5.1, and Haiku 4.5
   routes. The gateway does not expose service tiers, so Standard rates apply.
   These are API-equivalent estimates, not Copilot subscription or premium-request

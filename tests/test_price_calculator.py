@@ -295,12 +295,14 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-09-22.2", self.plugin._PRICING_CATALOG.version)
+        self.assertEqual("2026-09-22.3", self.plugin._PRICING_CATALOG.version)
         self.assertTrue(self.plugin._PRICING_CATALOG.rules)
 
     def test_copilot_uses_list_pricing_of_associated_models(self):
         for model, reference_model, reference_provider in (
             ("gpt-6-astra", "gpt-6-astra", "openai"),
+            ("gpt-6-sol", "gpt-6-sol", "openai"),
+            ("gpt-6-luna", "gpt-6-luna", "openai"),
             ("gpt-5.6-sol", "gpt-5.6-sol", "openai"),
             ("gpt-5.6-terra", "gpt-5.6-terra", "openai"),
             ("gpt-5.6-luna", "gpt-5.6-luna", "openai"),
