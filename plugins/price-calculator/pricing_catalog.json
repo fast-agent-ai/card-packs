@@ -1,6 +1,6 @@
 {
   "schema": "fast-agent.pricing/v1",
-  "catalog_version": "2026-09-22.3",
+  "catalog_version": "2026-09-28.1",
   "currency": "USD",
   "unit": "usd_per_million_tokens",
   "rules": [
@@ -693,6 +693,42 @@
         "cache_write": "12.50",
         "cache_write_1h": "20.00",
         "output": "50.00"
+      }
+    },
+    {
+      "id": "claude-sonnet-5-5-standard",
+      "match": {
+        "model": {
+          "values": ["claude-sonnet-5-5", "claude-sonnet-5.5"],
+          "strip_prefixes": ["anthropic."]
+        },
+        "providers": ["anthropic", "copilot"],
+        "service_tiers": ["standard", "priority"]
+      },
+      "rates": {
+        "input": "2.00",
+        "cache_read": "0.20",
+        "cache_write": "2.50",
+        "cache_write_1h": "4.00",
+        "output": "10.00"
+      }
+    },
+    {
+      "id": "claude-sonnet-5-5-batch",
+      "match": {
+        "model": {
+          "values": ["claude-sonnet-5-5"],
+          "strip_prefixes": ["anthropic."]
+        },
+        "providers": ["anthropic"],
+        "service_tiers": ["batch"]
+      },
+      "rates": {
+        "input": "1.00",
+        "cache_read": "0.20",
+        "cache_write": "2.50",
+        "cache_write_1h": "4.00",
+        "output": "5.00"
       }
     },
     {

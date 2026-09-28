@@ -295,7 +295,7 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-09-22.3", self.plugin._PRICING_CATALOG.version)
+        self.assertEqual("2026-09-28.1", self.plugin._PRICING_CATALOG.version)
         self.assertTrue(self.plugin._PRICING_CATALOG.rules)
 
     def test_copilot_uses_list_pricing_of_associated_models(self):
@@ -309,6 +309,7 @@ class PriceCalculatorTests(unittest.TestCase):
             ("claude-opus-5", "claude-opus-5", "anthropic"),
             ("claude-opus-5.5", "claude-opus-5-5", "anthropic"),
             ("claude-sonnet-5", "claude-sonnet-5", "anthropic"),
+            ("claude-sonnet-5.5", "claude-sonnet-5-5", "anthropic"),
             ("claude-fable-5", "claude-fable-5", "anthropic"),
             ("claude-fable-5.1", "claude-fable-5-1", "anthropic"),
             ("claude-haiku-4.5", "claude-haiku-4-5", "anthropic"),
@@ -889,6 +890,35 @@ class PriceCalculatorTests(unittest.TestCase):
             ("claude-opus-5.5", "copilot", "standard", 6.14),
             ("claude-opus-5-5", "anthropic", "batch", 4.14),
             ("anthropic.claude-opus-5-5", "anthropic", "batch", 4.14),
+        ):
+            with self.subTest(model=model, provider=provider, tier=tier):
+                turn = _turn(
+                    model,
+                    provider=provider,
+                    service_tier=tier,
+                    prompt=1_000_000,
+                    output=100_000,
+                    cached=200_000,
+                    cache_write=300_000,
+                    uncached=500_000,
+                    raw_usage={
+                        "cache_creation": {
+                            "ephemeral_5m_input_tokens": 100_000,
+                            "ephemeral_1h_input_tokens": 200_000,
+                        }
+                    },
+                )
+                price = self.plugin.calculate_price((turn,))
+                self.assertEqual(0, price.unpriced_calls)
+                self.assertAlmostEqual(expected, price.usd)
+
+    def test_sonnet_55_pricing_preserves_cache_ttls_and_batch_discount(self):
+        for model, provider, tier, expected in (
+            ("claude-sonnet-5-5", "anthropic", "standard", 3.09),
+            ("anthropic.claude-sonnet-5-5", "anthropic", "priority", 3.09),
+            ("claude-sonnet-5.5", "copilot", "standard", 3.09),
+            ("claude-sonnet-5-5", "anthropic", "batch", 2.09),
+            ("anthropic.claude-sonnet-5-5", "anthropic", "batch", 2.09),
         ):
             with self.subTest(model=model, provider=provider, tier=tier):
                 turn = _turn(

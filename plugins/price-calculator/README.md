@@ -78,16 +78,16 @@ The bundled catalog currently includes:
   API-equivalent estimates.
 - GPT-5.6 Sol, Terra, and Luna, with Standard, Flex, and Fast short/long-context
   rates.
-- First-party Anthropic Claude Fable 5, Mythos 5, Opus 5.5, 5 and 4.x, Sonnet 5 and
+- First-party Anthropic Claude Fable 5, Mythos 5, Opus 5.5, 5 and 4.x, Sonnet 5.5, 5 and
   4.x, and Haiku 4.5. The catalog includes Standard/Priority token rates,
   5-minute and 1-hour cache writes, cache reads, and Fast mode for Opus 5 and
   Opus 4.8.
 - GitHub Copilot (`provider=copilot`) calls are priced at the list rates of the
   associated upstream model, covering Copilot's GPT-6 Astra, Sol, and Luna, GPT-5.6 Sol, Terra,
-  and Luna, and Claude Opus 5.5, Opus 5, Sonnet 5, Fable 5, Fable 5.1, and Haiku 4.5
+  and Luna, and Claude Opus 5.5, Opus 5, Sonnet 5.5, Sonnet 5, Fable 5, Fable 5.1, and Haiku 4.5
   routes. The gateway does not expose service tiers, so Standard rates apply.
   These are API-equivalent estimates, not Copilot subscription or premium-request
-  charges. The pre-5.5 Claude route rates were verified on September 20, 2026 against the
+  charges. The pre-5.5 Claude route rates (Opus 5.5 and Sonnet 5.5 use published list rates) were verified on September 20, 2026 against the
   `copilot_usage.token_details` rates the gateway reports on its Anthropic-wire
   responses; the gateway reports no cost metadata for its GPT (Responses-wire)
   routes, which use published OpenAI list rates.
@@ -127,6 +127,14 @@ the user-supplied official Anthropic pricing documentation/screenshot on
 September 22, 2026. Anthropic Batch input/output rates are 50% off (`$2`/`$10`);
 cache tariffs are unchanged. Copilot uses Standard API-equivalent estimates,
 not subscription charges. Older Opus model rates are unchanged.
+
+Claude Sonnet 5.5 (`claude-sonnet-5-5`, Copilot `claude-sonnet-5.5`) costs `$2`
+input, `$10` output, `$2.50` for 5-minute cache writes, `$4` for 1-hour cache
+writes, and `$0.20` for cache reads per million tokens. These rates come from the
+official Anthropic Claude Sonnet 5.5 overview published September 28, 2026.
+Anthropic Batch input/output rates are 50% off (`$1`/`$5`); cache tariffs are
+unchanged. Copilot uses Standard API-equivalent estimates, not subscription
+charges. Sonnet 5 rates are unchanged.
 
 Grok 4.7 pricing (USD per million tokens, global endpoint):
 
