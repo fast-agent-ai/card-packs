@@ -1,6 +1,6 @@
 {
   "schema": "fast-agent.pricing/v1",
-  "catalog_version": "2026-09-28.1",
+  "catalog_version": "2026-09-29.1",
   "currency": "USD",
   "unit": "usd_per_million_tokens",
   "rules": [
@@ -98,6 +98,102 @@
         "cache_read": "4.00",
         "cache_write": "50.00",
         "output": "150.00"
+      }
+    },
+    {
+      "id": "gpt-6.1-sol-standard-short",
+      "match": {
+        "model": {"values": ["gpt-6.1-sol"]},
+        "providers": ["codexresponses", "copilot", "openai", "responses"],
+        "service_tiers": ["standard"]
+      },
+      "prompt_tokens": {"maximum": 272000},
+      "context": "short",
+      "rates": {
+        "input": "2.00",
+        "cache_read": "0.10",
+        "cache_write": "2.50",
+        "output": "10.00"
+      }
+    },
+    {
+      "id": "gpt-6.1-sol-standard-long",
+      "match": {
+        "model": {"values": ["gpt-6.1-sol"]},
+        "providers": ["codexresponses", "copilot", "openai", "responses"],
+        "service_tiers": ["standard"]
+      },
+      "prompt_tokens": {"minimum": 272001},
+      "context": "long",
+      "rates": {
+        "input": "4.00",
+        "cache_read": "0.20",
+        "cache_write": "5.00",
+        "output": "15.00"
+      }
+    },
+    {
+      "id": "gpt-6.1-sol-flex-short",
+      "match": {
+        "model": {"values": ["gpt-6.1-sol"]},
+        "providers": ["codexresponses", "openai", "responses"],
+        "service_tiers": ["flex", "batch"]
+      },
+      "prompt_tokens": {"maximum": 272000},
+      "context": "short",
+      "rates": {
+        "input": "1.00",
+        "cache_read": "0.05",
+        "cache_write": "1.25",
+        "output": "5.00"
+      }
+    },
+    {
+      "id": "gpt-6.1-sol-flex-long",
+      "match": {
+        "model": {"values": ["gpt-6.1-sol"]},
+        "providers": ["codexresponses", "openai", "responses"],
+        "service_tiers": ["flex", "batch"]
+      },
+      "prompt_tokens": {"minimum": 272001},
+      "context": "long",
+      "rates": {
+        "input": "2.00",
+        "cache_read": "0.10",
+        "cache_write": "2.50",
+        "output": "7.50"
+      }
+    },
+    {
+      "id": "gpt-6.1-sol-fast-short",
+      "match": {
+        "model": {"values": ["gpt-6.1-sol"]},
+        "providers": ["codexresponses", "openai", "responses"],
+        "service_tiers": ["fast"]
+      },
+      "prompt_tokens": {"maximum": 272000},
+      "context": "short",
+      "rates": {
+        "input": "4.00",
+        "cache_read": "0.20",
+        "cache_write": "5.00",
+        "output": "20.00"
+      }
+    },
+    {
+      "id": "gpt-6.1-sol-fast-long",
+      "match": {
+        "model": {"values": ["gpt-6.1-sol"]},
+        "providers": ["codexresponses", "openai", "responses"],
+        "service_tiers": ["fast"]
+      },
+      "prompt_tokens": {"minimum": 272001},
+      "context": "long",
+      "rates": {
+        "input": "8.00",
+        "cache_read": "0.40",
+        "cache_write": "10.00",
+        "output": "30.00"
       }
     },
     {

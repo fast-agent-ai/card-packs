@@ -295,12 +295,13 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-09-28.1", self.plugin._PRICING_CATALOG.version)
+        self.assertEqual("2026-09-29.1", self.plugin._PRICING_CATALOG.version)
         self.assertTrue(self.plugin._PRICING_CATALOG.rules)
 
     def test_copilot_uses_list_pricing_of_associated_models(self):
         for model, reference_model, reference_provider in (
             ("gpt-6-astra", "gpt-6-astra", "openai"),
+            ("gpt-6.1-sol", "gpt-6.1-sol", "openai"),
             ("gpt-6-sol", "gpt-6-sol", "openai"),
             ("gpt-6-luna", "gpt-6-luna", "openai"),
             ("gpt-5.6-sol", "gpt-5.6-sol", "openai"),
@@ -795,6 +796,40 @@ class PriceCalculatorTests(unittest.TestCase):
                             self.assertAlmostEqual(
                                 astra_cost * multiplier / divisor, price.usd
                             )
+
+    def test_gpt_61_sol_matches_gpt_6_sol_except_half_price_cache_reads(self):
+        # Published list rates: cache reads are 5% of input (GPT-6 Sol: 10%).
+        for provider in ("codexresponses", "responses", "openai", "copilot"):
+            for prompt in (272_000, 272_001):
+                # Copilot exposes no service tiers, so only Standard applies.
+                tiers = ["default"] if provider == "copilot" else ["default", "flex", "batch", "priority"]
+                for tier in tiers:
+                    with self.subTest(provider=provider, prompt=prompt, tier=tier):
+                        prices = {
+                            model: self.plugin.calculate_price(
+                                (
+                                    _turn(
+                                        model,
+                                        provider=provider,
+                                        prompt=prompt,
+                                        cached=20_000,
+                                        cache_write=10_000,
+                                        output=10_000,
+                                        service_tier=tier,
+                                    ),
+                                )
+                            )
+                            for model in ("gpt-6.1-sol", "gpt-6-sol")
+                        }
+                        self.assertEqual(0, prices["gpt-6.1-sol"].unpriced_calls)
+                        long_context = 2 if prompt > 272_000 else 1
+                        tier_multiplier = {"default": 1, "flex": 0.5, "batch": 0.5, "priority": 2}[
+                            tier
+                        ]
+                        saved = 20_000 * 0.10 * long_context * tier_multiplier / 1_000_000
+                        self.assertAlmostEqual(
+                            prices["gpt-6-sol"].usd - saved, prices["gpt-6.1-sol"].usd
+                        )
 
     def test_astra_cost_display_uses_effective_standard_tier(self):
         turn = _turn(
