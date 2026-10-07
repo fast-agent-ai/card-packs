@@ -1,6 +1,6 @@
 {
   "schema": "fast-agent.pricing/v1",
-  "catalog_version": "2026-09-29.1",
+  "catalog_version": "2026-10-07.1",
   "currency": "USD",
   "unit": "usd_per_million_tokens",
   "rules": [
@@ -865,6 +865,86 @@
         "cache_write": "3.75",
         "cache_write_1h": "6.00",
         "output": "15.00"
+      }
+    },
+    {
+      "id": "claude-haiku-5-5-standard-short",
+      "match": {
+        "model": {
+          "values": ["claude-haiku-5-5", "claude-haiku-5.5"],
+          "strip_prefixes": ["anthropic."]
+        },
+        "providers": ["anthropic"],
+        "service_tiers": ["standard"]
+      },
+      "prompt_tokens": {"maximum": 100000},
+      "context": "short",
+      "rates": {
+        "input": "0.10",
+        "cache_read": "0.01",
+        "cache_write": "0.125",
+        "cache_write_1h": "0.20",
+        "output": "0.50"
+      }
+    },
+    {
+      "id": "claude-haiku-5-5-standard-long",
+      "match": {
+        "model": {
+          "values": ["claude-haiku-5-5", "claude-haiku-5.5"],
+          "strip_prefixes": ["anthropic."]
+        },
+        "providers": ["anthropic"],
+        "service_tiers": ["standard"]
+      },
+      "prompt_tokens": {"minimum": 100001},
+      "context": "long",
+      "rates": {
+        "input": "0.50",
+        "cache_read": "0.05",
+        "cache_write": "0.625",
+        "cache_write_1h": "1.00",
+        "output": "2.50"
+      }
+    },
+    {
+      "id": "claude-haiku-5-5-batch-short",
+      "match": {
+        "model": {
+          "values": ["claude-haiku-5-5", "claude-haiku-5.5"],
+          "strip_prefixes": ["anthropic."]
+        },
+        "providers": ["anthropic"],
+        "service_tiers": ["batch"]
+      },
+      "prompt_tokens": {"maximum": 100000},
+      "context": "short",
+      "rates": {
+        "input": "0.05",
+        "cache_read": "0.01",
+        "cache_write": "0.125",
+        "cache_write_1h": "0.20",
+        "output": "0.25"
+      }
+    },
+    {
+      "id": "claude-haiku-5-5-batch-long",
+      "match": {
+        "model": {
+          "values": ["claude-haiku-5-5", "claude-haiku-5.5"],
+          "strip_prefixes": ["anthropic."]
+        },
+        "providers": ["anthropic"],
+        "service_tiers": ["batch"]
+      },
+      "prompt_tokens": {"minimum": 100001},
+      "context": "long",
+      "rates": {
+        "input": "0.25",
+        "cache_read": "0.05",
+        "cache_write": "0.625",
+        "cache_write_1h": "1.00",
+        "output": "1.25"
       }
     },
     {

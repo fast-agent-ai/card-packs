@@ -295,7 +295,7 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-09-29.1", self.plugin._PRICING_CATALOG.version)
+        self.assertEqual("2026-10-07.1", self.plugin._PRICING_CATALOG.version)
         self.assertTrue(self.plugin._PRICING_CATALOG.rules)
 
     def test_copilot_uses_list_pricing_of_associated_models(self):
@@ -946,6 +946,41 @@ class PriceCalculatorTests(unittest.TestCase):
                 price = self.plugin.calculate_price((turn,))
                 self.assertEqual(0, price.unpriced_calls)
                 self.assertAlmostEqual(expected, price.usd)
+
+    def test_haiku_55_long_context_rates_start_above_100k(self):
+        for model, tier, prompt, expected in (
+            ("claude-haiku-5-5", "standard", 100_000, 100_000 * 0.10 / 1e6 + 0.005),
+            ("claude-haiku-5-5", "standard", 100_001, 100_001 * 0.50 / 1e6 + 0.025),
+            ("anthropic.claude-haiku-5-5", "batch", 100_000, 100_000 * 0.05 / 1e6 + 0.0025),
+            ("claude-haiku-5-5", "batch", 100_001, 100_001 * 0.25 / 1e6 + 0.0125),
+        ):
+            with self.subTest(model=model, tier=tier, prompt=prompt):
+                price = self.plugin.calculate_price(
+                    (
+                        _turn(
+                            model,
+                            provider="anthropic",
+                            service_tier=tier,
+                            prompt=prompt,
+                            output=10_000,
+                        ),
+                    )
+                )
+                self.assertEqual(0, price.unpriced_calls)
+                self.assertAlmostEqual(expected, price.usd)
+
+        priority = self.plugin.calculate_price(
+            (
+                _turn(
+                    "claude-haiku-5-5",
+                    provider="anthropic",
+                    service_tier="priority",
+                    prompt=1_000,
+                    output=100,
+                ),
+            )
+        )
+        self.assertEqual(1, priority.unpriced_calls)
 
     def test_sonnet_55_pricing_preserves_cache_ttls_and_batch_discount(self):
         for model, provider, tier, expected in (

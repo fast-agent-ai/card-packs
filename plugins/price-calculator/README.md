@@ -85,7 +85,7 @@ The bundled catalog currently includes:
 - GPT-5.6 Sol, Terra, and Luna, with Standard, Flex, and Fast short/long-context
   rates.
 - First-party Anthropic Claude Fable 5, Mythos 5, Opus 5.5, 5 and 4.x, Sonnet 5.5, 5 and
-  4.x, and Haiku 4.5. The catalog includes Standard/Priority token rates,
+  4.x, and Haiku 5.5 and 4.5. The catalog includes Standard/Priority token rates,
   5-minute and 1-hour cache writes, cache reads, and Fast mode for Opus 5 and
   Opus 4.8.
 - GitHub Copilot (`provider=copilot`) calls are priced at the list rates of the
@@ -141,6 +141,16 @@ official Anthropic Claude Sonnet 5.5 overview published September 28, 2026.
 Anthropic Batch input/output rates are 50% off (`$1`/`$5`); cache tariffs are
 unchanged. Copilot uses Standard API-equivalent estimates, not subscription
 charges. Sonnet 5 rates are unchanged.
+
+Claude Haiku 5.5 (`claude-haiku-5-5`) is priced by prompt size. For prompts up to
+100,000 tokens it costs `$0.10` input, `$0.50` output, `$0.125` for 5-minute cache
+writes, `$0.20` for 1-hour cache writes, and `$0.01` for cache reads per million
+tokens; above 100,000 prompt tokens these are `$0.50`, `$2.50`, `$0.625`, `$1`, and
+`$0.05`. These rates come from the official Anthropic Claude Haiku 5.5 overview
+published October 7, 2026. Anthropic Batch input/output rates are 50% off
+(`$0.05`/`$0.25` and `$0.25`/`$1.25`); cache tariffs are unchanged. Priority Tier is
+not offered for Haiku 5.5, and it is not yet available on Copilot. Haiku 4.5 rates
+are unchanged.
 
 Grok 4.7 pricing (USD per million tokens, global endpoint):
 
