@@ -1,6 +1,7 @@
 schema_version: 1
 name: session-html
-version: 0.1.0
+version: 0.1.1
+requires_fast_agent: ">=0.7.0"
 description: Generate local HTML summaries of the current conversation.
 commands:
   html-summary:

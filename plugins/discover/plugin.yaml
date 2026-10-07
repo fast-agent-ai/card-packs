@@ -1,6 +1,7 @@
 schema_version: 1
 name: discover
-version: 0.3.0
+version: 0.3.1
+requires_fast_agent: ">=0.10.0"
 description: "Discover URL-published AI Catalogs and Agent Skills, or search Agent Resource Discovery registries."
 commands:
   discover:

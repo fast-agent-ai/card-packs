@@ -1,6 +1,7 @@
 schema_version: 1
 name: agent-finder
 version: 0.1.1
+requires_fast_agent: ">=0.7.3"
 description: Discover skills and MCP servers with Agent Finder.
 commands:
   find:

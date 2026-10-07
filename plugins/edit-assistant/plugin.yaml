@@ -1,6 +1,7 @@
 schema_version: 1
 name: edit-assistant
-version: 0.2.0
+version: 0.2.1
+requires_fast_agent: ">=0.7.0"
 description: Prompt editing helpers for temporary peeks, assistant-message revision, and annotation.
 commands:
   peek:

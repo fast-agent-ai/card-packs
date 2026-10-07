@@ -1,0 +1,22 @@
+name: marketplace
+
+on:
+  push:
+  pull_request:
+  schedule:
+    # Catch fast-agent releases that break published plugins (nothing changes here).
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: marketplace.json matches plugin contents
+        run: uv run --no-project --with pyyaml python scripts/sync_marketplace.py --check
+      - name: latest fast-agent release parses the marketplace and imports every plugin
+        run: >-
+          uv run --no-project --python 3.13 --with pyyaml --with fast-agent-mcp
+          python -m unittest tests.test_marketplace -v

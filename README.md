@@ -41,3 +41,19 @@ fast-agent plugins add session-html
 fast-agent plugins add discover
 fast-agent plugins add price-calculator
 ```
+
+### Maintaining plugins
+
+`marketplace.json` publishes each plugin's `version`, `path_oid` (the git tree id
+of the plugin directory) and `requires_fast_agent` so fast-agent can check for
+updates with a single fetch. After changing a plugin:
+
+1. Bump `version` in its `plugin.yaml` (the sync refuses changed contents without a bump).
+2. Raise `requires_fast_agent` if it now needs newer fast-agent APIs.
+3. Run `python scripts/sync_marketplace.py` and commit the result.
+
+CI fails if `marketplace.json` is stale, and weekly checks that the latest
+fast-agent release still imports every plugin.
+
+`plugin_bundles` groups plugins for one-step installs; `recommended` is the
+starter set offered to new users.

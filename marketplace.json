@@ -47,35 +47,60 @@
       "description": "Prompt editing helpers: /peek and /edit-last",
       "repo_url": "https://github.com/fast-agent-ai/card-packs",
       "repo_ref": "main",
-      "repo_path": "plugins/edit-assistant"
+      "repo_path": "plugins/edit-assistant",
+      "version": "0.2.1",
+      "path_oid": "b19d18f68892adcbbd474b6c3dca575b22b3936a",
+      "requires_fast_agent": ">=0.7.0"
     },
     {
       "name": "session-html",
       "description": "Generate local HTML summaries of the current conversation",
       "repo_url": "https://github.com/fast-agent-ai/card-packs",
       "repo_ref": "main",
-      "repo_path": "plugins/session-html"
+      "repo_path": "plugins/session-html",
+      "version": "0.1.1",
+      "path_oid": "9106c1537077406ae540c3459f422732ae2b6c3b",
+      "requires_fast_agent": ">=0.7.0"
     },
     {
       "name": "herdr-session-fork",
       "description": "Fork a fast-agent session and continue the original in a sibling Herdr pane",
       "repo_url": "https://github.com/fast-agent-ai/card-packs",
       "repo_ref": "main",
-      "repo_path": "plugins/herdr-session-fork"
+      "repo_path": "plugins/herdr-session-fork",
+      "version": "0.2.1",
+      "path_oid": "12b72dbe6b0ad8eaa677fc7fa8c33b7952ff0e6a",
+      "requires_fast_agent": ">=0.7.3"
     },
     {
       "name": "discover",
       "description": "Navigate URL-published AI Catalogs and Agent Skills, or search Agent Resource Discovery registries.",
       "repo_url": "https://github.com/fast-agent-ai/card-packs",
       "repo_ref": "main",
-      "repo_path": "plugins/discover"
+      "repo_path": "plugins/discover",
+      "version": "0.3.1",
+      "path_oid": "6275727d039cbf3d45fd1677c85ba767093e1211",
+      "requires_fast_agent": ">=0.10.0"
     },
     {
       "name": "price-calculator",
       "description": "Display estimated model cost for the last turn and current session",
       "repo_url": "https://github.com/fast-agent-ai/card-packs",
       "repo_ref": "main",
-      "repo_path": "plugins/price-calculator"
+      "repo_path": "plugins/price-calculator",
+      "version": "0.3.11",
+      "requires_fast_agent": ">=0.10.2",
+      "path_oid": "cae005402d15d0af83c6db51f79e2ae619ca6a2b"
+    }
+  ],
+  "plugin_bundles": [
+    {
+      "name": "recommended",
+      "description": "Starter plugins: per-turn cost display and prompt editing helpers",
+      "plugins": [
+        "price-calculator",
+        "edit-assistant"
+      ]
     }
   ]
 }
