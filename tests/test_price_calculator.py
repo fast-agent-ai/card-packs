@@ -11,11 +11,25 @@ from types import SimpleNamespace
 from unittest import mock
 
 
+def _real_turn_usage_has_timing():
+    try:
+        from fast_agent.llm.usage_tracking import TurnUsage
+    except ImportError:
+        return False
+    return "timing" in TurnUsage.model_fields
+
+
+# History reconstruction yields real TurnUsage objects when fast-agent is importable,
+# so the fake must dump the same keys for live/history attempt signatures to match.
+_DUMP_TIMING = _real_turn_usage_has_timing()
+
+
 class _Turn(SimpleNamespace):
     def model_dump(self, *, mode):
         del mode
         prompt_total = self.prompt.total
         completion_total = self.completion.total
+        timing = {"timing": self.timing} if _DUMP_TIMING else {}
         return {
             "provider": self.provider,
             "upstream_provider": self.upstream_provider,
@@ -38,6 +52,7 @@ class _Turn(SimpleNamespace):
             "service_tier": self.service_tier,
             "cost_usd": self.cost_usd,
             "timestamp": self.timestamp,
+            **timing,
             "raw_usage": self.raw_usage,
             "total": (
                 prompt_total + completion_total
@@ -72,6 +87,7 @@ def _turn_from_payload(value):
         tool_calls=value.get("tool_calls", 0),
         reasoning_effort=value.get("reasoning_effort"),
         timestamp=value.get("timestamp", 0.0),
+        timing=value.get("timing"),
         raw_usage=value.get("raw_usage"),
     )
 
@@ -217,6 +233,7 @@ def _turn(
         tool_calls=tool_calls,
         reasoning_effort=None,
         timestamp=timestamp,
+        timing=None,
         raw_usage=raw_usage,
     )
 
