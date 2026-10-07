@@ -1,6 +1,6 @@
 {
   "schema": "fast-agent.pricing/v1",
-  "catalog_version": "2026-10-07.1",
+  "catalog_version": "2026-10-07.2",
   "currency": "USD",
   "unit": "usd_per_million_tokens",
   "rules": [
@@ -874,7 +874,7 @@
           "values": ["claude-haiku-5-5", "claude-haiku-5.5"],
           "strip_prefixes": ["anthropic."]
         },
-        "providers": ["anthropic"],
+        "providers": ["anthropic", "copilot"],
         "service_tiers": ["standard"]
       },
       "prompt_tokens": {"maximum": 100000},
@@ -894,7 +894,7 @@
           "values": ["claude-haiku-5-5", "claude-haiku-5.5"],
           "strip_prefixes": ["anthropic."]
         },
-        "providers": ["anthropic"],
+        "providers": ["anthropic", "copilot"],
         "service_tiers": ["standard"]
       },
       "prompt_tokens": {"minimum": 100001},

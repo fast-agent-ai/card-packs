@@ -295,7 +295,7 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-10-07.1", self.plugin._PRICING_CATALOG.version)
+        self.assertEqual("2026-10-07.2", self.plugin._PRICING_CATALOG.version)
         self.assertTrue(self.plugin._PRICING_CATALOG.rules)
 
     def test_copilot_uses_list_pricing_of_associated_models(self):
@@ -314,6 +314,7 @@ class PriceCalculatorTests(unittest.TestCase):
             ("claude-fable-5", "claude-fable-5", "anthropic"),
             ("claude-fable-5.1", "claude-fable-5-1", "anthropic"),
             ("claude-haiku-4.5", "claude-haiku-4-5", "anthropic"),
+            ("claude-haiku-5.5", "claude-haiku-5-5", "anthropic"),
         ):
             with self.subTest(model=model):
                 copilot = self.plugin.calculate_price(
