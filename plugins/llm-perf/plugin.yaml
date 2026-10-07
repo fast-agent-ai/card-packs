@@ -1,0 +1,12 @@
+schema_version: 2
+name: llm-perf
+version: 0.3.0
+requires_fast_agent: ">=0.10.43"
+description: Show where each turn's time went (wait, stream, tools, process waits) with TTFT and tok/s.
+commands:
+  performance:
+    description: Show where turn time went (wait, stream, tools, process waits) by turn, model, or call
+    input_hint: "[summary|detail]"
+    handler: ./llm_perf.py:performance_report
+hooks:
+  post_user_turn: ./llm_perf.py:display_perf

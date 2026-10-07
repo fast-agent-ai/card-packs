@@ -91,6 +91,16 @@
       "version": "0.3.11",
       "requires_fast_agent": ">=0.10.2",
       "path_oid": "cae005402d15d0af83c6db51f79e2ae619ca6a2b"
+    },
+    {
+      "name": "llm-perf",
+      "description": "Show where each turn's time went (wait, stream, tools, process waits) with TTFT and tok/s",
+      "repo_url": "https://github.com/fast-agent-ai/card-packs",
+      "repo_ref": "main",
+      "repo_path": "plugins/llm-perf",
+      "version": "0.3.0",
+      "path_oid": "2549b713ad1aea893c4c5b411aa42d6bbe1e7938",
+      "requires_fast_agent": ">=0.10.43"
     }
   ],
   "plugin_bundles": [
