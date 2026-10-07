@@ -24,7 +24,6 @@ from prompt_toolkit.widgets import Frame
 from fast_agent.command_actions import PluginCommandActionContext, PluginCommandActionResult
 from fast_agent.config import MCPServerSettings
 from fast_agent.ui.picker_theme import build_picker_style
-from fast_agent.utils.async_utils import suppress_known_runtime_warnings
 
 AGENT_FINDER_URL = "https://evalstate-hf-agentfinder.hf.space/search"
 AI_SKILL_MEDIA_TYPE = "application/ai-skill"
@@ -298,8 +297,7 @@ class _FinderPicker:
         return kb
 
     async def run_async(self) -> FinderResult | None:
-        with suppress_known_runtime_warnings():
-            return await self.app.run_async()
+        return await self.app.run_async()
 
 
 async def _attach_mcp_result(

@@ -1,6 +1,6 @@
 schema_version: 1
 name: agent-finder
-version: 0.1.0
+version: 0.1.1
 description: Discover skills and MCP servers with Agent Finder.
 commands:
   find:
