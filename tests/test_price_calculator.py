@@ -312,7 +312,7 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-10-07.2", self.plugin._PRICING_CATALOG.version)
+        self.assertEqual("2026-10-09.1", self.plugin._PRICING_CATALOG.version)
         self.assertTrue(self.plugin._PRICING_CATALOG.rules)
 
     def test_copilot_uses_list_pricing_of_associated_models(self):
@@ -1002,9 +1002,9 @@ class PriceCalculatorTests(unittest.TestCase):
 
     def test_sonnet_55_pricing_preserves_cache_ttls_and_batch_discount(self):
         for model, provider, tier, expected in (
-            ("claude-sonnet-5-5", "anthropic", "standard", 3.09),
-            ("anthropic.claude-sonnet-5-5", "anthropic", "priority", 3.09),
-            ("claude-sonnet-5.5", "copilot", "standard", 3.09),
+            ("claude-sonnet-5-5", "anthropic", "standard", 3.07),
+            ("anthropic.claude-sonnet-5-5", "anthropic", "priority", 3.07),
+            ("claude-sonnet-5.5", "copilot", "standard", 3.07),
             ("claude-sonnet-5-5", "anthropic", "batch", 2.09),
             ("anthropic.claude-sonnet-5-5", "anthropic", "batch", 2.09),
         ):
