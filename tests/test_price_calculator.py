@@ -301,7 +301,7 @@ class PriceCalculatorTests(unittest.TestCase):
         price = self.plugin.calculate_price((turn,))
 
         self.assertEqual(0, price.unpriced_calls)
-        self.assertAlmostEqual(0.100 + 0.002 + 0.0125 + 0.060, price.usd)
+        self.assertAlmostEqual(0.100 + 0.002 + 0.010 + 0.060, price.usd)
 
     def test_bundled_pricing_catalog_loads(self):
         catalog_path = (
@@ -312,7 +312,7 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-10-09.1", self.plugin._PRICING_CATALOG.version)
+        self.assertEqual("2026-10-10.1", self.plugin._PRICING_CATALOG.version)
         self.assertTrue(self.plugin._PRICING_CATALOG.rules)
 
     def test_copilot_uses_list_pricing_of_associated_models(self):
@@ -787,7 +787,7 @@ class PriceCalculatorTests(unittest.TestCase):
         # Sol and Luna list rates are Astra's divided by 5 and 100 respectively.
         for model, divisor in (("gpt-6-astra", 1), ("gpt-6-sol", 5), ("gpt-6-luna", 100)):
             for provider in ("codexresponses", "responses", "openai"):
-                for prompt, astra_cost in ((272_000, 3.065), (272_001, 5.88002)):
+                for prompt, astra_cost in ((272_000, 3.04), (272_001, 5.83002)):  # writes at input rate
                     for tier, multiplier in (
                         ("default", 1),
                         ("flex", 0.5),
@@ -814,6 +814,22 @@ class PriceCalculatorTests(unittest.TestCase):
                             self.assertAlmostEqual(
                                 astra_cost * multiplier / divisor, price.usd
                             )
+
+    def test_openai_cache_writes_bill_at_input_rate_but_copilot_publishes_a_write_tariff(self):
+        # OpenAI charges no write premium without opt-in extended prompt-cache retention
+        # (which fast-agent does not request); Copilot's /models billing.token_prices
+        # lists GPT cache writes at 125% of input.
+        for model in ("gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol",
+                      "gpt-5.6-terra", "gpt-5.6-luna"):
+            for provider, write_multiplier in (("openai", 1), ("responses", 1),
+                                               ("codexresponses", 1), ("copilot", 1.25)):
+                with self.subTest(model=model, provider=provider):
+                    def cost(writes):
+                        return self.plugin.calculate_price((_turn(
+                            model, provider=provider, prompt=100_000, cached=0,
+                            cache_write=writes, output=0),)).usd
+                    uncached_only = cost(0)
+                    self.assertAlmostEqual(cost(100_000), uncached_only * write_multiplier)
 
     def test_gpt_61_sol_matches_gpt_6_sol_except_half_price_cache_reads(self):
         # Published list rates: cache reads are 5% of input (GPT-6 Sol: 10%).
@@ -871,7 +887,7 @@ class PriceCalculatorTests(unittest.TestCase):
         result = asyncio.run(self.plugin.cost_breakdown(ctx))
         self.assertIn("gpt-6-astra", result.markdown)
         self.assertIn("standard", result.markdown)
-        self.assertIn("$1.34", result.markdown)
+        self.assertIn("$1.32", result.markdown)  # OpenAI cache writes bill at input rate
         self.assertNotIn("unpriced", result.markdown)
 
     def test_gpt_56_long_context_starts_above_272k(self):
@@ -909,8 +925,8 @@ class PriceCalculatorTests(unittest.TestCase):
         downgraded_price = self.plugin.calculate_price((downgraded,))
 
         self.assertEqual(0, fast_price.unpriced_calls)
-        self.assertAlmostEqual(0.7 + 0.02 + 0.125 + 0.6, fast_price.usd)
-        self.assertAlmostEqual(0.35 + 0.01 + 0.0625 + 0.3, downgraded_price.usd)
+        self.assertAlmostEqual(0.7 + 0.02 + 0.1 + 0.6, fast_price.usd)
+        self.assertAlmostEqual(0.35 + 0.01 + 0.05 + 0.3, downgraded_price.usd)
         self.assertEqual("fast", self.plugin._tier_label(fast))
         self.assertEqual("standard", self.plugin._tier_label(downgraded))
 
@@ -1594,7 +1610,7 @@ class PriceCalculatorTests(unittest.TestCase):
         self.assertIn("unpriced", result.markdown)
         self.assertIn(
             "|  | **2** | **Cumulative** |  |  | **130,010** | **20,000 (15%)** | "
-            "**10,000** | **10,002** | **$0.1745 + 1 unpriced** |",
+            "**10,000** | **10,002** | **$0.1720 + 1 unpriced** |",
             result.markdown,
         )
         self.assertNotIn("Cumulative tokens", result.markdown)

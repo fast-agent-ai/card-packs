@@ -84,6 +84,11 @@ The bundled catalog currently includes:
   long-context rates). Codex OAuth costs are API-equivalent estimates.
 - GPT-5.6 Sol, Terra, and Luna, with Standard, Flex, and Fast short/long-context
   rates.
+- OpenAI GPT cache writes on the direct routes (`openai`, `responses`,
+  `codexresponses`) bill at the normal input rate: OpenAI charges no write premium
+  unless extended prompt-cache retention is requested, which fast-agent does not
+  do. Copilot GPT routes keep a separate 125%-of-input write rate, as published in
+  Copilot's `/models` `billing.token_prices` (checked October 10, 2026).
 - First-party Anthropic Claude Fable 5, Mythos 5, Opus 5.5, 5 and 4.x, Sonnet 5.5, 5 and
   4.x, and Haiku 5.5 and 4.5. The catalog includes Standard/Priority token rates,
   5-minute and 1-hour cache writes, cache reads, and Fast mode for Opus 5 and
