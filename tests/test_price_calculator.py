@@ -312,7 +312,7 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-10-10.1", self.plugin._PRICING_CATALOG.version)
+        self.assertEqual("2026-10-10.2", self.plugin._PRICING_CATALOG.version)
         self.assertTrue(self.plugin._PRICING_CATALOG.rules)
 
     def test_copilot_uses_list_pricing_of_associated_models(self):
@@ -815,14 +815,13 @@ class PriceCalculatorTests(unittest.TestCase):
                                 astra_cost * multiplier / divisor, price.usd
                             )
 
-    def test_openai_cache_writes_bill_at_input_rate_but_copilot_publishes_a_write_tariff(self):
+    def test_openai_cache_writes_bill_at_input_rate_on_every_route(self):
         # OpenAI charges no write premium without opt-in extended prompt-cache retention
-        # (which fast-agent does not request); Copilot's /models billing.token_prices
-        # lists GPT cache writes at 125% of input.
+        # (which fast-agent does not request), through Copilot as well.
         for model in ("gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol",
                       "gpt-5.6-terra", "gpt-5.6-luna"):
             for provider, write_multiplier in (("openai", 1), ("responses", 1),
-                                               ("codexresponses", 1), ("copilot", 1.25)):
+                                               ("codexresponses", 1), ("copilot", 1)):
                 with self.subTest(model=model, provider=provider):
                     def cost(writes):
                         return self.plugin.calculate_price((_turn(

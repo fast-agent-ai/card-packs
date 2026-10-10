@@ -1,6 +1,6 @@
 {
   "schema": "fast-agent.pricing/v1",
-  "catalog_version": "2026-10-10.1",
+  "catalog_version": "2026-10-10.2",
   "currency": "USD",
   "unit": "usd_per_million_tokens",
   "rules": [
@@ -31,7 +31,6 @@
       "rates": {
         "input": "10.00",
         "cache_read": "1.00",
-        "cache_write": "12.50",
         "output": "50.00"
       }
     },
@@ -62,7 +61,6 @@
       "rates": {
         "input": "20.00",
         "cache_read": "2.00",
-        "cache_write": "25.00",
         "output": "75.00"
       }
     },
@@ -153,7 +151,6 @@
       "rates": {
         "input": "2.00",
         "cache_read": "0.10",
-        "cache_write": "2.50",
         "output": "10.00"
       }
     },
@@ -184,7 +181,6 @@
       "rates": {
         "input": "4.00",
         "cache_read": "0.20",
-        "cache_write": "5.00",
         "output": "15.00"
       }
     },
@@ -275,7 +271,6 @@
       "rates": {
         "input": "2.00",
         "cache_read": "0.20",
-        "cache_write": "2.50",
         "output": "10.00"
       }
     },
@@ -306,7 +301,6 @@
       "rates": {
         "input": "4.00",
         "cache_read": "0.40",
-        "cache_write": "5.00",
         "output": "15.00"
       }
     },
@@ -397,7 +391,6 @@
       "rates": {
         "input": "0.10",
         "cache_read": "0.01",
-        "cache_write": "0.125",
         "output": "0.50"
       }
     },
@@ -428,7 +421,6 @@
       "rates": {
         "input": "0.20",
         "cache_read": "0.02",
-        "cache_write": "0.25",
         "output": "0.75"
       }
     },
@@ -519,7 +511,6 @@
       "rates": {
         "input": "5.00",
         "cache_read": "0.50",
-        "cache_write": "6.25",
         "output": "30.00"
       }
     },
@@ -550,7 +541,6 @@
       "rates": {
         "input": "10.00",
         "cache_read": "1.00",
-        "cache_write": "12.50",
         "output": "45.00"
       }
     },
@@ -641,7 +631,6 @@
       "rates": {
         "input": "2.00",
         "cache_read": "0.20",
-        "cache_write": "2.50",
         "output": "12.00"
       }
     },
@@ -672,7 +661,6 @@
       "rates": {
         "input": "4.00",
         "cache_read": "0.40",
-        "cache_write": "5.00",
         "output": "18.00"
       }
     },
@@ -763,7 +751,6 @@
       "rates": {
         "input": "0.20",
         "cache_read": "0.02",
-        "cache_write": "0.25",
         "output": "1.20"
       }
     },
@@ -794,7 +781,6 @@
       "rates": {
         "input": "0.40",
         "cache_read": "0.04",
-        "cache_write": "0.50",
         "output": "1.80"
       }
     },
