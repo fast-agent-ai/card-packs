@@ -1,6 +1,6 @@
 {
   "schema": "fast-agent.pricing/v1",
-  "catalog_version": "2026-10-10.3",
+  "catalog_version": "2026-10-11.1",
   "currency": "USD",
   "unit": "usd_per_million_tokens",
   "rules": [
@@ -1078,7 +1078,7 @@
         "upstream_providers": ["novita"]
       },
       "rates": {
-        "input": "0.03",
+        "input": "0.30",
         "cache_read": "0.006",
         "output": "1.20"
       }

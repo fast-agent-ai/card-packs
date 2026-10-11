@@ -115,10 +115,10 @@ The bundled catalog currently includes:
   output; off-peak: `$0.15`, `$0.003`, `$0.60`. Peak windows are Monday–Friday
   `01:00–04:00` and `06:00–10:00` UTC (start inclusive, end exclusive);
   weekends are off-peak.
-- Hugging Face `deepseek-ai/DeepSeek-V4.1-Flash:novita`: `$0.03` input,
-  `$0.006` cached input, and `$1.20` output per million tokens. These rates
-  were explicitly supplied by the user on September 11, 2026 (not independently
-  verified public pricing); the `$0.03` input rate is intentional, not `$0.30`.
+- Hugging Face `deepseek-ai/DeepSeek-V4.1-Flash:novita`: `$0.30` input,
+  `$0.006` cached input, and `$1.20` output per million tokens (confirmed by the
+  user on October 11, 2026; matches the HF router's listed Novita input/output
+  rates). The earlier `$0.03` input rate was an error.
   They apply only to `provider=hf` with `upstream_provider=novita`, without
   peak/off-peak windows. Native DeepSeek and other upstream tariffs are unchanged.
 - DeepSeek V4 Pro retains its existing rates and UTC time windows. Announced

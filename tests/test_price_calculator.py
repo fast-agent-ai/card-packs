@@ -312,7 +312,7 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-10-10.3", self.plugin._PRICING_CATALOG.version)
+        self.assertEqual("2026-10-11.1", self.plugin._PRICING_CATALOG.version)
         self.assertTrue(self.plugin._PRICING_CATALOG.rules)
 
     def test_copilot_uses_list_pricing_of_associated_models(self):
@@ -461,7 +461,7 @@ class PriceCalculatorTests(unittest.TestCase):
         self.assertEqual("novita", upstream)
 
         for usage_model in (model, arguments["model"], model.upper()):
-            for cached, expected in ((0, 1.23), (200_000, 1.2252), (1_000_000, 1.206)):
+            for cached, expected in ((0, 1.5), (200_000, 1.4412), (1_000_000, 1.206)):
                 for hour in (2, 12):
                     with self.subTest(model=usage_model, cached=cached, hour=hour):
                         turn = TurnUsage.model_validate(
