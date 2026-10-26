@@ -82,6 +82,19 @@ The bundled catalog currently includes:
   band, Batch/Flex (50%) and Fast (2×) rules as GPT-6 Sol. Cross-checked the
   same day against the Copilot `/models` `billing.token_prices` (including
   long-context rates). Codex OAuth costs are API-equivalent estimates.
+- GPT-6.1 Terra: OpenAI's published list rates, checked October 26, 2026 —
+  `$1` input, `$0.05` cache reads, `$1.25` cache writes (30-minute retention),
+  and `$5` output per million tokens. Prompts above 272,000 total input tokens
+  (including cached tokens) double input/cache rates and multiply output by
+  1.5 for the full request. The same rates and threshold apply to OpenAI API
+  (`openai`/`responses`), Codex plan (`codexresponses`), and Copilot routes;
+  Terra has no Codex-specific threshold. Batch/Flex cost 50% and Fast costs
+  2× the applicable rates; Copilot uses Standard, as it exposes no service tiers.
+  Codex and Copilot costs are API-equivalent estimates, not subscription charges.
+  The published 12-hour cache-write rate is `$2.50` before tier/context
+  adjustments, but the calculator does not distinguish OpenAI cache retention
+  durations and uses the 30-minute tariff for reported cache writes. Regional
+  processing premiums are not represented.
 - GPT-5.6 Sol, Terra, and Luna, with Standard, Flex, and Fast short/long-context
   rates.
 - GPT-5.6 and later bill prompt-cache writes at 1.25x the uncached input rate on
@@ -94,7 +107,7 @@ The bundled catalog currently includes:
   5-minute and 1-hour cache writes, cache reads, and Fast mode for Opus 5 and
   Opus 4.8.
 - GitHub Copilot (`provider=copilot`) calls are priced at the list rates of the
-  associated upstream model, covering Copilot's GPT-6 Astra, Sol, and Luna, GPT-6.1 Sol, GPT-5.6 Sol, Terra,
+  associated upstream model, covering Copilot's GPT-6 Astra, Sol, and Luna, GPT-6.1 Sol and Terra, GPT-5.6 Sol, Terra,
   and Luna, and Claude Opus 5.5, Opus 5, Sonnet 5.5, Sonnet 5, Fable 5, Fable 5.1, Haiku 5.5, and Haiku 4.5
   routes. The gateway does not expose service tiers, so Standard rates apply.
   These are API-equivalent estimates, not Copilot subscription or premium-request
@@ -196,6 +209,8 @@ rate.
 Primary pricing sources:
 
 - [OpenAI API pricing](https://developers.openai.com/api/docs/pricing)
+- [GPT-6.1 Terra model pricing](https://developers.openai.com/api/docs/models/gpt-6.1-terra)
+  (Terra model and API pricing pages checked October 26, 2026)
 - [Anthropic pricing](https://platform.claude.com/docs/en/about-claude/pricing)
 - [Kimi K3 pricing](https://platform.kimi.ai/docs/pricing/chat-k3)
 - [Z.ai model pricing](https://docs.z.ai/guides/overview/pricing)

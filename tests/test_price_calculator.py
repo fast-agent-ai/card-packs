@@ -312,7 +312,7 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-10-11.1", self.plugin._PRICING_CATALOG.version)
+        self.assertEqual("2026-10-26.1", self.plugin._PRICING_CATALOG.version)
         self.assertTrue(self.plugin._PRICING_CATALOG.rules)
 
     def test_copilot_uses_list_pricing_of_associated_models(self):
@@ -862,6 +862,82 @@ class PriceCalculatorTests(unittest.TestCase):
                         self.assertAlmostEqual(
                             prices["gpt-6-sol"].usd - saved, prices["gpt-6.1-sol"].usd
                         )
+
+    def test_gpt_61_terra_standard_boundary_and_route_parity(self):
+        # Cached input counts toward the boundary; the surcharge covers the
+        # full request, not just tokens beyond 272k. Codex has no 500k exception.
+        for prompt in (271_999, 272_000, 272_001, 500_000, 500_001):
+            input_multiplier = 2 if prompt > 272_000 else 1
+            output_multiplier = 1.5 if prompt > 272_000 else 1
+            expected = (
+                ((prompt - 30_000) * 1 + 20_000 * 0.05 + 10_000 * 1.25) * input_multiplier
+                + 10_000 * 5 * output_multiplier
+            ) / 1_000_000
+            route_costs = []
+            for provider in ("responses", "openai", "codexresponses", "copilot"):
+                with self.subTest(prompt=prompt, provider=provider):
+                    turn = _turn(
+                        "gpt-6.1-terra",
+                        provider=provider,
+                        prompt=prompt,
+                        cached=20_000,
+                        cache_write=10_000,
+                        output=10_000,
+                    )
+                    price = self.plugin.calculate_price((turn,))
+                    self.assertEqual(0, price.unpriced_calls)
+                    self.assertAlmostEqual(expected, price.usd)
+                    context = "long" if prompt > 272_000 else "short"
+                    self.assertIn(f"_{context}_", self.plugin.format_cost_breakdown(((1, turn),)))
+                    route_costs.append(price.usd)
+            self.assertEqual([route_costs[0]] * len(route_costs), route_costs)
+
+    def test_gpt_61_terra_tiers_scale_all_token_partitions(self):
+        # Copilot exposes only Standard. Other routes share all supported tiers,
+        # including the legacy Priority spelling of Fast.
+        for prompt in (272_000, 272_001, 500_000, 500_001):
+            for provider in ("responses", "openai", "codexresponses"):
+                turn = _turn(
+                    "gpt-6.1-terra",
+                    provider=provider,
+                    prompt=prompt,
+                    cached=20_000,
+                    cache_write=10_000,
+                    output=10_000,
+                )
+                standard = self.plugin.calculate_price((turn,))
+                self.assertEqual(0, standard.unpriced_calls)
+                for tier, multiplier in (
+                    ("default", 1),
+                    ("standard", 1),
+                    ("flex", 0.5),
+                    ("batch", 0.5),
+                    ("fast", 2),
+                    ("priority", 2),
+                ):
+                    with self.subTest(prompt=prompt, provider=provider, tier=tier):
+                        turn.service_tier = tier
+                        price = self.plugin.calculate_price((turn,))
+                        self.assertEqual(0, price.unpriced_calls)
+                        self.assertAlmostEqual(standard.usd * multiplier, price.usd)
+
+    def test_gpt_61_terra_effective_standard_overrides_requested_fast(self):
+        for provider in ("responses", "openai", "codexresponses"):
+            for prompt in (272_000, 272_001):
+                with self.subTest(provider=provider, prompt=prompt):
+                    turn = _turn(
+                        "gpt-6.1-terra",
+                        provider=provider,
+                        prompt=prompt,
+                        output=10_000,
+                        tier="fast",
+                    )
+                    fast = self.plugin.calculate_price((turn,))
+                    turn.service_tier = "default"
+                    standard = self.plugin.calculate_price((turn,))
+                    self.assertEqual(0, fast.unpriced_calls)
+                    self.assertEqual(0, standard.unpriced_calls)
+                    self.assertAlmostEqual(fast.usd / 2, standard.usd)
 
     def test_astra_cost_display_uses_effective_standard_tier(self):
         turn = _turn(
