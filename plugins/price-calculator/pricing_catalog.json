@@ -1,6 +1,6 @@
 {
   "schema": "fast-agent.pricing/v1",
-  "catalog_version": "2026-10-27.1",
+  "catalog_version": "2026-10-28.1",
   "currency": "USD",
   "unit": "usd_per_million_tokens",
   "rules": [
@@ -1128,14 +1128,14 @@
       }
     },
     {
-      "id": "glm-53-hf-zai-org",
+      "id": "glm-53-hf",
       "match": {
         "model": {
           "values": ["zai-org/glm-5.3"],
           "strip_after": ":"
         },
         "providers": ["hf"],
-        "upstream_providers": ["zai-org"]
+        "upstream_providers": ["zai-org", "together", "novita"]
       },
       "rates": {
         "input": "1.4",
@@ -1144,14 +1144,30 @@
       }
     },
     {
-      "id": "glm-53-hf-together",
+      "id": "glm-53-flash-hf",
       "match": {
         "model": {
-          "values": ["zai-org/glm-5.3"],
+          "values": ["zai-org/glm-5.3-flash"],
           "strip_after": ":"
         },
         "providers": ["hf"],
-        "upstream_providers": ["together"]
+        "upstream_providers": ["zai-org", "together", "novita"]
+      },
+      "rates": {
+        "input": "0.15",
+        "cache_read": "0.03",
+        "output": "0.50"
+      }
+    },
+    {
+      "id": "glm-52-hf",
+      "match": {
+        "model": {
+          "values": ["zai-org/glm-5.2"],
+          "strip_after": ":"
+        },
+        "providers": ["hf"],
+        "upstream_providers": ["zai-org", "novita"]
       },
       "rates": {
         "input": "1.4",
@@ -1160,67 +1176,19 @@
       }
     },
     {
-      "id": "glm-53-hf-novita",
+      "id": "glm-52-hf-deepinfra",
       "match": {
         "model": {
-          "values": ["zai-org/glm-5.3"],
+          "values": ["zai-org/glm-5.2"],
           "strip_after": ":"
         },
         "providers": ["hf"],
-        "upstream_providers": ["novita"]
+        "upstream_providers": ["deepinfra"]
       },
       "rates": {
-        "input": "1.4",
-        "cache_read": "0.26",
-        "output": "4.4"
-      }
-    },
-    {
-      "id": "glm-53-flash-hf-zai-org",
-      "match": {
-        "model": {
-          "values": ["zai-org/glm-5.3-flash"],
-          "strip_after": ":"
-        },
-        "providers": ["hf"],
-        "upstream_providers": ["zai-org"]
-      },
-      "rates": {
-        "input": "0.15",
-        "cache_read": "0.03",
-        "output": "0.50"
-      }
-    },
-    {
-      "id": "glm-53-flash-hf-together",
-      "match": {
-        "model": {
-          "values": ["zai-org/glm-5.3-flash"],
-          "strip_after": ":"
-        },
-        "providers": ["hf"],
-        "upstream_providers": ["together"]
-      },
-      "rates": {
-        "input": "0.15",
-        "cache_read": "0.03",
-        "output": "0.50"
-      }
-    },
-    {
-      "id": "glm-53-flash-hf-novita",
-      "match": {
-        "model": {
-          "values": ["zai-org/glm-5.3-flash"],
-          "strip_after": ":"
-        },
-        "providers": ["hf"],
-        "upstream_providers": ["novita"]
-      },
-      "rates": {
-        "input": "0.15",
-        "cache_read": "0.03",
-        "output": "0.50"
+        "input": "0.75",
+        "cache_read": "0.14",
+        "output": "2.40"
       }
     },
     {
@@ -1237,6 +1205,38 @@
         "input": "3.00",
         "cache_read": "0.30",
         "output": "15.00"
+      }
+    },
+    {
+      "id": "kimi-k3-hf",
+      "match": {
+        "model": {
+          "values": ["moonshotai/kimi-k3"],
+          "strip_after": ":"
+        },
+        "providers": ["hf"],
+        "upstream_providers": ["together", "baseten"]
+      },
+      "rates": {
+        "input": "3.00",
+        "cache_read": "0.30",
+        "output": "15.00"
+      }
+    },
+    {
+      "id": "kimi-k3-hf-deepinfra",
+      "match": {
+        "model": {
+          "values": ["moonshotai/kimi-k3"],
+          "strip_after": ":"
+        },
+        "providers": ["hf"],
+        "upstream_providers": ["deepinfra"]
+      },
+      "rates": {
+        "input": "2.85",
+        "cache_read": "0.285",
+        "output": "14.25"
       }
     },
     {

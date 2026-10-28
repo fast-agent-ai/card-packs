@@ -316,7 +316,7 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-10-27.1", self.plugin._PRICING_CATALOG.version)
+        self.assertEqual("2026-10-28.1", self.plugin._PRICING_CATALOG.version)
         self.assertTrue(self.plugin._PRICING_CATALOG.rules)
 
     def test_copilot_uses_list_pricing_of_associated_models(self):
@@ -425,36 +425,38 @@ class PriceCalculatorTests(unittest.TestCase):
         self.assertEqual(0, price.usd)
         self.assertEqual(1, price.unpriced_calls)
 
-    def test_hf_glm_53_route_pricing(self):
-        # prompt 1M with 200k cached reads and 100k cache writes: uncached 700k.
-        def priced_turn(model, upstream):
-            return _turn(
-                model,
-                prompt=1_000_000,
-                output=1_000_000,
-                cached=200_000,
-                cache_write=100_000,
-                provider="hf",
-                upstream_provider=upstream,
-            )
+    def test_hf_route_pricing(self):
+        # prompt 1M with 200k cached reads and 100k cache writes: 800k billed as input.
+        # Free cache storage does not waive processing new input, and no upstream
+        # publishes a separate write tariff, so writes use the ordinary input rate.
+        glm53 = ("zai-org/GLM-5.3", "zai-org/GLM-5.3:together", "ZAI-ORG/GLM-5.3")
+        flash = ("zai-org/GLM-5.3-Flash", "zai-org/GLM-5.3-Flash:novita")
+        cases = (
+            *((m, u, 5.572) for m in glm53 for u in ("zai-org", "together", "novita")),
+            *((m, u, 0.626) for m in flash for u in ("zai-org", "together", "novita")),
+            ("zai-org/GLM-5.2", "zai-org", 5.572),
+            ("zai-org/GLM-5.2:novita", "novita", 5.572),
+            ("zai-org/GLM-5.2", "deepinfra", 3.028),
+            ("moonshotai/Kimi-K3", "together", 17.46),
+            ("moonshotai/Kimi-K3:baseten", "baseten", 17.46),
+            ("moonshotai/Kimi-K3", "deepinfra", 16.587),
+        )
+        for model, upstream, expected in cases:
+            with self.subTest(model=model, upstream=upstream):
+                turn = _turn(
+                    model,
+                    prompt=1_000_000,
+                    output=1_000_000,
+                    cached=200_000,
+                    cache_write=100_000,
+                    provider="hf",
+                    upstream_provider=upstream,
+                )
+                price = self.plugin.calculate_price((turn,))
+                self.assertEqual(0, price.unpriced_calls)
+                self.assertAlmostEqual(expected, price.usd)
 
-        for usage_model in ("zai-org/GLM-5.3", "zai-org/GLM-5.3:together", "ZAI-ORG/GLM-5.3"):
-            for upstream, expected in (("zai-org", 5.572), ("together", 5.572), ("novita", 5.572)):
-                with self.subTest(model=usage_model, upstream=upstream):
-                    price = self.plugin.calculate_price((priced_turn(usage_model, upstream),))
-                    self.assertEqual(0, price.unpriced_calls)
-                    # Free cache storage does not waive processing new input.
-                    # Writes use the ordinary input rate on all three upstreams.
-                    self.assertAlmostEqual(expected, price.usd)
-
-        for usage_model in ("zai-org/GLM-5.3-Flash", "zai-org/GLM-5.3-Flash:novita"):
-            for upstream, expected in (("zai-org", 0.626), ("together", 0.626), ("novita", 0.626)):
-                with self.subTest(model=usage_model, upstream=upstream):
-                    price = self.plugin.calculate_price((priced_turn(usage_model, upstream),))
-                    self.assertEqual(0, price.unpriced_calls)
-                    self.assertAlmostEqual(expected, price.usd)
-
-    def test_glm_cache_population_keeps_the_input_processing_charge(self):
+    def test_cache_population_keeps_the_input_processing_charge(self):
         try:
             from openai.types.completion_usage import CompletionUsage
 
@@ -472,6 +474,14 @@ class PriceCalculatorTests(unittest.TestCase):
                 (Provider.HUGGINGFACE, model, upstream)
                 for model in ("zai-org/GLM-5.3", "zai-org/GLM-5.3-Flash")
                 for upstream in ("zai-org", "together", "novita")
+            ),
+            *(
+                (Provider.HUGGINGFACE, "zai-org/GLM-5.2", upstream)
+                for upstream in ("zai-org", "novita", "deepinfra")
+            ),
+            *(
+                (Provider.HUGGINGFACE, "moonshotai/Kimi-K3", upstream)
+                for upstream in ("together", "baseten", "deepinfra")
             ),
         ]
         for provider, model, upstream in routes:
@@ -498,7 +508,7 @@ class PriceCalculatorTests(unittest.TestCase):
             for price in prices[1:]:
                 self.assertAlmostEqual(prices[0], price)
 
-    def test_hf_glm_53_does_not_cross_route_boundaries(self):
+    def test_hf_routes_do_not_cross_boundaries(self):
         for model, provider, upstream in (
             ("zai-org/GLM-5.3", "hf", None),
             ("zai-org/GLM-5.3", "hf", "nscale"),
@@ -507,8 +517,10 @@ class PriceCalculatorTests(unittest.TestCase):
             ("zai-org/GLM-5.3", "zai", "together"),
             ("glm-5.3", "hf", "zai-org"),
             ("zai-org/GLM-5.3-Flash-BF16", "hf", "zai-org"),
-            ("zai-org/GLM-5.2", "hf", "zai-org"),
-            ("moonshotai/Kimi-K3", "hf", "together"),
+            ("zai-org/GLM-5.2", "hf", "scaleway"),
+            ("zai-org/GLM-5.2", "hf", "baseten"),
+            ("moonshotai/Kimi-K3", "hf", None),
+            ("moonshotai/Kimi-K3", "hf", "featherless-ai"),
         ):
             with self.subTest(model=model, provider=provider, upstream=upstream):
                 price = self.plugin.calculate_price(
@@ -1321,7 +1333,7 @@ class PriceCalculatorTests(unittest.TestCase):
                 )
                 self.assertAlmostEqual(0.6, price.usd)
 
-        for upstream_provider in ("fireworks-ai", "together"):
+        for upstream_provider in ("fireworks-ai", "featherless-ai"):
             with self.subTest(upstream_provider=upstream_provider):
                 price = self.plugin.calculate_price(
                     (

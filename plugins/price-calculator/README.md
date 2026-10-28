@@ -135,8 +135,22 @@ The bundled catalog currently includes:
   model page](https://novita.ai/models/model-detail/zai-org-glm-5.3) (Flash
   equivalently). HF's router model list independently confirms Novita's input
   and output rates; it does not expose every provider or cached-input tariff.
-  Calls without a known upstream (including `auto`/`fastest`), or attributed to
-  nscale, baseten, or deepinfra remain unpriced, as does the GLM-5.2 HF route.
+- Hugging Face GLM-5.2 through `zai-org` and `novita` at the same `$1.40`,
+  `$0.26`, and `$4.40` tariff, and through `deepinfra` at `$0.75` input, `$0.14`
+  cached input, and `$2.40` output.
+- Hugging Face Kimi K3 through `together` and `baseten` at `$3.00` input, `$0.30`
+  cached input, and `$15.00` output, and through `deepinfra` at `$2.85`, `$0.285`,
+  and `$14.25`. No upstream publishes a cache-write tariff, so writes use the
+  input rate.
+- GLM-5.2 and Kimi K3 HF rates were verified on October 28, 2026 against
+  [Novita's GLM-5.2 model page](https://novita.ai/models/model-detail/zai-org-glm-5.2),
+  [Together's pricing page](https://www.together.ai/pricing),
+  [Baseten's Kimi K3 page](https://www.baseten.co/library/kimi-k3/), and
+  DeepInfra's [OpenAI-compatible model list](https://api.deepinfra.com/v1/openai/models)
+  (`metadata.pricing`); input and output agree with HF's router model list.
+- HF calls without a known upstream (including `auto`/`fastest`) remain
+  unpriced, as do GLM-5.3 via nscale, baseten, or deepinfra, GLM-5.2 via
+  baseten or scaleway, and Kimi K3 via featherless-ai.
 - Muse Glimmer 30B through Hugging Face and Together (`$0.35` input, `$0.04`
   cached input, `$1.50` output).
 - DeepSeek V4.1 Flash (API model `deepseek-flash`), verified against the official
