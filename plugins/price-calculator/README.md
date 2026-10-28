@@ -118,7 +118,25 @@ The bundled catalog currently includes:
 - Kimi K3 through the Moonshot provider.
 - Z.ai GLM-5.3, GLM-5.2, and GLM-5.3-Flash. Flash uses its 50%-discounted
   tariff until September 9, 2026 at 16:00 UTC, then switches to list pricing.
-  Published cached-input storage is currently free.
+  Published cached-input storage is currently free; new input processing still
+  bills at the ordinary input rate, including tokens written to the cache.
+- Hugging Face GLM-5.3 and GLM-5.3-Flash through the `zai-org`, `together`, and
+  `novita` upstreams: `$1.40` input, `$0.26` cached input, and `$4.40` output
+  per million tokens, with Flash at `$0.15`, `$0.03`, and `$0.50`. Hugging Face
+  passes provider rates through with no markup, and all three upstreams publish
+  the same list tariff. Cache writes use the ordinary input rate on all three
+  upstreams: [Z.ai's caching documentation](https://docs.z.ai/guides/capabilities/cache#billing-information)
+  distinguishes free cache storage from new content tokens billed at standard
+  input prices. Together and Novita publish no separate cache-write tariff, so
+  the calculator uses its input-rate fallback. Provider list rates were
+  verified on October 27, 2026 against [Z.ai's pricing
+  page](https://docs.z.ai/guides/overview/pricing), [Together's GLM-5.3
+  guide](https://docs.together.ai/docs/glm-5.3-quickstart), and [Novita's GLM-5.3
+  model page](https://novita.ai/models/model-detail/zai-org-glm-5.3) (Flash
+  equivalently). HF's router model list independently confirms Novita's input
+  and output rates; it does not expose every provider or cached-input tariff.
+  Calls without a known upstream (including `auto`/`fastest`), or attributed to
+  nscale, baseten, or deepinfra remain unpriced, as does the GLM-5.2 HF route.
 - Muse Glimmer 30B through Hugging Face and Together (`$0.35` input, `$0.04`
   cached input, `$1.50` output).
 - DeepSeek V4.1 Flash (API model `deepseek-flash`), verified against the official

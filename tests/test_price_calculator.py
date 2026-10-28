@@ -11,17 +11,18 @@ from types import SimpleNamespace
 from unittest import mock
 
 
-def _real_turn_usage_has_timing():
+def _real_turn_usage_has_field(name):
     try:
         from fast_agent.llm.usage_tracking import TurnUsage
     except ImportError:
         return False
-    return "timing" in TurnUsage.model_fields
+    return name in TurnUsage.model_fields
 
 
 # History reconstruction yields real TurnUsage objects when fast-agent is importable,
 # so the fake must dump the same keys for live/history attempt signatures to match.
-_DUMP_TIMING = _real_turn_usage_has_timing()
+_DUMP_TIMING = _real_turn_usage_has_field("timing")
+_DUMP_CONTEXT_TOKENS = _real_turn_usage_has_field("context_tokens")
 
 
 class _Turn(SimpleNamespace):
@@ -53,6 +54,7 @@ class _Turn(SimpleNamespace):
             "cost_usd": self.cost_usd,
             "timestamp": self.timestamp,
             **timing,
+            **({"context_tokens": self.context_tokens} if _DUMP_CONTEXT_TOKENS else {}),
             "raw_usage": self.raw_usage,
             "total": (
                 prompt_total + completion_total
@@ -88,6 +90,7 @@ def _turn_from_payload(value):
         reasoning_effort=value.get("reasoning_effort"),
         timestamp=value.get("timestamp", 0.0),
         timing=value.get("timing"),
+        context_tokens=value.get("context_tokens"),
         raw_usage=value.get("raw_usage"),
     )
 
@@ -234,6 +237,7 @@ def _turn(
         reasoning_effort=None,
         timestamp=timestamp,
         timing=None,
+        context_tokens=None,
         raw_usage=raw_usage,
     )
 
@@ -312,7 +316,7 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-10-26.1", self.plugin._PRICING_CATALOG.version)
+        self.assertEqual("2026-10-27.1", self.plugin._PRICING_CATALOG.version)
         self.assertTrue(self.plugin._PRICING_CATALOG.rules)
 
     def test_copilot_uses_list_pricing_of_associated_models(self):
@@ -401,10 +405,10 @@ class PriceCalculatorTests(unittest.TestCase):
         self.assertEqual(0, flash_list.unpriced_calls)
         self.assertEqual(0, glm_53.unpriced_calls)
         self.assertEqual(0, glm_52.unpriced_calls)
-        self.assertAlmostEqual(0.3055, flash_promotion.usd)
-        self.assertAlmostEqual(0.611, flash_list.usd)
-        self.assertAlmostEqual(5.432, glm_53.usd)
-        self.assertAlmostEqual(5.432, glm_52.usd)
+        self.assertAlmostEqual(0.313, flash_promotion.usd)
+        self.assertAlmostEqual(0.626, flash_list.usd)
+        self.assertAlmostEqual(5.572, glm_53.usd)
+        self.assertAlmostEqual(5.572, glm_52.usd)
 
     def test_zai_prices_do_not_cross_provider_boundaries(self):
         price = self.plugin.calculate_price(
@@ -420,6 +424,107 @@ class PriceCalculatorTests(unittest.TestCase):
 
         self.assertEqual(0, price.usd)
         self.assertEqual(1, price.unpriced_calls)
+
+    def test_hf_glm_53_route_pricing(self):
+        # prompt 1M with 200k cached reads and 100k cache writes: uncached 700k.
+        def priced_turn(model, upstream):
+            return _turn(
+                model,
+                prompt=1_000_000,
+                output=1_000_000,
+                cached=200_000,
+                cache_write=100_000,
+                provider="hf",
+                upstream_provider=upstream,
+            )
+
+        for usage_model in ("zai-org/GLM-5.3", "zai-org/GLM-5.3:together", "ZAI-ORG/GLM-5.3"):
+            for upstream, expected in (("zai-org", 5.572), ("together", 5.572), ("novita", 5.572)):
+                with self.subTest(model=usage_model, upstream=upstream):
+                    price = self.plugin.calculate_price((priced_turn(usage_model, upstream),))
+                    self.assertEqual(0, price.unpriced_calls)
+                    # Free cache storage does not waive processing new input.
+                    # Writes use the ordinary input rate on all three upstreams.
+                    self.assertAlmostEqual(expected, price.usd)
+
+        for usage_model in ("zai-org/GLM-5.3-Flash", "zai-org/GLM-5.3-Flash:novita"):
+            for upstream, expected in (("zai-org", 0.626), ("together", 0.626), ("novita", 0.626)):
+                with self.subTest(model=usage_model, upstream=upstream):
+                    price = self.plugin.calculate_price((priced_turn(usage_model, upstream),))
+                    self.assertEqual(0, price.unpriced_calls)
+                    self.assertAlmostEqual(expected, price.usd)
+
+    def test_glm_cache_population_keeps_the_input_processing_charge(self):
+        try:
+            from openai.types.completion_usage import CompletionUsage
+
+            from fast_agent.llm.provider_types import Provider
+            from fast_agent.llm.usage_tracking import usage_from_openai_chat
+        except ImportError:
+            self.skipTest("requires fast-agent and the OpenAI SDK")
+
+        timestamp = datetime(2026, 10, 27, tzinfo=UTC).timestamp()
+        routes = [
+            (Provider.ZAI, "glm-5.2", None),
+            (Provider.ZAI, "glm-5.3", None),
+            (Provider.ZAI, "glm-5.3-flash", None),
+            *(
+                (Provider.HUGGINGFACE, model, upstream)
+                for model in ("zai-org/GLM-5.3", "zai-org/GLM-5.3-Flash")
+                for upstream in ("zai-org", "together", "novita")
+            ),
+        ]
+        for provider, model, upstream in routes:
+            prices = []
+            for writes in (0, 100_000, 800_000):
+                with self.subTest(model=model, upstream=upstream, writes=writes):
+                    usage = CompletionUsage.model_validate({
+                        "prompt_tokens": 1_000_000,
+                        "completion_tokens": 1_000_000,
+                        "total_tokens": 2_000_000,
+                        "prompt_tokens_details": {
+                            "cached_tokens": 200_000,
+                            "cache_write_tokens": writes,
+                        },
+                    })
+                    turn = usage_from_openai_chat(
+                        usage, provider=provider, model=model, upstream_provider=upstream
+                    ).model_copy(update={"timestamp": timestamp})
+                    self.assertEqual(writes, turn.prompt.cache_write)
+                    price = self.plugin.calculate_price((turn,))
+                    self.assertEqual(0, price.unpriced_calls)
+                    prices.append(price.usd)
+            self.assertGreater(prices[0], 0)
+            for price in prices[1:]:
+                self.assertAlmostEqual(prices[0], price)
+
+    def test_hf_glm_53_does_not_cross_route_boundaries(self):
+        for model, provider, upstream in (
+            ("zai-org/GLM-5.3", "hf", None),
+            ("zai-org/GLM-5.3", "hf", "nscale"),
+            ("zai-org/GLM-5.3", "hf", "baseten"),
+            ("zai-org/GLM-5.3", "hf", "deepinfra"),
+            ("zai-org/GLM-5.3", "zai", "together"),
+            ("glm-5.3", "hf", "zai-org"),
+            ("zai-org/GLM-5.3-Flash-BF16", "hf", "zai-org"),
+            ("zai-org/GLM-5.2", "hf", "zai-org"),
+            ("moonshotai/Kimi-K3", "hf", "together"),
+        ):
+            with self.subTest(model=model, provider=provider, upstream=upstream):
+                price = self.plugin.calculate_price(
+                    (
+                        _turn(
+                            model,
+                            prompt=1_000_000,
+                            output=1_000_000,
+                            cached=200_000,
+                            provider=provider,
+                            upstream_provider=upstream,
+                        ),
+                    )
+                )
+                self.assertEqual(1, price.unpriced_calls)
+                self.assertEqual(0, price.usd)
 
     def test_bundled_catalog_does_not_cross_provider_boundaries(self):
         price = self.plugin.calculate_price(

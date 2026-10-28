@@ -1,6 +1,6 @@
 {
   "schema": "fast-agent.pricing/v1",
-  "catalog_version": "2026-10-26.1",
+  "catalog_version": "2026-10-27.1",
   "currency": "USD",
   "unit": "usd_per_million_tokens",
   "rules": [
@@ -1076,7 +1076,6 @@
       "rates": {
         "input": "0.075",
         "cache_read": "0.015",
-        "cache_write": "0",
         "output": "0.25"
       }
     },
@@ -1095,7 +1094,6 @@
       "rates": {
         "input": "0.15",
         "cache_read": "0.03",
-        "cache_write": "0",
         "output": "0.50"
       }
     },
@@ -1111,7 +1109,6 @@
       "rates": {
         "input": "1.4",
         "cache_read": "0.26",
-        "cache_write": "0",
         "output": "4.4"
       }
     },
@@ -1127,8 +1124,103 @@
       "rates": {
         "input": "1.4",
         "cache_read": "0.26",
-        "cache_write": "0",
         "output": "4.4"
+      }
+    },
+    {
+      "id": "glm-53-hf-zai-org",
+      "match": {
+        "model": {
+          "values": ["zai-org/glm-5.3"],
+          "strip_after": ":"
+        },
+        "providers": ["hf"],
+        "upstream_providers": ["zai-org"]
+      },
+      "rates": {
+        "input": "1.4",
+        "cache_read": "0.26",
+        "output": "4.4"
+      }
+    },
+    {
+      "id": "glm-53-hf-together",
+      "match": {
+        "model": {
+          "values": ["zai-org/glm-5.3"],
+          "strip_after": ":"
+        },
+        "providers": ["hf"],
+        "upstream_providers": ["together"]
+      },
+      "rates": {
+        "input": "1.4",
+        "cache_read": "0.26",
+        "output": "4.4"
+      }
+    },
+    {
+      "id": "glm-53-hf-novita",
+      "match": {
+        "model": {
+          "values": ["zai-org/glm-5.3"],
+          "strip_after": ":"
+        },
+        "providers": ["hf"],
+        "upstream_providers": ["novita"]
+      },
+      "rates": {
+        "input": "1.4",
+        "cache_read": "0.26",
+        "output": "4.4"
+      }
+    },
+    {
+      "id": "glm-53-flash-hf-zai-org",
+      "match": {
+        "model": {
+          "values": ["zai-org/glm-5.3-flash"],
+          "strip_after": ":"
+        },
+        "providers": ["hf"],
+        "upstream_providers": ["zai-org"]
+      },
+      "rates": {
+        "input": "0.15",
+        "cache_read": "0.03",
+        "output": "0.50"
+      }
+    },
+    {
+      "id": "glm-53-flash-hf-together",
+      "match": {
+        "model": {
+          "values": ["zai-org/glm-5.3-flash"],
+          "strip_after": ":"
+        },
+        "providers": ["hf"],
+        "upstream_providers": ["together"]
+      },
+      "rates": {
+        "input": "0.15",
+        "cache_read": "0.03",
+        "output": "0.50"
+      }
+    },
+    {
+      "id": "glm-53-flash-hf-novita",
+      "match": {
+        "model": {
+          "values": ["zai-org/glm-5.3-flash"],
+          "strip_after": ":"
+        },
+        "providers": ["hf"],
+        "upstream_providers": ["novita"]
+      },
+      "rates": {
+        "input": "0.15",
+        "cache_read": "0.03",
+        "output": "0.50"
       }
     },
     {
