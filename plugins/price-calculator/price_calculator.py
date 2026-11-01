@@ -26,11 +26,17 @@ from fast_agent.llm.usage_tracking import UsageReport
 from fast_agent.mcp.helpers.content_helpers import get_text
 from fast_agent.types import LlmStopReason
 
+try:
+    from fast_agent.plugins import PluginPostUserTurnOutput as _PostUserTurnOutput
+except ImportError:
+    # Keep terminal display and legacy Herdr TUI support on older fast-agent.
+    _PostUserTurnOutput = None
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from fast_agent.llm.usage_tracking import TurnUsage, UsageLedger, UserTurnUsage
-    from fast_agent.plugins import PluginPostUserTurnContext
+    from fast_agent.plugins import PluginPostUserTurnContext, PluginPostUserTurnOutput
     from fast_agent.types import PromptMessageExtended
 
 _TOKENS_PER_MILLION = 1_000_000
@@ -1403,23 +1409,29 @@ async def cost_breakdown(ctx: PluginCommandActionContext) -> PluginCommandAction
     )
 
 
-async def display_cost(ctx: PluginPostUserTurnContext) -> str | None:
+async def display_cost(
+    ctx: PluginPostUserTurnContext,
+) -> str | PluginPostUserTurnOutput | None:
     if not ctx.turn_usage:
         await _report_session_cost_to_herdr(None)
         return None
 
     turn = calculate_price(ctx.turn_usage)
     session = calculate_price(ctx.session_usage)
-    await _report_session_cost_to_herdr(
-        _herdr_usage_token(turn, session, session_usage=ctx.session_usage)
-    )
+    usage = _herdr_usage_token(turn, session, session_usage=ctx.session_usage)
+    await _report_session_cost_to_herdr(usage)
     unpriced = max(turn.unpriced_calls, session.unpriced_calls)
     suffix = (
         f" [dim]· {unpriced} unpriced model {'call' if unpriced == 1 else 'calls'}[/dim]"
         if unpriced
         else ""
     )
-    return (
+    display = (
         f"[dim]Cost:[/dim] [cyan]{_format_price(turn)}[/cyan] last · "
         f"[cyan]{_format_price(session)}[/cyan] session{suffix}"
     )
+    if _PostUserTurnOutput is None:
+        return display
+    # The host forwards plain-text usage to OSC 7501 (Herdr app and other
+    # compatible terminals), independently of the legacy Herdr environment.
+    return _PostUserTurnOutput(display=display, session_usage=usage)

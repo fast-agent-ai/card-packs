@@ -112,6 +112,14 @@ def _install_fast_agent_stub():
     helpers = types.ModuleType("fast_agent.mcp.helpers")
     content_helpers = types.ModuleType("fast_agent.mcp.helpers.content_helpers")
     fast_agent_types = types.ModuleType("fast_agent.types")
+    plugins = types.ModuleType("fast_agent.plugins")
+
+    class PluginPostUserTurnOutput:
+        def __init__(self, *, display=None, session_usage=None):
+            self.display = display
+            self.session_usage = session_usage
+
+    plugins.PluginPostUserTurnOutput = PluginPostUserTurnOutput
 
     class PluginCommandActionContext:
         pass
@@ -170,6 +178,7 @@ def _install_fast_agent_stub():
     fast_agent.llm = llm
     fast_agent.mcp = mcp
     fast_agent.types = fast_agent_types
+    fast_agent.plugins = plugins
     llm.usage_tracking = usage_tracking
     mcp.helpers = helpers
     helpers.content_helpers = content_helpers
@@ -182,6 +191,7 @@ def _install_fast_agent_stub():
     sys.modules["fast_agent.mcp.helpers"] = helpers
     sys.modules["fast_agent.mcp.helpers.content_helpers"] = content_helpers
     sys.modules["fast_agent.types"] = fast_agent_types
+    sys.modules["fast_agent.plugins"] = plugins
 
 
 def _load_plugin():
@@ -1628,11 +1638,14 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         with mock.patch.dict(self.plugin.os.environ, {}, clear=True):
-            line = asyncio.run(self.plugin.display_cost(ctx))
+            result = asyncio.run(self.plugin.display_cost(ctx))
+            line = result.display if result is not None else None
 
         self.assertIn("last", line)
         self.assertIn("session", line)
         self.assertNotIn("unpriced", line)
+        self.assertIsInstance(result, self.plugin._PostUserTurnOutput)
+        self.assertEqual("$0.0320 ($0.0590)", result.session_usage)
 
     def test_display_reports_session_cost_to_herdr(self):
         first = _turn(
@@ -1659,8 +1672,9 @@ class PriceCalculatorTests(unittest.TestCase):
             ),
             mock.patch.object(self.plugin.subprocess, "run") as run,
         ):
-            asyncio.run(self.plugin.display_cost(ctx))
+            result = asyncio.run(self.plugin.display_cost(ctx))
 
+        self.assertEqual("$0.0320 ($0.0590)", result.session_usage)
         command = run.call_args.args[0]
         argument_pairs = [
             command[index : index + 2] for index in range(len(command) - 1)
@@ -1701,7 +1715,8 @@ class PriceCalculatorTests(unittest.TestCase):
             ),
             mock.patch.object(self.plugin.subprocess, "run") as run,
         ):
-            line = asyncio.run(self.plugin.display_cost(ctx))
+            result = asyncio.run(self.plugin.display_cost(ctx))
+            line = result.display if result is not None else None
 
         command = run.call_args.args[0]
         self.assertIn(
@@ -1709,6 +1724,7 @@ class PriceCalculatorTests(unittest.TestCase):
             [command[index : index + 2] for index in range(len(command) - 1)],
         )
         self.assertIn("n/a", line)
+        self.assertEqual("12.1M in · 56,028 out", result.session_usage)
 
     def test_display_clears_herdr_usage_without_turn_usage(self):
         ctx = SimpleNamespace(turn_usage=(), session_usage=())
@@ -1725,14 +1741,14 @@ class PriceCalculatorTests(unittest.TestCase):
             ),
             mock.patch.object(self.plugin.subprocess, "run") as run,
         ):
-            line = asyncio.run(self.plugin.display_cost(ctx))
+            result = asyncio.run(self.plugin.display_cost(ctx))
 
         command = run.call_args.args[0]
         self.assertIn(
             ["--clear-token", "cost"],
             [command[index : index + 2] for index in range(len(command) - 1)],
         )
-        self.assertIsNone(line)
+        self.assertIsNone(result)
 
     def test_display_does_not_invoke_herdr_outside_herdr(self):
         turn = _turn("gpt-5.6-luna", prompt=100_000, output=10_000)
@@ -1742,10 +1758,12 @@ class PriceCalculatorTests(unittest.TestCase):
             mock.patch.dict(self.plugin.os.environ, {}, clear=True),
             mock.patch.object(self.plugin.subprocess, "run") as run,
         ):
-            line = asyncio.run(self.plugin.display_cost(ctx))
+            result = asyncio.run(self.plugin.display_cost(ctx))
+            line = result.display if result is not None else None
 
         run.assert_not_called()
         self.assertIn("Cost:", line)
+        self.assertEqual("$0.0320 ($0.0320)", result.session_usage)
 
     def test_herdr_failure_does_not_suppress_cost_display(self):
         turn = _turn("gpt-5.6-luna", prompt=100_000, output=10_000)
@@ -1767,10 +1785,62 @@ class PriceCalculatorTests(unittest.TestCase):
                 side_effect=OSError("not found"),
             ),
         ):
-            line = asyncio.run(self.plugin.display_cost(ctx))
+            result = asyncio.run(self.plugin.display_cost(ctx))
+            line = result.display if result is not None else None
 
         self.assertIn("Cost:", line)
+        self.assertEqual("$0.0320 ($0.0320)", result.session_usage)
         self.assertIn("session", line)
+
+    def test_display_retains_string_result_on_older_fast_agent(self):
+        turn = _turn("gpt-5.6-luna", prompt=100_000, output=10_000)
+        ctx = SimpleNamespace(turn_usage=(turn,), session_usage=(turn,))
+        with (
+            mock.patch.object(self.plugin, "_PostUserTurnOutput", None),
+            mock.patch.object(self.plugin, "_report_session_cost_to_herdr") as report,
+        ):
+            result = asyncio.run(self.plugin.display_cost(ctx))
+
+        self.assertIsInstance(result, str)
+        self.assertIn("Cost:", result)
+        self.assertIn("session", result)
+        report.assert_awaited_once_with("$0.0320 ($0.0320)")
+
+    def test_status_falls_back_when_only_prior_session_calls_are_unpriced(self):
+        unknown = _turn("unknown", prompt=100, output=20)
+        priced = _turn("gpt-5.6-luna", prompt=100_000, output=10_000)
+        ctx = SimpleNamespace(turn_usage=(priced,), session_usage=(unknown, priced))
+        with mock.patch.dict(self.plugin.os.environ, {}, clear=True):
+            result = asyncio.run(self.plugin.display_cost(ctx))
+
+        self.assertEqual("100,100 in · 10,020 out", result.session_usage)
+        self.assertIn("1 unpriced model call", result.display)
+
+    def test_host_forwards_plugin_cost_to_program_status(self):
+        try:
+            from fast_agent.plugins.post_user_turn import (
+                LoadedPluginPostUserTurn,
+                run_plugin_post_user_turn,
+            )
+        except ImportError:
+            self.skipTest("requires the real fast-agent plugin host")
+        turn = _turn("gpt-5.6-luna", prompt=100_000, output=10_000)
+        display = mock.Mock()
+        report = mock.Mock()
+        with mock.patch.dict(self.plugin.os.environ, {}, clear=True):
+            asyncio.run(run_plugin_post_user_turn(
+                [LoadedPluginPostUserTurn("price-calculator", self.plugin.display_cost)],
+                agent_name="agent",
+                turn_usage=(turn,),
+                session_usage=(turn,),
+                config={},
+                display=display,
+                report_session_usage=report,
+            ))
+
+        report.assert_called_once_with("$0.0320 ($0.0320)")
+        display.assert_called_once()
+        self.assertIn("Cost:", display.call_args.args[0])
 
     def test_cost_command_returns_detailed_session_ledger(self):
         first = _turn(

@@ -6,12 +6,22 @@ Displays estimated model cost after each successful top-level interactive turn:
 Cost: $0.002400 last · $0.0137 session
 ```
 
-When running inside Herdr, the plugin also reports a compact custom `$cost`
+When running inside the legacy Herdr TUI, the plugin also reports a compact custom `$cost`
 pane token. Fully priced usage shows the last turn followed by the session
 total, for example `$0.002400 ($0.0137)`. If either cost is incomplete because
 of unpriced model calls, the token falls back to cumulative input/output usage,
 for example `12.1M in · 56,028 out`. An empty session clears the token. Add
 `$cost` to a Herdr sidebar row to display it.
+
+On fast-agent versions that support `PluginPostUserTurnOutput`, the plugin also
+returns the same plain-text usage through `session_usage`. Fast-agent forwards
+it in its OSC 7501 program-status message, so Herdr app panels that display
+`terminals()[…].report.msg` can show calculated cost alongside model/context.
+The compact cost is `last turn (session total)` and updates after each successful
+top-level turn. Unknown/incompletely priced models still fall back to tokens;
+Rich formatting is reserved for the terminal cost line. No legacy Herdr
+environment variables or CLI are needed for this status-reporting path.
+Older fast-agent versions retain the terminal cost line and legacy `$cost` token.
 
 Requires fast-agent 0.10.2 or later for post-user-turn plugin hooks, command
 usage access, and Rich presentation styles.
