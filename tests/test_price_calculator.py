@@ -326,7 +326,7 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-10-28.1", self.plugin._PRICING_CATALOG.version)
+        self.assertEqual("2026-11-04.1", self.plugin._PRICING_CATALOG.version)
         self.assertTrue(self.plugin._PRICING_CATALOG.rules)
 
     def test_copilot_uses_list_pricing_of_associated_models(self):
@@ -607,6 +607,42 @@ class PriceCalculatorTests(unittest.TestCase):
                         price = self.plugin.calculate_price((turn,))
                         self.assertEqual(0, price.unpriced_calls)
                         self.assertAlmostEqual(expected, price.usd)
+
+    def test_hf_novita_deepseek_1017_uses_peak_tariff(self):
+        for model in (
+            "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+            "deepseek-ai/DeepSeek-V4.1-Flash-1017:novita",
+        ):
+            for cached, expected in ((0, 1.5), (200_000, 1.4412), (1_000_000, 1.206)):
+                with self.subTest(model=model, cached=cached):
+                    price = self.plugin.calculate_price(
+                        (
+                            _turn(
+                                model,
+                                prompt=1_000_000,
+                                output=1_000_000,
+                                cached=cached,
+                                provider="hf",
+                                upstream_provider="novita",
+                            ),
+                        )
+                    )
+                    self.assertEqual(0, price.unpriced_calls)
+                    self.assertAlmostEqual(expected, price.usd)
+        for upstream in ("together", "scaleway", "baseten", None):
+            with self.subTest(upstream=upstream):
+                price = self.plugin.calculate_price(
+                    (
+                        _turn(
+                            "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+                            prompt=1_000_000,
+                            output=1_000_000,
+                            provider="hf",
+                            upstream_provider=upstream,
+                        ),
+                    )
+                )
+                self.assertEqual(1, price.unpriced_calls)
 
     def test_hf_novita_deepseek_does_not_cross_route_boundaries(self):
         for model, provider, upstream in (

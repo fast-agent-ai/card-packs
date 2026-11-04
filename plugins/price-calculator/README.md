@@ -176,6 +176,10 @@ The bundled catalog currently includes:
   rates). The earlier `$0.03` input rate was an error.
   They apply only to `provider=hf` with `upstream_provider=novita`, without
   peak/off-peak windows. Native DeepSeek and other upstream tariffs are unchanged.
+- Hugging Face `deepseek-ai/DeepSeek-V4.1-Flash-1017:novita`: the same `$0.30`
+  input, `$0.006` cached input and `$1.20` output (user-confirmed on November 4, 2026:
+  Novita bills -1017 at DeepSeek's peak tariff). Only `provider=hf` with
+  `upstream_provider=novita`; other -1017 upstreams remain unpriced.
 - DeepSeek V4 Pro retains its existing rates and UTC time windows. Announced
   September 14 routing changes are not applied in this catalog update.
 - Muse Spark 1.1–1.3 Standard (`$1.25` input, `$0.15` cached input, `$4.25`
