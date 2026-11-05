@@ -126,6 +126,34 @@ The bundled catalog currently includes:
   responses; the gateway reports no cost metadata for its GPT (Responses-wire)
   routes, which use published OpenAI list rates.
 - Kimi K3 through the Moonshot provider.
+- Kimi K3.1 Pro: Moonshot direct (`kimi-k3.1-pro`) and Hugging Face
+  `moonshotai/Kimi-K3.1-Pro:together` each cost `$2.00` input, `$0.20` cached
+  input, and `$10.00` output per million tokens. Rates were independently
+  verified on November 5, 2026 against [Moonshot's inference pricing
+  HTML](https://platform.kimi.ai/docs/pricing/chat) (embedded `DocTable` data;
+  the Markdown export omits its rows) and [Together's pricing
+  table](https://www.together.ai/pricing). The [Moonshot quickstart](https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart.md)
+  confirms the direct model ID. The [HF model API](https://huggingface.co/api/models/moonshotai/Kimi-K3.1-Pro?expand=inferenceProviderMapping)
+  confirms the live upstream key is `together`, not `togetherai`;
+  [HF passes through provider rates without markup](https://huggingface.co/docs/inference-providers/pricing).
+  HF's router model list did not yet include Pro when checked, so it could not
+  independently corroborate these rates.
+  Moonshot publishes `$2.00` 5-minute and `$4.00` 1-hour cache writes. The
+  calculator uses the 1-hour rate only when usage contains a complete
+  `cache_creation` TTL breakdown; otherwise it uses the default 5-minute rate.
+  [Moonshot's caching guide](https://platform.kimi.ai/docs/guide/context-caching.md)
+  documents that breakdown for Messages, but not OpenAI-compatible usage
+  (Chat Completions exposes TTL splits in response headers, which this
+  calculator does not consume). One-hour writes without a usage breakdown
+  are therefore underestimated.
+  [Together's prompt-caching documentation](https://docs.together.ai/docs/inference/chat/prompt-caching.md)
+  explicitly states that cache writes have no additional charge; uncached input
+  is billed at the normal input rate. HF writes therefore use the ordinary
+  input-rate fallback, not Moonshot's TTL pricing. Together caching is automatic,
+  typically lasts about an hour on a best-effort basis (earlier eviction is
+  possible), and has no configurable expiry or TTL tiers. Highspeed and
+  batch tariffs are not added here; other or unresolved HF upstreams remain
+  unpriced. Existing K3 rates are unchanged.
 - Z.ai GLM-5.3, GLM-5.2, and GLM-5.3-Flash. Flash uses its 50%-discounted
   tariff until September 9, 2026 at 16:00 UTC, then switches to list pricing.
   Published cached-input storage is currently free; new input processing still

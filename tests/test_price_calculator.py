@@ -326,7 +326,7 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-11-04.1", self.plugin._PRICING_CATALOG.version)
+        self.assertEqual("2026-11-05.1", self.plugin._PRICING_CATALOG.version)
         self.assertTrue(self.plugin._PRICING_CATALOG.rules)
 
     def test_copilot_uses_list_pricing_of_associated_models(self):
@@ -480,6 +480,8 @@ class PriceCalculatorTests(unittest.TestCase):
             (Provider.ZAI, "glm-5.2", None),
             (Provider.ZAI, "glm-5.3", None),
             (Provider.ZAI, "glm-5.3-flash", None),
+            (Provider.MOONSHOT, "kimi-k3.1-pro", None),
+            (Provider.HUGGINGFACE, "moonshotai/Kimi-K3.1-Pro:together", "together"),
             *(
                 (Provider.HUGGINGFACE, model, upstream)
                 for model in ("zai-org/GLM-5.3", "zai-org/GLM-5.3-Flash")
@@ -1363,6 +1365,96 @@ class PriceCalculatorTests(unittest.TestCase):
             )
         )
         self.assertEqual(1, wrong_provider.unpriced_calls)
+
+    def test_kimi_k31_pro_routes_and_cache_partitions(self):
+        routes = (
+            ("kimi-k3.1-pro", "moonshot", None),
+            ("moonshotai/Kimi-K3.1-Pro", "moonshot", None),
+            ("moonshotai/Kimi-K3.1-Pro", "hf", "together"),
+            ("moonshotai/Kimi-K3.1-Pro:together", "hf", "together"),
+            ("MOONSHOTAI/KIMI-K3.1-PRO", "hf", "together"),
+        )
+        for model, provider, upstream in routes:
+            for writes in (0, 100_000, 800_000):
+                with self.subTest(model=model, provider=provider, writes=writes):
+                    price = self.plugin.calculate_price(
+                        (
+                            _turn(
+                                model,
+                                prompt=1_000_000,
+                                output=1_000_000,
+                                cached=200_000,
+                                cache_write=writes,
+                                provider=provider,
+                                upstream_provider=upstream,
+                            ),
+                        )
+                    )
+                    self.assertEqual(0, price.unpriced_calls)
+                    # Default cache population replaces, not adds to, input billing.
+                    self.assertAlmostEqual(11.64, price.usd)
+
+    def test_kimi_k31_pro_cache_ttl_is_provider_specific(self):
+        for provider, upstream, expected in (
+            ("moonshot", None, 11.76),
+            ("hf", "together", 11.64),
+        ):
+            with self.subTest(provider=provider):
+                price = self.plugin.calculate_price(
+                    (
+                        _turn(
+                            "moonshotai/Kimi-K3.1-Pro",
+                            prompt=1_000_000,
+                            output=1_000_000,
+                            cached=200_000,
+                            cache_write=100_000,
+                            provider=provider,
+                            upstream_provider=upstream,
+                            raw_usage={
+                                "cache_creation": {
+                                    "ephemeral_5m_input_tokens": 40_000,
+                                    "ephemeral_1h_input_tokens": 60_000,
+                                }
+                            },
+                        ),
+                    )
+                )
+                self.assertEqual(0, price.unpriced_calls)
+                self.assertAlmostEqual(expected, price.usd)
+
+    def test_kimi_k31_pro_unverified_routes_remain_unpriced(self):
+        routes = (
+            ("kimi-k3.1-pro", "openai", None),
+            ("kimi-k3.1-pro-highspeed", "moonshot", None),
+            ("kimi-k3.1-pro", "hf", "together"),
+            ("moonshotai/Kimi-K3.1-Pro:together", "hf", None),
+            *(
+                ("moonshotai/Kimi-K3.1-Pro", "hf", upstream)
+                for upstream in (
+                    None,
+                    "auto",
+                    "fastest",
+                    "togetherai",
+                    "baseten",
+                    "deepinfra",
+                )
+            ),
+        )
+        for model, provider, upstream in routes:
+            with self.subTest(model=model, provider=provider, upstream=upstream):
+                price = self.plugin.calculate_price(
+                    (
+                        _turn(
+                            model,
+                            prompt=100_000,
+                            output=20_000,
+                            provider=provider,
+                            upstream_provider=upstream,
+                        ),
+                    )
+                )
+                self.assertEqual(1, price.unpriced_calls)
+                self.assertEqual(0, price.usd)
 
     def test_kimi_provider_routes_and_deepseek(self):
         for model in ("kimi-k3", "moonshotai/kimi-k3"):

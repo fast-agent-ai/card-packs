@@ -1,6 +1,6 @@
 {
   "schema": "fast-agent.pricing/v1",
-  "catalog_version": "2026-11-04.1",
+  "catalog_version": "2026-11-05.1",
   "currency": "USD",
   "unit": "usd_per_million_tokens",
   "rules": [
@@ -1205,6 +1205,40 @@
         "input": "3.00",
         "cache_read": "0.30",
         "output": "15.00"
+      }
+    },
+    {
+      "id": "kimi-k3.1-pro",
+      "match": {
+        "model": {
+          "values": ["kimi-k3.1-pro"],
+          "path_suffix": true,
+          "strip_after": ":"
+        },
+        "providers": ["moonshot"]
+      },
+      "rates": {
+        "input": "2.00",
+        "cache_read": "0.20",
+        "cache_write": "2.00",
+        "cache_write_1h": "4.00",
+        "output": "10.00"
+      }
+    },
+    {
+      "id": "kimi-k3.1-pro-hf-together",
+      "match": {
+        "model": {
+          "values": ["moonshotai/kimi-k3.1-pro"],
+          "strip_after": ":"
+        },
+        "providers": ["hf"],
+        "upstream_providers": ["together"]
+      },
+      "rates": {
+        "input": "2.00",
+        "cache_read": "0.20",
+        "output": "10.00"
       }
     },
     {
