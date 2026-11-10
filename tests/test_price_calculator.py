@@ -326,7 +326,7 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-11-05.1", self.plugin._PRICING_CATALOG.version)
+        self.assertEqual("2026-11-10.1", self.plugin._PRICING_CATALOG.version)
         self.assertTrue(self.plugin._PRICING_CATALOG.rules)
 
     def test_copilot_uses_list_pricing_of_associated_models(self):
@@ -344,6 +344,7 @@ class PriceCalculatorTests(unittest.TestCase):
             ("claude-sonnet-5.5", "claude-sonnet-5-5", "anthropic"),
             ("claude-fable-5", "claude-fable-5", "anthropic"),
             ("claude-fable-5.1", "claude-fable-5-1", "anthropic"),
+            ("claude-fable-5.2", "claude-fable-5-2", "anthropic"),
             ("claude-haiku-4.5", "claude-haiku-4-5", "anthropic"),
             ("claude-haiku-5.5", "claude-haiku-5-5", "anthropic"),
         ):
@@ -1219,6 +1220,47 @@ class PriceCalculatorTests(unittest.TestCase):
                 price = self.plugin.calculate_price((turn,))
                 self.assertEqual(0, price.unpriced_calls)
                 self.assertAlmostEqual(expected, price.usd)
+
+    def test_fable_52_pricing_tiers_and_cache_ttls(self):
+        for model, provider, tier, raw_usage, expected in (
+            ("claude-fable-5-2", "anthropic", "standard", {}, 12.24),
+            ("anthropic.claude-fable-5-2", "anthropic", "standard", {}, 12.24),
+            ("claude-mythos-5-2", "anthropic", "standard", {}, 12.24),
+            ("claude-fable-5.2", "copilot", "standard", {}, 12.24),
+            ("claude-fable-5-2", "anthropic", "batch", {}, 8.24),
+            ("claude-mythos-5-2", "anthropic", "standard", {"speed": "fast"}, 24.48),
+        ):
+            with self.subTest(model=model, provider=provider, tier=tier, raw_usage=raw_usage):
+                turn = _turn(
+                    model,
+                    provider=provider,
+                    service_tier=tier,
+                    prompt=1_000_000,
+                    output=100_000,
+                    cached=200_000,
+                    cache_write=300_000,
+                    uncached=500_000,
+                    raw_usage={
+                        **raw_usage,
+                        "cache_creation": {
+                            "ephemeral_5m_input_tokens": 100_000,
+                            "ephemeral_1h_input_tokens": 200_000,
+                        },
+                    },
+                )
+                price = self.plugin.calculate_price((turn,))
+                self.assertEqual(0, price.unpriced_calls)
+                self.assertAlmostEqual(expected, price.usd)
+
+    def test_fable_52_has_no_priority_tier(self):
+        turn = _turn(
+            "claude-fable-5-2",
+            prompt=100_000,
+            output=10_000,
+            provider="anthropic",
+            service_tier="priority",
+        )
+        self.assertEqual(1, self.plugin.calculate_price((turn,)).unpriced_calls)
 
     def test_haiku_55_long_context_rates_start_above_100k(self):
         for model, tier, prompt, expected in (

@@ -112,13 +112,13 @@ The bundled catalog currently includes:
   Copilot `/models` `billing.token_prices` agrees). Caching is implicit by default,
   so `input_tokens_details.cache_write_tokens` is billed without any opt-in. Models
   before GPT-5.6 have no write charge.
-- First-party Anthropic Claude Fable 5, Mythos 5, Opus 5.5, 5 and 4.x, Sonnet 5.5, 5 and
-  4.x, and Haiku 5.5 and 4.5. The catalog includes Standard/Priority token rates,
-  5-minute and 1-hour cache writes, cache reads, and Fast mode for Opus 5 and
-  Opus 4.8.
+- First-party Anthropic Claude Fable/Mythos 5.2, 5.1 and 5, Opus 5.5, 5 and 4.x,
+  Sonnet 5.5, 5 and 4.x, and Haiku 5.5 and 4.5. The catalog includes Standard/Priority
+  token rates, 5-minute and 1-hour cache writes, cache reads, and Fast mode for
+  Fable/Mythos 5.2, Opus 5 and Opus 4.8.
 - GitHub Copilot (`provider=copilot`) calls are priced at the list rates of the
   associated upstream model, covering Copilot's GPT-6 Astra, Sol, and Luna, GPT-6.1 Sol and Terra, GPT-5.6 Sol, Terra,
-  and Luna, and Claude Opus 5.5, Opus 5, Sonnet 5.5, Sonnet 5, Fable 5, Fable 5.1, Haiku 5.5, and Haiku 4.5
+  and Luna, and Claude Opus 5.5, Opus 5, Sonnet 5.5, Sonnet 5, Fable 5, Fable 5.1, Fable 5.2, Haiku 5.5, and Haiku 4.5
   routes. The gateway does not expose service tiers, so Standard rates apply.
   These are API-equivalent estimates, not Copilot subscription or premium-request
   charges. The pre-5.5 Claude route rates (Opus 5.5 and Sonnet 5.5 use published list rates) were verified on September 20, 2026 against the
@@ -243,6 +243,17 @@ published October 7, 2026. Anthropic Batch input/output rates are 50% off
 (`$0.05`/`$0.25` and `$0.25`/`$1.25`); cache tariffs are unchanged. Priority Tier is
 not offered for Haiku 5.5. Copilot uses Standard API-equivalent estimates, not
 subscription charges. Haiku 4.5 rates
+are unchanged.
+
+Claude Fable 5.2 and Mythos 5.2 (`claude-fable-5-2`, `claude-mythos-5-2`, Copilot
+`claude-fable-5.2`) cost `$8` input, `$40` output, `$10` for 5-minute cache writes,
+`$16` for 1-hour cache writes, and `$0.20` for cache reads per million tokens
+(cache reads are 2.5% of input). Batch input/output is `$4`/`$20` with cache
+tariffs unchanged. Fast mode is `$16`/`$80`, with the cache multipliers applied on
+top (`$20`, `$32`, `$0.40`). Priority Tier is not offered, so no Priority rule
+matches. Rates come from the official Anthropic pricing page and Fable 5.2
+migration guide, checked November 10, 2026; the Copilot `/models`
+`billing.token_prices` for `claude-fable-5.2` agrees. Fable/Mythos 5.1 and 5 rates
 are unchanged.
 
 Grok 4.7 pricing (USD per million tokens, global endpoint):

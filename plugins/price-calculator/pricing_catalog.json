@@ -1,6 +1,6 @@
 {
   "schema": "fast-agent.pricing/v1",
-  "catalog_version": "2026-11-05.1",
+  "catalog_version": "2026-11-10.1",
   "currency": "USD",
   "unit": "usd_per_million_tokens",
   "rules": [
@@ -770,6 +770,60 @@
         "cache_read": "0.08",
         "cache_write": "1.00",
         "output": "3.60"
+      }
+    },
+    {
+      "id": "claude-fable-5-2-standard",
+      "match": {
+        "model": {
+          "values": ["claude-fable-5-2", "claude-mythos-5-2", "claude-fable-5.2"],
+          "strip_prefixes": ["anthropic."]
+        },
+        "providers": ["anthropic", "copilot"],
+        "service_tiers": ["standard"]
+      },
+      "rates": {
+        "input": "8.00",
+        "cache_read": "0.20",
+        "cache_write": "10.00",
+        "cache_write_1h": "16.00",
+        "output": "40.00"
+      }
+    },
+    {
+      "id": "claude-fable-5-2-batch",
+      "match": {
+        "model": {
+          "values": ["claude-fable-5-2", "claude-mythos-5-2"],
+          "strip_prefixes": ["anthropic."]
+        },
+        "providers": ["anthropic"],
+        "service_tiers": ["batch"]
+      },
+      "rates": {
+        "input": "4.00",
+        "cache_read": "0.20",
+        "cache_write": "10.00",
+        "cache_write_1h": "16.00",
+        "output": "20.00"
+      }
+    },
+    {
+      "id": "claude-fable-5-2-fast",
+      "match": {
+        "model": {
+          "values": ["claude-fable-5-2", "claude-mythos-5-2"],
+          "strip_prefixes": ["anthropic."]
+        },
+        "providers": ["anthropic"],
+        "service_tiers": ["fast"]
+      },
+      "rates": {
+        "input": "16.00",
+        "cache_read": "0.40",
+        "cache_write": "20.00",
+        "cache_write_1h": "32.00",
+        "output": "80.00"
       }
     },
     {
