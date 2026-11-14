@@ -1,6 +1,6 @@
 {
   "schema": "fast-agent.pricing/v1",
-  "catalog_version": "2026-11-14.1",
+  "catalog_version": "2026-11-14.2",
   "currency": "USD",
   "unit": "usd_per_million_tokens",
   "rules": [
@@ -1357,6 +1357,22 @@
         "input": "0.30",
         "cache_read": "0.03",
         "output": "1.00"
+      }
+    },
+    {
+      "id": "inkling-2-small-deepinfra",
+      "match": {
+        "model": {
+          "values": ["thinkingmachines/inkling-2-small"],
+          "strip_after": ":"
+        },
+        "providers": ["hf"],
+        "upstream_providers": ["deepinfra"]
+      },
+      "rates": {
+        "input": "0.285",
+        "cache_read": "0.028",
+        "output": "0.95"
       }
     },
     {

@@ -326,7 +326,7 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-11-14.1", self.plugin._PRICING_CATALOG.version)
+        self.assertEqual("2026-11-14.2", self.plugin._PRICING_CATALOG.version)
         self.assertTrue(self.plugin._PRICING_CATALOG.rules)
 
     def test_copilot_uses_list_pricing_of_associated_models(self):
@@ -1687,8 +1687,11 @@ class PriceCalculatorTests(unittest.TestCase):
         inkling = price("thinkingmachines/Inkling-2-Small:together", "together")
         self.assertEqual(0, inkling.unpriced_calls)
         self.assertAlmostEqual(1.246, inkling.usd)
+        deepinfra = price("thinkingmachines/Inkling-2-Small:deepinfra", "deepinfra")
+        self.assertEqual(0, deepinfra.unpriced_calls)
+        self.assertAlmostEqual(1.1836, deepinfra.usd)
         self.assertEqual(
-            1, price("thinkingmachines/Inkling-2-Small:deepinfra", "deepinfra").unpriced_calls
+            1, price("thinkingmachines/Inkling-2-Small:fireworks-ai", "fireworks-ai").unpriced_calls
         )
 
     def test_grok_long_context_rates_start_at_200k(self):
