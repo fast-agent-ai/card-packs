@@ -191,6 +191,9 @@ The bundled catalog currently includes:
   baseten or scaleway, and Kimi K3 via featherless-ai.
 - Muse Glimmer 30B through Hugging Face and Together (`$0.35` input, `$0.04`
   cached input, `$1.50` output).
+- Inkling 2 Small through Hugging Face and Together (`$0.30` input, `$0.03`
+  cached input, `$1.00` output), from Together's model listing checked
+  November 14, 2026. Other upstream providers remain unpriced.
 - DeepSeek V4.1 Flash (API model `deepseek-flash`), verified against the official
   pricing page on September 10, 2026. Legacy `deepseek-v4-flash` and
   `deepseek-v4-flash-vision-exp` route to `DeepSeek-V4.1-Flash` at the same rates.

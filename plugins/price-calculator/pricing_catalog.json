@@ -1,6 +1,6 @@
 {
   "schema": "fast-agent.pricing/v1",
-  "catalog_version": "2026-11-10.1",
+  "catalog_version": "2026-11-14.1",
   "currency": "USD",
   "unit": "usd_per_million_tokens",
   "rules": [
@@ -1341,6 +1341,22 @@
         "input": "0.35",
         "cache_read": "0.04",
         "output": "1.50"
+      }
+    },
+    {
+      "id": "inkling-2-small-together",
+      "match": {
+        "model": {
+          "values": ["thinkingmachines/inkling-2-small"],
+          "strip_after": ":"
+        },
+        "providers": ["hf"],
+        "upstream_providers": ["together"]
+      },
+      "rates": {
+        "input": "0.30",
+        "cache_read": "0.03",
+        "output": "1.00"
       }
     },
     {
