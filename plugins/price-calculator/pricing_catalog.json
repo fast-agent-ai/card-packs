@@ -1,6 +1,6 @@
 {
   "schema": "fast-agent.pricing/v1",
-  "catalog_version": "2026-11-14.2",
+  "catalog_version": "2026-11-15.1",
   "currency": "USD",
   "unit": "usd_per_million_tokens",
   "rules": [
@@ -1385,10 +1385,32 @@
         "providers": ["hf"],
         "upstream_providers": ["novita"]
       },
+      "effective": {
+        "until": "2026-11-15T14:00:00Z"
+      },
       "rates": {
         "input": "0.30",
         "cache_read": "0.006",
         "output": "1.20"
+      }
+    },
+    {
+      "id": "deepseek-v4.1-flash-hf-novita-openrouter",
+      "match": {
+        "model": {
+          "values": ["deepseek-ai/deepseek-v4.1-flash"],
+          "strip_after": ":"
+        },
+        "providers": ["hf"],
+        "upstream_providers": ["novita"]
+      },
+      "effective": {
+        "from": "2026-11-15T14:00:00Z"
+      },
+      "rates": {
+        "input": "0.195",
+        "cache_read": "0.0039",
+        "output": "0.78"
       }
     },
     {
@@ -1401,10 +1423,32 @@
         "providers": ["hf"],
         "upstream_providers": ["novita"]
       },
+      "effective": {
+        "until": "2026-11-15T14:00:00Z"
+      },
       "rates": {
         "input": "0.30",
         "cache_read": "0.006",
         "output": "1.20"
+      }
+    },
+    {
+      "id": "deepseek-v4.1-flash-1017-hf-novita-openrouter",
+      "match": {
+        "model": {
+          "values": ["deepseek-ai/deepseek-v4.1-flash-1017"],
+          "strip_after": ":"
+        },
+        "providers": ["hf"],
+        "upstream_providers": ["novita"]
+      },
+      "effective": {
+        "from": "2026-11-15T14:00:00Z"
+      },
+      "rates": {
+        "input": "0.165",
+        "cache_read": "0.0033",
+        "output": "0.66"
       }
     },
     {

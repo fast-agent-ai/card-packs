@@ -326,7 +326,7 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-11-14.2", self.plugin._PRICING_CATALOG.version)
+        self.assertEqual("2026-11-15.1", self.plugin._PRICING_CATALOG.version)
         self.assertTrue(self.plugin._PRICING_CATALOG.rules)
 
     def test_copilot_uses_list_pricing_of_associated_models(self):
@@ -646,6 +646,31 @@ class PriceCalculatorTests(unittest.TestCase):
                     )
                 )
                 self.assertEqual(1, price.unpriced_calls)
+
+    def test_hf_novita_deepseek_rates_after_openrouter_routing(self):
+        after = datetime(2026, 11, 15, 22, tzinfo=UTC).timestamp()
+        before = datetime(2026, 11, 15, 13, tzinfo=UTC).timestamp()
+        for model, expected_after in (
+            ("deepseek-ai/DeepSeek-V4.1-Flash-1017:novita", 0.79266),
+            ("deepseek-ai/DeepSeek-V4.1-Flash:novita", 0.93678),
+        ):
+            for timestamp, expected in ((after, expected_after), (before, 1.4412)):
+                with self.subTest(model=model, timestamp=timestamp):
+                    price = self.plugin.calculate_price(
+                        (
+                            _turn(
+                                model,
+                                prompt=1_000_000,
+                                output=1_000_000,
+                                cached=200_000,
+                                provider="hf",
+                                upstream_provider="novita",
+                                timestamp=timestamp,
+                            ),
+                        )
+                    )
+                    self.assertEqual(0, price.unpriced_calls)
+                    self.assertAlmostEqual(expected, price.usd)
 
     def test_hf_novita_deepseek_does_not_cross_route_boundaries(self):
         for model, provider, upstream in (
