@@ -214,16 +214,18 @@ The bundled catalog currently includes:
   input, `$0.006` cached input and `$1.20` output (user-confirmed on November 4, 2026:
   Novita bills -1017 at DeepSeek's peak tariff). Only `provider=hf` with
   `upstream_provider=novita`; other -1017 upstreams remain unpriced.
-- From November 15, 2026 14:00 UTC the Hugging Face router serves these Novita
-  routes through OpenRouter, which bills Novita's discounted rates:
-  `DeepSeek-V4.1-Flash-1017:novita` at `$0.165` input, `$0.0033` cached input and
-  `$0.66` output (45% off list); `DeepSeek-V4.1-Flash:novita` at `$0.195`,
-  `$0.0039` and `$0.78` (35% off). Source: OpenRouter's endpoint listing and the
-  Hugging Face router listing, checked November 16, 2026; the router-reported
-  cost of 30 benchmark trials was exactly 55% of the previous list-rate estimate.
-  The switch was first observed between 14:00 and 21:30 UTC on November 15, so
-  the boundary is approximate. Earlier usage keeps the `$0.30`/`$0.006`/`$1.20`
-  rates. The discounts are promotional and may end.
+- Since November 15, 2026 the Hugging Face router serves these Novita routes
+  through OpenRouter, which bills Novita's discounted rates, and the two rules
+  above now carry them: `DeepSeek-V4.1-Flash-1017:novita` at `$0.165` input,
+  `$0.0033` cached input and `$0.66` output (45% off the `$0.30`/`$0.006`/`$1.20`
+  list); `DeepSeek-V4.1-Flash:novita` at `$0.195`, `$0.0039` and `$0.78` (35%
+  off). Source: OpenRouter's endpoint listing and the Hugging Face router
+  listing, checked November 16, 2026; the router-reported cost of 30 benchmark
+  trials was exactly 55% of the list-rate estimate. The rules are not
+  time-windowed (benchmark tooling pins a catalog snapshot per run and does not
+  accept dated rules), so usage before November 15 is underpriced by this
+  catalog: use catalog 2026-11-14.2 or earlier for it. The discounts are
+  promotional and may end.
 - DeepSeek V4 Pro retains its existing rates and UTC time windows. Announced
   September 14 routing changes are not applied in this catalog update.
 - Muse Spark 1.1–1.3 Standard (`$1.25` input, `$0.15` cached input, `$4.25`
