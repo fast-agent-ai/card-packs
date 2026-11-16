@@ -191,6 +191,11 @@ The bundled catalog currently includes:
   baseten or scaleway, and Kimi K3 via featherless-ai.
 - Muse Glimmer 30B through Hugging Face and Together (`$0.35` input, `$0.04`
   cached input, `$1.50` output).
+- Reflection Beam 1.0 (`reflection/Beam-1.0-501B-A23B`) through Hugging Face,
+  which serves it via OpenRouter: Nebius upstream `$0.25` input, `$0.05` cached
+  input, `$1.00` output; Together upstream `$0.40`, `$0.04`, `$1.20`. From
+  OpenRouter's endpoint listing, checked November 16, 2026. Other upstreams
+  remain unpriced.
 - Inkling 2 Small through Hugging Face and Together (`$0.30` input, `$0.03`
   cached input, `$1.00` output), from Together's model listing, and through
   DeepInfra (`$0.285` input, `$0.028` cached input, `$0.95` output), the price

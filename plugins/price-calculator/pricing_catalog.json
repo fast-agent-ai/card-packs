@@ -1,6 +1,6 @@
 {
   "schema": "fast-agent.pricing/v1",
-  "catalog_version": "2026-11-15.2",
+  "catalog_version": "2026-11-16.1",
   "currency": "USD",
   "unit": "usd_per_million_tokens",
   "rules": [
@@ -1341,6 +1341,38 @@
         "input": "0.35",
         "cache_read": "0.04",
         "output": "1.50"
+      }
+    },
+    {
+      "id": "beam-1.0-hf-nebius",
+      "match": {
+        "model": {
+          "values": ["reflection/beam-1.0-501b-a23b"],
+          "strip_after": ":"
+        },
+        "providers": ["hf"],
+        "upstream_providers": ["nebius"]
+      },
+      "rates": {
+        "input": "0.25",
+        "cache_read": "0.05",
+        "output": "1.00"
+      }
+    },
+    {
+      "id": "beam-1.0-hf-together",
+      "match": {
+        "model": {
+          "values": ["reflection/beam-1.0-501b-a23b"],
+          "strip_after": ":"
+        },
+        "providers": ["hf"],
+        "upstream_providers": ["together"]
+      },
+      "rates": {
+        "input": "0.40",
+        "cache_read": "0.04",
+        "output": "1.20"
       }
     },
     {

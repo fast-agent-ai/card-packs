@@ -326,7 +326,7 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-11-15.2", self.plugin._PRICING_CATALOG.version)
+        self.assertEqual("2026-11-16.1", self.plugin._PRICING_CATALOG.version)
         self.assertTrue(self.plugin._PRICING_CATALOG.rules)
 
     def test_copilot_uses_list_pricing_of_associated_models(self):
@@ -1668,6 +1668,28 @@ class PriceCalculatorTests(unittest.TestCase):
         self.assertEqual(0, glimmer.unpriced_calls)
         self.assertAlmostEqual(1.788, glimmer.usd)
         self.assertEqual(1, wrong_upstream.unpriced_calls)
+
+    def test_beam_hf_upstream_rates(self):
+        def price(upstream: str):
+            return self.plugin.calculate_price(
+                (
+                    _turn(
+                        f"reflection/Beam-1.0-501B-A23B:{upstream}",
+                        prompt=1_000_000,
+                        output=1_000_000,
+                        cached=200_000,
+                        provider="hf",
+                        upstream_provider=upstream,
+                    ),
+                )
+            )
+
+        for upstream, expected in (("nebius", 1.21), ("together", 1.528)):
+            with self.subTest(upstream=upstream):
+                result = price(upstream)
+                self.assertEqual(0, result.unpriced_calls)
+                self.assertAlmostEqual(expected, result.usd)
+        self.assertEqual(1, price("baseten").unpriced_calls)
 
     def test_inkling_2_small_together_rates(self):
         def price(model: str, upstream: str):
