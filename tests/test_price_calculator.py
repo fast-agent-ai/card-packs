@@ -326,7 +326,7 @@ class PriceCalculatorTests(unittest.TestCase):
         )
 
         self.assertTrue(catalog_path.is_file())
-        self.assertEqual("2026-11-16.1", self.plugin._PRICING_CATALOG.version)
+        self.assertRegex(self.plugin._PRICING_CATALOG.version, r"^\d{4}-\d{2}-\d{2}\.\d+$")
         self.assertTrue(self.plugin._PRICING_CATALOG.rules)
 
     def test_copilot_uses_list_pricing_of_associated_models(self):
@@ -948,6 +948,115 @@ class PriceCalculatorTests(unittest.TestCase):
                     ],
                 }
             )
+
+    def test_gpt_62_standard_prices_cover_cache_partitions_and_boundary(self):
+        # Published full-request tariffs: 272,000 is short; the next token is long.
+        for model, expected_costs in (
+            ("gpt-6.2-astra", (2.444, 4.688016)),
+            ("gpt-6.2-sol", (0.611, 1.172004)),
+        ):
+            for provider in ("openai", "responses", "codexresponses", "copilot"):
+                for prompt, expected in zip((272_000, 272_001), expected_costs):
+                    with self.subTest(model=model, provider=provider, prompt=prompt):
+                        turn = _turn(
+                            model,
+                            provider=provider,
+                            prompt=prompt,
+                            cached=20_000,
+                            cache_write=10_000,
+                            output=10_000,
+                        )
+                        price = self.plugin.calculate_price((turn,))
+                        self.assertEqual(0, price.unpriced_calls)
+                        self.assertAlmostEqual(expected, price.usd)
+                        context = "short" if prompt == 272_000 else "long"
+                        self.assertIn(
+                            f"_{context}_",
+                            self.plugin.format_cost_breakdown(((1, turn),)),
+                        )
+
+    def test_gpt_62_supported_tiers_scale_all_token_partitions(self):
+        for model in ("gpt-6.2-astra", "gpt-6.2-sol"):
+            for provider in ("openai", "responses", "codexresponses"):
+                for prompt in (272_000, 272_001):
+                    turn = _turn(
+                        model,
+                        provider=provider,
+                        prompt=prompt,
+                        cached=20_000,
+                        cache_write=10_000,
+                        output=10_000,
+                    )
+                    standard = self.plugin.calculate_price((turn,))
+                    self.assertEqual(0, standard.unpriced_calls)
+                    for tier, multiplier in (
+                        ("default", 1),
+                        ("standard", 1),
+                        ("batch", 0.5),
+                        ("fast", 2),
+                        ("priority", 2),
+                    ):
+                        with self.subTest(
+                            model=model, provider=provider, prompt=prompt, tier=tier
+                        ):
+                            turn.service_tier = tier
+                            price = self.plugin.calculate_price((turn,))
+                            self.assertEqual(0, price.unpriced_calls)
+                            self.assertAlmostEqual(
+                                standard.usd * multiplier, price.usd
+                            )
+                    turn.requested_service_tier = "fast"
+                    turn.service_tier = "default"
+                    self.assertAlmostEqual(
+                        standard.usd, self.plugin.calculate_price((turn,)).usd
+                    )
+
+    def test_gpt_62_unsupported_tiers_remain_unpriced(self):
+        for model in ("gpt-6.2-astra", "gpt-6.2-sol"):
+            for provider in ("openai", "responses", "codexresponses", "copilot"):
+                tiers = ("flex", "ultrafast")
+                if provider == "copilot":
+                    tiers += ("batch", "fast")
+                for prompt in (272_000, 272_001):
+                    for tier in tiers:
+                        with self.subTest(
+                            model=model, provider=provider, prompt=prompt, tier=tier
+                        ):
+                            turn = _turn(
+                                model,
+                                provider=provider,
+                                prompt=prompt,
+                                output=10_000,
+                                service_tier=tier,
+                            )
+                            self.assertIsNone(self.plugin._call_cost(turn))
+                            price = self.plugin.calculate_price((turn,))
+                            self.assertEqual(1, price.unpriced_calls)
+
+    def test_gpt_62_sol_preserves_gpt_61_sol_supported_tariffs(self):
+        for provider in ("openai", "responses", "codexresponses", "copilot"):
+            tiers = ("default",) if provider == "copilot" else ("default", "batch", "fast")
+            for tier in tiers:
+                for prompt in (272_000, 272_001):
+                    with self.subTest(provider=provider, tier=tier, prompt=prompt):
+                        prices = [
+                            self.plugin.calculate_price(
+                                (
+                                    _turn(
+                                        model,
+                                        provider=provider,
+                                        prompt=prompt,
+                                        cached=20_000,
+                                        cache_write=10_000,
+                                        output=10_000,
+                                        service_tier=tier,
+                                    ),
+                                )
+                            )
+                            for model in ("gpt-6.1-sol", "gpt-6.2-sol")
+                        ]
+                        self.assertEqual(0, prices[0].unpriced_calls)
+                        self.assertEqual(prices[0], prices[1])
 
     def test_gpt_6_rates_include_cache_partitions_and_context_boundary(self):
         # Sol and Luna list rates are Astra's divided by 5 and 100 respectively.

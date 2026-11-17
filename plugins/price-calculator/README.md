@@ -71,6 +71,27 @@ provider-neutral fallbacks.
 
 The bundled catalog currently includes:
 
+- GPT-6.2 Astra and GPT-6.2 Sol: published OpenAI rates checked November 17,
+  2026 ([pricing](https://developers.openai.com/api/docs/pricing),
+  [Astra](https://developers.openai.com/api/docs/models/gpt-6.2-astra),
+  [Sol](https://developers.openai.com/api/docs/models/gpt-6.2-sol)). Standard
+  Astra costs `$8` input, `$0.40` cache reads, `$10` cache writes (30-minute
+  retention), and `$40` output per million tokens; Sol costs `$2`, `$0.10`,
+  `$2.50`, and `$10`, respectively. Above 272,000 total input tokens, including
+  cached tokens, input/cache rates double and output costs 1.5× for the full
+  request. Batch costs 50% and Fast costs 2× the applicable rates. Flex is not
+  listed for these models in the official pricing table and remains unpriced
+  (no matching rate, not a zero-dollar cost). Ultrafast is also left unpriced
+  rather than applying its temporary promotion
+  without date-specific rules. Standard rates apply to OpenAI, Responses,
+  Codex, and Copilot routes; Batch/Fast exclude Copilot. Codex/Copilot values
+  are API-equivalent estimates, not subscription charges or proof of route
+  availability. Published 12-hour cache writes cost `$20` for Astra and `$5`
+  for Sol before tier/context adjustments, but the calculator cannot distinguish
+  OpenAI cache-write lifetimes and uses the 30-minute rate for all reported
+  writes, underestimating 12-hour writes. Background completion-window discounts
+  and regional processing premiums are not represented. Older model rates are
+  unchanged.
 - GPT-6 Astra: Standard rates of `$10` input, `$1` cache reads, `$12.50`
   cache writes, and `$50` output per million tokens. Above 272,000 input
   tokens, input/cache rates double and output is 1.5× for the full request.
@@ -107,7 +128,7 @@ The bundled catalog currently includes:
   processing premiums are not represented.
 - GPT-5.6 Sol, Terra, and Luna, with Standard, Flex, and Fast short/long-context
   rates.
-- GPT-5.6 and later bill prompt-cache writes at 1.25x the uncached input rate on
+- GPT-5.6 and later bill 30-minute prompt-cache writes at 1.25x the uncached input rate on
   every route, including Copilot (OpenAI prompt-caching guide, "GPT-5.6 and later";
   Copilot `/models` `billing.token_prices` agrees). Caching is implicit by default,
   so `input_tokens_details.cache_write_tokens` is billed without any opt-in. Models
