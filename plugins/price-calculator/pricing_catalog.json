@@ -1,6 +1,6 @@
 {
   "schema": "fast-agent.pricing/v1",
-  "catalog_version": "2026-11-17.1",
+  "catalog_version": "2026-11-17.2",
   "currency": "USD",
   "unit": "usd_per_million_tokens",
   "rules": [
@@ -17,6 +17,7 @@
         "input": "8.00",
         "cache_read": "0.40",
         "cache_write": "10.00",
+        "cache_write_12h": "20.00",
         "output": "40.00"
       }
     },
@@ -33,6 +34,7 @@
         "input": "16.00",
         "cache_read": "0.80",
         "cache_write": "20.00",
+        "cache_write_12h": "40.00",
         "output": "60.00"
       }
     },
@@ -49,6 +51,7 @@
         "input": "4.00",
         "cache_read": "0.20",
         "cache_write": "5.00",
+        "cache_write_12h": "10.00",
         "output": "20.00"
       }
     },
@@ -65,6 +68,7 @@
         "input": "8.00",
         "cache_read": "0.40",
         "cache_write": "10.00",
+        "cache_write_12h": "20.00",
         "output": "30.00"
       }
     },
@@ -81,6 +85,7 @@
         "input": "16.00",
         "cache_read": "0.80",
         "cache_write": "20.00",
+        "cache_write_12h": "40.00",
         "output": "80.00"
       }
     },
@@ -97,6 +102,7 @@
         "input": "32.00",
         "cache_read": "1.60",
         "cache_write": "40.00",
+        "cache_write_12h": "80.00",
         "output": "120.00"
       }
     },
@@ -113,6 +119,7 @@
         "input": "2.00",
         "cache_read": "0.10",
         "cache_write": "2.50",
+        "cache_write_12h": "5.00",
         "output": "10.00"
       }
     },
@@ -129,6 +136,7 @@
         "input": "4.00",
         "cache_read": "0.20",
         "cache_write": "5.00",
+        "cache_write_12h": "10.00",
         "output": "15.00"
       }
     },
@@ -145,6 +153,7 @@
         "input": "1.00",
         "cache_read": "0.05",
         "cache_write": "1.25",
+        "cache_write_12h": "2.50",
         "output": "5.00"
       }
     },
@@ -161,6 +170,7 @@
         "input": "2.00",
         "cache_read": "0.10",
         "cache_write": "2.50",
+        "cache_write_12h": "5.00",
         "output": "7.50"
       }
     },
@@ -177,6 +187,7 @@
         "input": "4.00",
         "cache_read": "0.20",
         "cache_write": "5.00",
+        "cache_write_12h": "10.00",
         "output": "20.00"
       }
     },
@@ -193,6 +204,7 @@
         "input": "8.00",
         "cache_read": "0.40",
         "cache_write": "10.00",
+        "cache_write_12h": "20.00",
         "output": "30.00"
       }
     },
@@ -209,6 +221,7 @@
         "input": "10.00",
         "cache_read": "1.00",
         "cache_write": "12.50",
+        "cache_write_12h": "25.00",
         "output": "50.00"
       }
     },
@@ -225,6 +238,7 @@
         "input": "20.00",
         "cache_read": "2.00",
         "cache_write": "25.00",
+        "cache_write_12h": "50.00",
         "output": "75.00"
       }
     },
@@ -241,6 +255,7 @@
         "input": "5.00",
         "cache_read": "0.50",
         "cache_write": "6.25",
+        "cache_write_12h": "12.50",
         "output": "25.00"
       }
     },
@@ -257,6 +272,7 @@
         "input": "10.00",
         "cache_read": "1.00",
         "cache_write": "12.50",
+        "cache_write_12h": "25.00",
         "output": "37.50"
       }
     },
@@ -273,6 +289,7 @@
         "input": "20.00",
         "cache_read": "2.00",
         "cache_write": "25.00",
+        "cache_write_12h": "50.00",
         "output": "100.00"
       }
     },
@@ -289,6 +306,7 @@
         "input": "40.00",
         "cache_read": "4.00",
         "cache_write": "50.00",
+        "cache_write_12h": "100.00",
         "output": "150.00"
       }
     },
@@ -305,6 +323,7 @@
         "input": "2.00",
         "cache_read": "0.10",
         "cache_write": "2.50",
+        "cache_write_12h": "5.00",
         "output": "10.00"
       }
     },
@@ -321,6 +340,7 @@
         "input": "4.00",
         "cache_read": "0.20",
         "cache_write": "5.00",
+        "cache_write_12h": "10.00",
         "output": "15.00"
       }
     },
@@ -337,6 +357,7 @@
         "input": "1.00",
         "cache_read": "0.05",
         "cache_write": "1.25",
+        "cache_write_12h": "2.50",
         "output": "5.00"
       }
     },
@@ -353,6 +374,7 @@
         "input": "2.00",
         "cache_read": "0.10",
         "cache_write": "2.50",
+        "cache_write_12h": "5.00",
         "output": "7.50"
       }
     },
@@ -369,6 +391,7 @@
         "input": "4.00",
         "cache_read": "0.20",
         "cache_write": "5.00",
+        "cache_write_12h": "10.00",
         "output": "20.00"
       }
     },
@@ -385,6 +408,7 @@
         "input": "8.00",
         "cache_read": "0.40",
         "cache_write": "10.00",
+        "cache_write_12h": "20.00",
         "output": "30.00"
       }
     },
@@ -401,6 +425,7 @@
         "input": "1.00",
         "cache_read": "0.05",
         "cache_write": "1.25",
+        "cache_write_12h": "2.50",
         "output": "5.00"
       }
     },
@@ -417,6 +442,7 @@
         "input": "2.00",
         "cache_read": "0.10",
         "cache_write": "2.50",
+        "cache_write_12h": "5.00",
         "output": "7.50"
       }
     },
@@ -433,6 +459,7 @@
         "input": "0.50",
         "cache_read": "0.025",
         "cache_write": "0.625",
+        "cache_write_12h": "1.25",
         "output": "2.50"
       }
     },
@@ -449,6 +476,7 @@
         "input": "1.00",
         "cache_read": "0.05",
         "cache_write": "1.25",
+        "cache_write_12h": "2.50",
         "output": "3.75"
       }
     },
@@ -465,6 +493,7 @@
         "input": "2.00",
         "cache_read": "0.10",
         "cache_write": "2.50",
+        "cache_write_12h": "5.00",
         "output": "10.00"
       }
     },
@@ -481,6 +510,7 @@
         "input": "4.00",
         "cache_read": "0.20",
         "cache_write": "5.00",
+        "cache_write_12h": "10.00",
         "output": "15.00"
       }
     },
@@ -497,6 +527,7 @@
         "input": "2.00",
         "cache_read": "0.20",
         "cache_write": "2.50",
+        "cache_write_12h": "5.00",
         "output": "10.00"
       }
     },
@@ -513,6 +544,7 @@
         "input": "4.00",
         "cache_read": "0.40",
         "cache_write": "5.00",
+        "cache_write_12h": "10.00",
         "output": "15.00"
       }
     },
@@ -529,6 +561,7 @@
         "input": "1.00",
         "cache_read": "0.10",
         "cache_write": "1.25",
+        "cache_write_12h": "2.50",
         "output": "5.00"
       }
     },
@@ -545,6 +578,7 @@
         "input": "2.00",
         "cache_read": "0.20",
         "cache_write": "2.50",
+        "cache_write_12h": "5.00",
         "output": "7.50"
       }
     },
@@ -561,6 +595,7 @@
         "input": "4.00",
         "cache_read": "0.40",
         "cache_write": "5.00",
+        "cache_write_12h": "10.00",
         "output": "20.00"
       }
     },
@@ -577,6 +612,7 @@
         "input": "8.00",
         "cache_read": "0.80",
         "cache_write": "10.00",
+        "cache_write_12h": "20.00",
         "output": "30.00"
       }
     },
@@ -593,6 +629,7 @@
         "input": "0.10",
         "cache_read": "0.01",
         "cache_write": "0.125",
+        "cache_write_12h": "0.25",
         "output": "0.50"
       }
     },
@@ -609,6 +646,7 @@
         "input": "0.20",
         "cache_read": "0.02",
         "cache_write": "0.25",
+        "cache_write_12h": "0.50",
         "output": "0.75"
       }
     },
@@ -625,6 +663,7 @@
         "input": "0.05",
         "cache_read": "0.005",
         "cache_write": "0.0625",
+        "cache_write_12h": "0.125",
         "output": "0.25"
       }
     },
@@ -641,6 +680,7 @@
         "input": "0.10",
         "cache_read": "0.01",
         "cache_write": "0.125",
+        "cache_write_12h": "0.25",
         "output": "0.375"
       }
     },
@@ -657,6 +697,7 @@
         "input": "0.20",
         "cache_read": "0.02",
         "cache_write": "0.25",
+        "cache_write_12h": "0.50",
         "output": "1.00"
       }
     },
@@ -673,6 +714,7 @@
         "input": "0.40",
         "cache_read": "0.04",
         "cache_write": "0.50",
+        "cache_write_12h": "1.00",
         "output": "1.50"
       }
     },

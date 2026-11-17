@@ -56,6 +56,14 @@ class Rates:
     output: float
     cache_write: float | None = None
     cache_write_1h: float | None = None
+    cache_write_12h: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _CacheWritePartitions:
+    standard: int
+    one_hour: int = 0
+    twelve_hour: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -393,7 +401,7 @@ def _parse_rates(value: object, label: str) -> Rates:
     payload = _require_object(value, label)
     _check_keys(
         payload,
-        {"input", "cache_read", "cache_write", "cache_write_1h", "output"},
+        {"input", "cache_read", "cache_write", "cache_write_1h", "cache_write_12h", "output"},
         label,
     )
     for required in ("input", "cache_read", "output"):
@@ -401,18 +409,19 @@ def _parse_rates(value: object, label: str) -> Rates:
             raise ValueError(f"{label}.{required} is required")
     cache_write = payload.get("cache_write")
     cache_write_1h = payload.get("cache_write_1h")
-    if cache_write_1h is not None and cache_write is None:
-        raise ValueError(f"{label}.cache_write_1h requires cache_write")
+    cache_write_12h = payload.get("cache_write_12h")
+    for field in ("cache_write_1h", "cache_write_12h"):
+        if payload.get(field) is not None and cache_write is None:
+            raise ValueError(f"{label}.{field} requires cache_write")
     return Rates(
         input=_rate(payload["input"], f"{label}.input"),
         cached_input=_rate(payload["cache_read"], f"{label}.cache_read"),
-        cache_write=(
-            None if cache_write is None else _rate(cache_write, f"{label}.cache_write")
-        ),
+        cache_write=(None if cache_write is None else _rate(cache_write, f"{label}.cache_write")),
         cache_write_1h=(
-            None
-            if cache_write_1h is None
-            else _rate(cache_write_1h, f"{label}.cache_write_1h")
+            None if cache_write_1h is None else _rate(cache_write_1h, f"{label}.cache_write_1h")
+        ),
+        cache_write_12h=(
+            None if cache_write_12h is None else _rate(cache_write_12h, f"{label}.cache_write_12h")
         ),
         output=_rate(payload["output"], f"{label}.output"),
     )
@@ -772,34 +781,57 @@ def _call_cost(turn: TurnUsage) -> float | None:
     if uncached < 0 or uncached + cache_read + cache_write != prompt_total:
         return None
 
-    cache_write_rate = (
-        rates.cache_write if rates.cache_write is not None else rates.input
-    )
-    cache_write_5m, cache_write_1h = _cache_write_partitions(turn, cache_write)
+    cache_write_rate = rates.cache_write if rates.cache_write is not None else rates.input
+    writes = _cache_write_partitions(turn, cache_write)
+    if writes is None:
+        return None
+    if writes.twelve_hour and rates.cache_write_12h is None:
+        # A known extended lifetime must never fall back to a cheaper tariff.
+        return None
     total = (
         uncached * rates.input
         + cache_read * rates.cached_input
-        + cache_write_5m * cache_write_rate
-        + cache_write_1h
-        * (
-            rates.cache_write_1h
-            if rates.cache_write_1h is not None
-            else cache_write_rate
-        )
+        + writes.standard * cache_write_rate
+        + writes.one_hour
+        * (rates.cache_write_1h if rates.cache_write_1h is not None else cache_write_rate)
+        + writes.twelve_hour * (rates.cache_write_12h or 0)
         + output * rates.output
     )
     return total / _TOKENS_PER_MILLION
 
 
-def _cache_write_partitions(turn: TurnUsage, total: int) -> tuple[int, int]:
-    if total == 0:
-        return 0, 0
+def _cache_write_partitions(turn: TurnUsage, total: int) -> _CacheWritePartitions | None:
     raw_usage = turn.raw_usage
     if not isinstance(raw_usage, dict):
-        return total, 0
+        return _CacheWritePartitions(total)
+
+    # Responses uses input_tokens_details; Chat-compatible usage may preserve
+    # the same accounting under prompt_tokens_details. Validate at this boundary,
+    # independent of provider names: rates, not the wire schema, authorize pricing.
+    ttl_details: list[object] = []
+    for field in ("input_tokens_details", "prompt_tokens_details"):
+        details = raw_usage.get(field)
+        if isinstance(details, dict):
+            value = details.get("cache_write_tokens_details")
+            # SDK snapshots include null for an omitted optional field.
+            if value is not None:
+                ttl_details.append(value)
+    if ttl_details:
+        if len(ttl_details) != 1:
+            return None
+        partitions = _openai_cache_write_partitions(ttl_details[0], total)
+        if "cache_creation" in raw_usage:
+            # Do not choose between two competing lifetime accounting schemes.
+            return None
+        return partitions
+
+    # Preserve Anthropic's historical 5m/1h handling, including aggregate-only
+    # fallback for absent or incomplete cache_creation details.
+    if total == 0:
+        return _CacheWritePartitions(0)
     cache_creation = raw_usage.get("cache_creation")
     if not isinstance(cache_creation, dict):
-        return total, 0
+        return _CacheWritePartitions(total)
     cache_write_5m = cache_creation.get("ephemeral_5m_input_tokens")
     cache_write_1h = cache_creation.get("ephemeral_1h_input_tokens")
     if (
@@ -809,8 +841,28 @@ def _cache_write_partitions(turn: TurnUsage, total: int) -> tuple[int, int]:
         or cache_write_1h < 0
         or cache_write_5m + cache_write_1h != total
     ):
-        return total, 0
-    return cache_write_5m, cache_write_1h
+        return _CacheWritePartitions(total)
+    return _CacheWritePartitions(cache_write_5m, one_hour=cache_write_1h)
+
+
+def _openai_cache_write_partitions(value: object, total: int) -> _CacheWritePartitions | None:
+    if not isinstance(value, dict):
+        return None
+    # Both fields are required by OpenAI's accounting contract. Unknown lifetime
+    # fields are not safe to price using the default tariff either.
+    if value.keys() != {"ttl_30m_tokens", "ttl_12h_tokens"}:
+        return None
+    short = value["ttl_30m_tokens"]
+    long = value["ttl_12h_tokens"]
+    if (
+        type(short) is not int
+        or type(long) is not int
+        or short < 0
+        or long < 0
+        or short + long != total
+    ):
+        return None
+    return _CacheWritePartitions(short, twelve_hour=long)
 
 
 def calculate_price(turns: tuple[TurnUsage, ...]) -> Price:

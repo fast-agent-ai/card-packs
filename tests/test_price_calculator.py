@@ -949,6 +949,272 @@ class PriceCalculatorTests(unittest.TestCase):
                 }
             )
 
+    def test_cache_write_12h_schema_is_optional_and_validated(self):
+        base = {"input": "2", "cache_read": "0.1", "output": "10"}
+        self.assertIsNone(self.plugin._parse_rates(base, "rates").cache_write_12h)
+        for value in ("5", 0, 5.0):
+            rates = self.plugin._parse_rates(
+                {**base, "cache_write": "2.5", "cache_write_12h": value}, "rates"
+            )
+            self.assertEqual(float(value), rates.cache_write_12h)
+            self.assertIsNone(rates.cache_write_1h)
+        with self.assertRaisesRegex(ValueError, "requires cache_write"):
+            self.plugin._parse_rates({**base, "cache_write_12h": "5"}, "rates")
+        for value in (-1, True, "NaN", "Infinity", [], {}):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.plugin._parse_rates(
+                    {**base, "cache_write": "2.5", "cache_write_12h": value}, "rates"
+                )
+
+    def test_openai_12h_mixed_writes_reads_boundary_and_tiers(self):
+        # 6k of the aggregate 10k writes have 12h coverage, not an extra 6k writes.
+        for model, expected_costs in (
+            ("gpt-6.2-astra", (2.504, 4.808016)),
+            ("gpt-6.2-sol", (0.626, 1.202004)),
+        ):
+            for provider in ("openai", "responses", "codexresponses", "copilot"):
+                for prompt, expected in zip((272_000, 272_001), expected_costs):
+                    tiers = (("standard", 1),)
+                    if provider != "copilot":
+                        tiers += (("batch", 0.5), ("fast", 2), ("priority", 2))
+                    for tier, multiplier in tiers:
+                        with self.subTest(model=model, provider=provider, prompt=prompt, tier=tier):
+                            turn = _turn(
+                                model,
+                                provider=provider,
+                                prompt=prompt,
+                                cached=20_000,
+                                cache_write=10_000,
+                                output=10_000,
+                                service_tier=tier,
+                                raw_usage={
+                                    "input_tokens_details": {
+                                        "cache_write_tokens_details": {
+                                            "ttl_30m_tokens": 4_000,
+                                            "ttl_12h_tokens": 6_000,
+                                        }
+                                    }
+                                },
+                            )
+                            price = self.plugin.calculate_price((turn,))
+                            self.assertEqual(0, price.unpriced_calls)
+                            self.assertAlmostEqual(expected * multiplier, price.usd)
+
+    def test_existing_gpt_6_models_use_published_12h_rates(self):
+        # November 17 OpenAI Standard short-context 12h tariffs, USD/million.
+        for model, rate in (
+            ("gpt-6-astra", 25),
+            ("gpt-6-sol", 5),
+            ("gpt-6-luna", 0.25),
+            ("gpt-6.1-sol", 5),
+            ("gpt-6.1-terra", 2.5),
+        ):
+            for prompt, context_multiplier in ((272_000, 1), (272_001, 2)):
+                for tier, tier_multiplier in (
+                    ("standard", 1),
+                    ("batch", 0.5),
+                    ("flex", 0.5),
+                    ("fast", 2),
+                ):
+                    with self.subTest(model=model, prompt=prompt, tier=tier):
+                        turn = _turn(
+                            model,
+                            prompt=prompt,
+                            output=100,
+                            cached=200,
+                            cache_write=1_000,
+                            service_tier=tier,
+                        )
+                        legacy = self.plugin.calculate_price((turn,))
+                        turn.raw_usage = {
+                            "input_tokens_details": {
+                                "cache_write_tokens_details": {
+                                    "ttl_30m_tokens": 0,
+                                    "ttl_12h_tokens": 1_000,
+                                }
+                            }
+                        }
+                        extended = self.plugin.calculate_price((turn,))
+                        self.assertEqual(0, legacy.unpriced_calls)
+                        self.assertEqual(0, extended.unpriced_calls)
+                        self.assertAlmostEqual(
+                            1_000 * rate / 2 * context_multiplier * tier_multiplier / 1e6,
+                            extended.usd - legacy.usd,
+                        )
+
+    def test_openai_12h_real_usage_round_trip(self):
+        try:
+            from openai.types.responses.response_usage import ResponseUsage
+
+            from fast_agent.llm.provider_types import Provider
+            from fast_agent.llm.usage_tracking import TurnUsage, usage_from_openai_responses
+        except ImportError:
+            self.skipTest("requires fast-agent and the OpenAI SDK")
+
+        usage = ResponseUsage.model_validate(
+            {
+                "input_tokens": 12_000,
+                "input_tokens_details": {
+                    "cached_tokens": 4_000,
+                    "cache_write_tokens": 7_000,
+                    "cache_write_tokens_details": {
+                        "ttl_30m_tokens": 3_000,
+                        "ttl_12h_tokens": 4_000,
+                    },
+                },
+                "output_tokens": 100,
+                "output_tokens_details": {"reasoning_tokens": 0},
+                "total_tokens": 12_100,
+            }
+        )
+        turn = usage_from_openai_responses(usage, provider=Provider.RESPONSES, model="gpt-6.2-sol")
+        for attempt in (turn, TurnUsage.model_validate_json(turn.model_dump_json())):
+            price = self.plugin.calculate_price((attempt,))
+            self.assertEqual(0, price.unpriced_calls)
+            # Ordinary input 1k + reads 4k + writes 3k/4k + output 100.
+            self.assertAlmostEqual(0.002 + 0.0004 + 0.0075 + 0.02 + 0.001, price.usd)
+
+    def test_openai_sdk_missing_or_null_lifetime_details_preserves_legacy_cost(self):
+        try:
+            from openai.types.responses.response_usage import ResponseUsage
+
+            from fast_agent.llm.provider_types import Provider
+            from fast_agent.llm.usage_tracking import usage_from_openai_responses
+        except ImportError:
+            self.skipTest("requires fast-agent and the OpenAI SDK")
+
+        for writes in (0, 1_000):
+            for optional in ({}, {"cache_write_tokens_details": None}):
+                with self.subTest(writes=writes, optional=optional):
+                    usage = ResponseUsage.model_validate(
+                        {
+                            "input_tokens": 2_000,
+                            "input_tokens_details": {
+                                "cached_tokens": 500,
+                                "cache_write_tokens": writes,
+                                **optional,
+                            },
+                            "output_tokens": 100,
+                            "output_tokens_details": {"reasoning_tokens": 0},
+                            "total_tokens": 2_100,
+                        }
+                    )
+                    turn = usage_from_openai_responses(
+                        usage, provider=Provider.RESPONSES, model="gpt-6.2-sol"
+                    )
+                    expected = (1_500 - writes) * 2 + 500 * 0.1 + writes * 2.5 + 100 * 10
+                    price = self.plugin.calculate_price((turn,))
+                    self.assertEqual(0, price.unpriced_calls)
+                    self.assertAlmostEqual(expected / 1e6, price.usd)
+
+    def test_openai_ttl_details_missing_preserves_aggregate_fallback(self):
+        for raw_usage in (
+            None,
+            {},
+            {"input_tokens_details": {}},
+            {"input_tokens_details": {"cache_write_tokens": 1_000}},
+            {"input_tokens_details": {"cache_write_tokens_details": None}},
+        ):
+            with self.subTest(raw_usage=raw_usage):
+                turn = _turn(
+                    "gpt-6.2-sol",
+                    prompt=1_000,
+                    output=0,
+                    cache_write=1_000,
+                    raw_usage=raw_usage,
+                )
+                price = self.plugin.calculate_price((turn,))
+                self.assertEqual(0, price.unpriced_calls)
+                self.assertAlmostEqual(0.0025, price.usd)
+
+    def test_openai_invalid_ttl_details_are_unpriced_not_defaulted(self):
+        invalid = (
+            [],
+            "12h",
+            {},
+            {"ttl_30m_tokens": 1_000},
+            {"ttl_12h_tokens": 1_000},
+            {"ttl_30m_tokens": 0, "ttl_12h_tokens": 999},
+            {"ttl_30m_tokens": 1, "ttl_12h_tokens": 1_000},
+            {"ttl_30m_tokens": -1, "ttl_12h_tokens": 1_001},
+            {"ttl_30m_tokens": 0, "ttl_12h_tokens": -1},
+            {"ttl_30m_tokens": False, "ttl_12h_tokens": 1_000},
+            {"ttl_30m_tokens": 999, "ttl_12h_tokens": True},
+            {"ttl_30m_tokens": 0, "ttl_12h_tokens": 1_000.0},
+            {"ttl_30m_tokens": 0, "ttl_12h_tokens": "1000"},
+            {"ttl_30m_tokens": 0, "ttl_12h_tokens": None},
+            {"ttl_30m_tokens": 0, "ttl_12h_tokens": 1_000, "ttl_24h_tokens": 1},
+        )
+        for field in ("input_tokens_details", "prompt_tokens_details"):
+            for details in invalid:
+                with self.subTest(field=field, details=details):
+                    turn = _turn(
+                        "gpt-6.2-sol",
+                        prompt=1_000,
+                        output=0,
+                        cache_write=1_000,
+                        raw_usage={field: {"cache_write_tokens_details": details}},
+                    )
+                    price = self.plugin.calculate_price((turn,))
+                    self.assertEqual(1, price.unpriced_calls)
+                    self.assertEqual(0, price.usd)
+                    # An authoritative provider dollar cost still wins.
+                    turn.cost_usd = 0.123
+                    self.assertEqual(0.123, self.plugin.calculate_price((turn,)).usd)
+
+    def test_openai_ttl_zero_aggregate_and_competing_details(self):
+        details = {
+            "cache_write_tokens_details": {
+                "ttl_30m_tokens": 0,
+                "ttl_12h_tokens": 0,
+            }
+        }
+        turn = _turn(
+            "gpt-6.2-sol",
+            prompt=100,
+            output=0,
+            raw_usage={"input_tokens_details": details},
+        )
+        self.assertEqual(0, self.plugin.calculate_price((turn,)).unpriced_calls)
+        details["cache_write_tokens_details"]["ttl_12h_tokens"] = 1
+        self.assertEqual(1, self.plugin.calculate_price((turn,)).unpriced_calls)
+        details["cache_write_tokens_details"]["ttl_12h_tokens"] = 0
+        for extra in (
+            {"prompt_tokens_details": details},
+            {"cache_creation": {"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 0}},
+        ):
+            turn.raw_usage = {"input_tokens_details": details, **extra}
+            self.assertEqual(1, self.plugin.calculate_price((turn,)).unpriced_calls)
+
+    def test_known_12h_without_tariff_never_uses_generic_or_one_hour_rate(self):
+        for model, provider in (
+            ("gpt-5.6-sol", "responses"),
+            ("kimi-k3", "moonshot"),
+            ("claude-opus-5-5", "anthropic"),
+        ):
+            for field in ("input_tokens_details", "prompt_tokens_details"):
+                with self.subTest(model=model, field=field):
+                    turn = _turn(
+                        model, provider=provider, prompt=1_000, output=0, cache_write=1_000
+                    )
+                    legacy = self.plugin.calculate_price((turn,))
+                    self.assertEqual(0, legacy.unpriced_calls)
+                    # A recognized 30m-only split preserves the default write rate.
+                    turn.raw_usage = {
+                        field: {
+                            "cache_write_tokens_details": {
+                                "ttl_30m_tokens": 1_000,
+                                "ttl_12h_tokens": 0,
+                            }
+                        }
+                    }
+                    self.assertEqual(legacy, self.plugin.calculate_price((turn,)))
+                    turn.raw_usage[field]["cache_write_tokens_details"] = {
+                        "ttl_30m_tokens": 0,
+                        "ttl_12h_tokens": 1_000,
+                    }
+                    self.assertEqual(1, self.plugin.calculate_price((turn,)).unpriced_calls)
+
     def test_gpt_62_standard_prices_cover_cache_partitions_and_boundary(self):
         # Published full-request tariffs: 272,000 is short; the next token is long.
         for model, expected_costs in (

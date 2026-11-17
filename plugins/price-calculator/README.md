@@ -87,11 +87,9 @@ The bundled catalog currently includes:
   Codex, and Copilot routes; Batch/Fast exclude Copilot. Codex/Copilot values
   are API-equivalent estimates, not subscription charges or proof of route
   availability. Published 12-hour cache writes cost `$20` for Astra and `$5`
-  for Sol before tier/context adjustments, but the calculator cannot distinguish
-  OpenAI cache-write lifetimes and uses the 30-minute rate for all reported
-  writes, underestimating 12-hour writes. Background completion-window discounts
-  and regional processing premiums are not represented. Older model rates are
-  unchanged.
+  for Sol before tier/context adjustments; the calculator applies these rates
+  when usage reports the 12-hour partition. Background completion-window discounts
+  and regional processing premiums are not represented.
 - GPT-6 Astra: Standard rates of `$10` input, `$1` cache reads, `$12.50`
   cache writes, and `$50` output per million tokens. Above 272,000 input
   tokens, input/cache rates double and output is 1.5× for the full request.
@@ -123,8 +121,7 @@ The bundled catalog currently includes:
   2× the applicable rates; Copilot uses Standard, as it exposes no service tiers.
   Codex and Copilot costs are API-equivalent estimates, not subscription charges.
   The published 12-hour cache-write rate is `$2.50` before tier/context
-  adjustments, but the calculator does not distinguish OpenAI cache retention
-  durations and uses the 30-minute tariff for reported cache writes. Regional
+  adjustments and is applied when usage reports the 12-hour partition. Regional
   processing premiums are not represented.
 - GPT-5.6 Sol, Terra, and Luna, with Standard, Flex, and Fast short/long-context
   rates.
@@ -324,6 +321,33 @@ precedence over the requested tier, so Fast requests processed at Standard
 speed use Standard rates. Unknown models and incomplete token partitions are
 labeled unpriced instead of being counted as free.
 
+OpenAI cache-write lifetimes use the optional catalog rate `cache_write_12h`
+alongside `cache_write` (30 minutes); `cache_write_1h` remains Anthropic-style
+one-hour pricing, not an alias for 12 hours. Both optional extended rates require
+a `cache_write` rate. The additive fields retain the `fast-agent.pricing/v1` schema.
+The November 17, 2026 OpenAI Standard/Batch/Flex/Fast tables verify 12-hour rates
+for the existing GPT-6 Astra/Sol/Luna, GPT-6.1 Sol/Terra, and GPT-6.2 Astra/Sol
+rules (GPT-6.2 has no Flex rule). Short-context Standard 12-hour writes cost
+`$25`, `$5`, `$0.25`, `$5`, `$2.50`, `$20`, and `$5` per million, respectively.
+Long-context rates are doubled for the entire request above 272,000 input tokens;
+Batch/Flex halve and Fast doubles the applicable rate. Existing provider matches
+are unchanged: Codex/Copilot values remain API-equivalent estimates, not
+subscription charges or availability claims. No 12-hour rate is inferred for
+other models/providers, including GPT-5.6.
+
+The calculator reads `input_tokens_details.cache_write_tokens_details` from
+fast-agent's preserved `raw_usage` (also accepted under `prompt_tokens_details`
+for Chat-compatible usage). `ttl_30m_tokens` and `ttl_12h_tokens` must both be
+non-negative integers summing to the canonical aggregate cache-write count.
+They are disjoint billed writes: the aggregate is **not** added again. Cache
+reads and ordinary input are priced separately. Missing or null optional lifetime details retain
+the legacy aggregate/default-write tariff, so old records cannot distinguish
+12-hour writes. Present but partial, malformed, inconsistent, or unknown TTL
+details are unpriced, as are positive 12-hour writes without an explicit
+`cache_write_12h` rate. Provider-reported dollar costs still take precedence.
+Generic aggregate-only writes retain their normal-input fallback when no
+separate write tariff exists.
+
 Anthropic cache-creation usage includes separate 5-minute and 1-hour token
 counts. The calculator applies each tariff when that provider detail is
 complete; older usage records without a complete split use the default
@@ -338,6 +362,9 @@ rate.
 Primary pricing sources:
 
 - [OpenAI API pricing](https://developers.openai.com/api/docs/pricing)
+  (GPT-6 family 30-minute/12-hour, context and tier tables checked November 17, 2026)
+- [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)
+  (lifetime accounting and non-overlapping usage partitions, checked November 17, 2026)
 - [GPT-6.1 Terra model pricing](https://developers.openai.com/api/docs/models/gpt-6.1-terra)
   (Terra model and API pricing pages checked October 26, 2026)
 - [Anthropic pricing](https://platform.claude.com/docs/en/about-claude/pricing)
