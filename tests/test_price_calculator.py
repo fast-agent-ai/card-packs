@@ -375,6 +375,36 @@ class PriceCalculatorTests(unittest.TestCase):
                 self.assertEqual(0, copilot.unpriced_calls)
                 self.assertEqual(reference.usd, copilot.usd)
 
+    def test_gemini4_rates_respect_route_tier_and_promotion_end(self):
+        boundary = datetime(2026, 12, 1, tzinfo=UTC).timestamp()
+        # One million each of uncached, cached and output tokens.
+        cases = [
+            ("argon", "google", "standard", -1, 12.10),
+            ("argon", "google", "standard", 0, 24.20),
+            ("carbon", "google", "flex", -1, 6.05),
+            ("carbon", "google", "batch", 0, 12.10),
+            ("argon", "google", "priority", 0, 43.56),
+            ("argon", "copilot", "default", -1, 12.10),
+            ("argon", "copilot", "default", 0, None),
+            ("carbon", "copilot", "standard", 0, 24.20),
+            ("hydrogen", "google", "flex", 0, 4.5375),
+            ("hydrogen", "copilot", "standard", 0, 9.075),
+            ("hydrogen", "copilot", "flex", 0, None),
+            ("carbon", "responses", "default", -1, None),
+        ]
+        for variant, provider, tier, offset, expected in cases:
+            with self.subTest(variant=variant, provider=provider, tier=tier, offset=offset):
+                turn = _turn(
+                    f"gemini-4-{variant}", prompt=2_000_000, cached=1_000_000,
+                    output=1_000_000, provider=provider, tier=tier, timestamp=boundary + offset,
+                )
+                price = self.plugin.calculate_price((turn,))
+                if expected is None:
+                    self.assertEqual(1, price.unpriced_calls)
+                else:
+                    self.assertEqual(0, price.unpriced_calls)
+                    self.assertAlmostEqual(expected, price.usd)
+
     def test_zai_glm_53_family_rates_and_flash_promotion(self):
         promotion_end = datetime(2026, 9, 9, 16, tzinfo=UTC).timestamp()
 

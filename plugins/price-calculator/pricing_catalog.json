@@ -1,9 +1,115 @@
 {
   "schema": "fast-agent.pricing/v1",
-  "catalog_version": "2026-11-17.2",
+  "catalog_version": "2026-11-17.3",
   "currency": "USD",
   "unit": "usd_per_million_tokens",
   "rules": [
+    {
+      "id": "gemini-4-argon-carbon-standard-intro",
+      "match": {
+        "model": {"values": ["gemini-4-argon", "gemini-4-carbon"]},
+        "providers": ["google", "copilot"],
+        "service_tiers": ["standard"]
+      },
+      "effective": {"until": "2026-12-01T00:00:00Z"},
+      "rates": {"input": "2.00", "cache_read": "0.10", "output": "10.00"}
+    },
+    {
+      "id": "gemini-4-argon-carbon-flex-intro",
+      "match": {
+        "model": {"values": ["gemini-4-argon", "gemini-4-carbon"]},
+        "providers": ["google"],
+        "service_tiers": ["flex", "batch"]
+      },
+      "effective": {"until": "2026-12-01T00:00:00Z"},
+      "rates": {"input": "1.00", "cache_read": "0.05", "output": "5.00"}
+    },
+    {
+      "id": "gemini-4-argon-carbon-priority-intro",
+      "match": {
+        "model": {"values": ["gemini-4-argon", "gemini-4-carbon"]},
+        "providers": ["google"],
+        "service_tiers": ["priority"]
+      },
+      "effective": {"until": "2026-12-01T00:00:00Z"},
+      "rates": {"input": "3.60", "cache_read": "0.18", "output": "18.00"}
+    },
+    {
+      "id": "gemini-4-argon-carbon-standard-list",
+      "match": {
+        "model": {"values": ["gemini-4-argon", "gemini-4-carbon"]},
+        "providers": ["google"],
+        "service_tiers": ["standard"]
+      },
+      "effective": {"from": "2026-12-01T00:00:00Z"},
+      "rates": {"input": "4.00", "cache_read": "0.20", "output": "20.00"}
+    },
+    {
+      "id": "gemini-4-argon-carbon-flex-list",
+      "match": {
+        "model": {"values": ["gemini-4-argon", "gemini-4-carbon"]},
+        "providers": ["google"],
+        "service_tiers": ["flex", "batch"]
+      },
+      "effective": {"from": "2026-12-01T00:00:00Z"},
+      "rates": {"input": "2.00", "cache_read": "0.10", "output": "10.00"}
+    },
+    {
+      "id": "gemini-4-argon-carbon-priority-list",
+      "match": {
+        "model": {"values": ["gemini-4-argon", "gemini-4-carbon"]},
+        "providers": ["google"],
+        "service_tiers": ["priority"]
+      },
+      "effective": {"from": "2026-12-01T00:00:00Z"},
+      "rates": {"input": "7.20", "cache_read": "0.36", "output": "36.00"}
+    },
+    {
+      "id": "copilot-gemini-4-carbon-standard-list",
+      "match": {
+        "model": {"values": ["gemini-4-carbon"]},
+        "providers": ["copilot"],
+        "service_tiers": ["standard"]
+      },
+      "effective": {"from": "2026-12-01T00:00:00Z"},
+      "rates": {"input": "4.00", "cache_read": "0.20", "output": "20.00"}
+    },
+    {
+      "id": "gemini-4-hydrogen-standard",
+      "match": {
+        "model": {"values": ["gemini-4-hydrogen"]},
+        "providers": ["google", "copilot"],
+        "service_tiers": ["standard"]
+      },
+      "rates": {"input": "1.50", "cache_read": "0.075", "output": "7.50"}
+    },
+    {
+      "id": "gemini-4-hydrogen-batch",
+      "match": {
+        "model": {"values": ["gemini-4-hydrogen"]},
+        "providers": ["google"],
+        "service_tiers": ["batch", "flex", "contributor"]
+      },
+      "rates": {"input": "0.75", "cache_read": "0.0375", "output": "3.75"}
+    },
+    {
+      "id": "gemini-4-hydrogen-priority",
+      "match": {
+        "model": {"values": ["gemini-4-hydrogen"]},
+        "providers": ["google"],
+        "service_tiers": ["priority"]
+      },
+      "rates": {"input": "2.70", "cache_read": "0.135", "output": "13.50"}
+    },
+    {
+      "id": "gemini-4-argon-contributor",
+      "match": {
+        "model": {"values": ["gemini-4-argon"]},
+        "providers": ["google"],
+        "service_tiers": ["contributor"]
+      },
+      "rates": {"input": "1.00", "cache_read": "0.05", "output": "5.00"}
+    },
     {
       "id": "gpt-6.2-astra-standard-short",
       "match": {

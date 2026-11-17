@@ -71,6 +71,18 @@ provider-neutral fallbacks.
 
 The bundled catalog currently includes:
 
+- Gemini 4 Argon, Carbon and Hydrogen: paid list rates per million tokens,
+  checked November 17, 2026 against [Google](https://aistudio.google.com/docs/pricing)
+  and [GitHub Copilot](https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing).
+  Standard input / cached input / output (including thinking) is `$2 / $0.10 / $10`
+  for Argon and Carbon through November 30, then `$4 / $0.20 / $20` on Google and
+  Copilot Carbon. GitHub gives no replacement rate for Copilot Argon, so that
+  route is unpriced from December 1. Hydrogen is `$1.50 / $0.075 / $7.50`.
+  Google Batch and Flex use 50% of Standard; Priority uses 180%. Contributor
+  rates apply only to an explicitly reported Contributor tier (Argon and Hydrogen).
+  Copilot matches Standard only. These are token estimates, not invoices;
+  account free quotas, grounding queries and other non-token charges are excluded.
+
 - GPT-6.2 Astra and GPT-6.2 Sol: published OpenAI rates checked November 17,
   2026 ([pricing](https://developers.openai.com/api/docs/pricing),
   [Astra](https://developers.openai.com/api/docs/models/gpt-6.2-astra),
