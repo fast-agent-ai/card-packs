@@ -88,9 +88,9 @@
       "repo_url": "https://github.com/fast-agent-ai/card-packs",
       "repo_ref": "main",
       "repo_path": "plugins/price-calculator",
-      "version": "0.3.30",
+      "version": "0.3.31",
       "requires_fast_agent": ">=0.10.2",
-      "path_oid": "dda1e351604a923eed734f18a64e4cd1d971803e"
+      "path_oid": "83660bb16e435d54f673b6eb3aee37b85b8ea28c"
     },
     {
       "name": "llm-perf",

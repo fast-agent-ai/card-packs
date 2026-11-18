@@ -1,9 +1,36 @@
 {
   "schema": "fast-agent.pricing/v1",
-  "catalog_version": "2026-11-17.3",
+  "catalog_version": "2026-11-18.1",
   "currency": "USD",
   "unit": "usd_per_million_tokens",
   "rules": [
+    {
+      "id": "gemini-4-neon-standard",
+      "match": {
+        "model": {"values": ["gemini-4-neon"]},
+        "providers": ["google", "copilot"],
+        "service_tiers": ["standard"]
+      },
+      "rates": {"input": "3.00", "cache_read": "0.15", "output": "15.00"}
+    },
+    {
+      "id": "gemini-4-neon-batch",
+      "match": {
+        "model": {"values": ["gemini-4-neon"]},
+        "providers": ["google"],
+        "service_tiers": ["batch", "flex"]
+      },
+      "rates": {"input": "1.50", "cache_read": "0.075", "output": "7.50"}
+    },
+    {
+      "id": "gemini-4-neon-priority",
+      "match": {
+        "model": {"values": ["gemini-4-neon"]},
+        "providers": ["google"],
+        "service_tiers": ["priority"]
+      },
+      "rates": {"input": "5.40", "cache_read": "0.27", "output": "27.00"}
+    },
     {
       "id": "gemini-4-argon-carbon-standard-intro",
       "match": {

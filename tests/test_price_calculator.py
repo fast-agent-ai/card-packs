@@ -390,6 +390,13 @@ class PriceCalculatorTests(unittest.TestCase):
             ("hydrogen", "google", "flex", 0, 4.5375),
             ("hydrogen", "copilot", "standard", 0, 9.075),
             ("hydrogen", "copilot", "flex", 0, None),
+            ("neon", "google", "standard", 0, 18.15),
+            ("neon", "copilot", "default", 0, 18.15),
+            ("neon", "google", "flex", 0, 9.075),
+            ("neon", "google", "batch", -1, 9.075),
+            ("neon", "google", "priority", 0, 32.67),
+            ("neon", "google", "contributor", 0, None),
+            ("neon", "copilot", "flex", 0, None),
             ("carbon", "responses", "default", -1, None),
         ]
         for variant, provider, tier, offset, expected in cases:

@@ -71,6 +71,13 @@ provider-neutral fallbacks.
 
 The bundled catalog currently includes:
 
+- Gemini 4 Neon: paid list rates per million tokens, checked November 18, 2026
+  against [Google](https://aistudio.google.com/docs/pricing) and
+  [GitHub Copilot](https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing).
+  Standard input / cached input / output (including thinking) is `$3 / $0.15 / $15`
+  on Google and Copilot. Google Batch and Flex are `$1.50 / $0.075 / $7.50`;
+  Priority is `$5.40 / $0.27 / $27`. Neon has no Free or Contributor tier.
+
 - Gemini 4 Argon, Carbon and Hydrogen: paid list rates per million tokens,
   checked November 17, 2026 against [Google](https://aistudio.google.com/docs/pricing)
   and [GitHub Copilot](https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing).
