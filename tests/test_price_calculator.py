@@ -3002,6 +3002,32 @@ class PriceCalculatorTests(unittest.TestCase):
             ),
         )
 
+    def test_tencent_hy4_flash_pricing(self):
+        # 1M uncached input ($0.035) + 1M cached input ($0.0015) + 1M output ($0.1405) = $0.177
+        expected = 0.035 + 0.0015 + 0.1405
+        cases = [
+            ("tencent-eval", "hy4-flash-dev", expected),
+            ("tencent-eval", "tencent-eval.hy4-flash-dev", expected),
+            ("openrouter", "tencent/hy4-flash", expected),
+            ("openrouter", "tencent/hy4-flash-20261116", expected),
+            ("openai", "hy4-flash-dev", None),
+        ]
+        for provider, model, expected_cost in cases:
+            with self.subTest(provider=provider, model=model):
+                turn = _turn(
+                    model,
+                    prompt=2_000_000,
+                    cached=1_000_000,
+                    output=1_000_000,
+                    provider=provider,
+                )
+                price = self.plugin.calculate_price((turn,))
+                if expected_cost is None:
+                    self.assertEqual(1, price.unpriced_calls)
+                else:
+                    self.assertEqual(0, price.unpriced_calls)
+                    self.assertAlmostEqual(expected_cost, price.usd)
+
     def test_marketplace_registers_plugin(self):
         root = Path(__file__).resolve().parents[1]
         marketplace = json.loads(

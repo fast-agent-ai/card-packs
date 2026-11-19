@@ -2223,6 +2223,31 @@
         "cache_read": "0.40",
         "output": "4.00"
       }
+    },
+    {
+      "id": "tencent-hy4-flash",
+      "match": {
+        "model": {
+          "values": [
+            "hy4-flash-dev",
+            "hy4-flash",
+            "hy4-flash-20261116"
+          ],
+          "strip_prefixes": [
+            "tencent-eval.",
+            "tencent/"
+          ]
+        },
+        "providers": [
+          "tencent-eval",
+          "openrouter"
+        ]
+      },
+      "rates": {
+        "input": "0.035",
+        "cache_read": "0.0015",
+        "output": "0.1405"
+      }
     }
   ]
 }
