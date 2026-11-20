@@ -3006,20 +3006,57 @@ class PriceCalculatorTests(unittest.TestCase):
         # 1M uncached input ($0.035) + 1M cached input ($0.0015) + 1M output ($0.1405) = $0.177
         expected = 0.035 + 0.0015 + 0.1405
         cases = [
-            ("tencent-eval", "hy4-flash-dev", expected),
-            ("tencent-eval", "tencent-eval.hy4-flash-dev", expected),
-            ("openrouter", "tencent/hy4-flash", expected),
-            ("openrouter", "tencent/hy4-flash-20261116", expected),
-            ("openai", "hy4-flash-dev", None),
+            ("tencent-eval", "hy4-flash-dev", None, expected),
+            ("tencent-eval", "tencent-eval.hy4-flash-dev", None, expected),
+            ("openrouter", "tencent/hy4-flash", None, expected),
+            ("openrouter", "tencent/hy4-flash-20261116", None, expected),
+            ("hf", "tencent/Hy4-flash", "tencent", expected),
+            ("hf", "tencent/Hy4-flash:tencent", "tencent", expected),
+            ("hf", "tencent/Hy4-flash", None, None),
+            ("hf", "tencent/Hy4-flash:together", "together", None),
+            ("openai", "hy4-flash-dev", None, None),
         ]
-        for provider, model, expected_cost in cases:
-            with self.subTest(provider=provider, model=model):
+        for provider, model, upstream, expected_cost in cases:
+            with self.subTest(provider=provider, model=model, upstream=upstream):
                 turn = _turn(
                     model,
                     prompt=2_000_000,
                     cached=1_000_000,
                     output=1_000_000,
                     provider=provider,
+                    upstream_provider=upstream,
+                )
+                price = self.plugin.calculate_price((turn,))
+                if expected_cost is None:
+                    self.assertEqual(1, price.unpriced_calls)
+                else:
+                    self.assertEqual(0, price.unpriced_calls)
+                    self.assertAlmostEqual(expected_cost, price.usd)
+
+    def test_tencent_hy4_pricing(self):
+        # 1M uncached input + 1M cached input + 1M output
+        tencent_expected = 0.417 + 0.021 + 1.2505
+        together_expected = 0.834 + 0.042 + 2.501
+        cases = [
+            ("hf", "tencent/Hy4", "tencent", tencent_expected),
+            ("hf", "tencent/Hy4:tencent", "tencent", tencent_expected),
+            ("hf", "tencent/Hy4", "together", together_expected),
+            ("hf", "tencent/Hy4:together", "together", together_expected),
+            ("hf", "tencent/Hy4", None, None),
+            ("hf", "tencent/Hy4:deepinfra", "deepinfra", None),
+            ("openrouter", "tencent/hy4", None, tencent_expected),
+            ("openrouter", "tencent/hy4-20261104", None, tencent_expected),
+            ("openai", "tencent/Hy4", None, None),
+        ]
+        for provider, model, upstream, expected_cost in cases:
+            with self.subTest(provider=provider, model=model, upstream=upstream):
+                turn = _turn(
+                    model,
+                    prompt=2_000_000,
+                    cached=1_000_000,
+                    output=1_000_000,
+                    provider=provider,
+                    upstream_provider=upstream,
                 )
                 price = self.plugin.calculate_price((turn,))
                 if expected_cost is None:

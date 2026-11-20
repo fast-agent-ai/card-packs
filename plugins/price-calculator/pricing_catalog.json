@@ -1,6 +1,6 @@
 {
   "schema": "fast-agent.pricing/v1",
-  "catalog_version": "2026-11-18.1",
+  "catalog_version": "2026-11-20.1",
   "currency": "USD",
   "unit": "usd_per_million_tokens",
   "rules": [
@@ -2247,6 +2247,94 @@
         "input": "0.035",
         "cache_read": "0.0015",
         "output": "0.1405"
+      }
+    },
+    {
+      "id": "tencent-hy4-flash-hf-tencent",
+      "match": {
+        "model": {
+          "values": [
+            "tencent/hy4-flash"
+          ],
+          "strip_after": ":"
+        },
+        "providers": [
+          "hf"
+        ],
+        "upstream_providers": [
+          "tencent"
+        ]
+      },
+      "rates": {
+        "input": "0.035",
+        "cache_read": "0.0015",
+        "output": "0.1405"
+      }
+    },
+    {
+      "id": "tencent-hy4",
+      "match": {
+        "model": {
+          "values": [
+            "hy4",
+            "hy4-20261104"
+          ],
+          "strip_prefixes": [
+            "tencent/"
+          ]
+        },
+        "providers": [
+          "openrouter"
+        ]
+      },
+      "rates": {
+        "input": "0.417",
+        "cache_read": "0.021",
+        "output": "1.2505"
+      }
+    },
+    {
+      "id": "tencent-hy4-hf-tencent",
+      "match": {
+        "model": {
+          "values": [
+            "tencent/hy4"
+          ],
+          "strip_after": ":"
+        },
+        "providers": [
+          "hf"
+        ],
+        "upstream_providers": [
+          "tencent"
+        ]
+      },
+      "rates": {
+        "input": "0.417",
+        "cache_read": "0.021",
+        "output": "1.2505"
+      }
+    },
+    {
+      "id": "tencent-hy4-hf-together",
+      "match": {
+        "model": {
+          "values": [
+            "tencent/hy4"
+          ],
+          "strip_after": ":"
+        },
+        "providers": [
+          "hf"
+        ],
+        "upstream_providers": [
+          "together"
+        ]
+      },
+      "rates": {
+        "input": "0.834",
+        "cache_read": "0.042",
+        "output": "2.501"
       }
     }
   ]

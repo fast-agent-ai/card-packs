@@ -71,12 +71,23 @@ provider-neutral fallbacks.
 
 The bundled catalog currently includes:
 
-- Tencent Hy4-flash (`hy4-flash-dev`, `tencent/hy4-flash`,
+- Tencent Hy4 (`tencent/Hy4`, `tencent/hy4`, `tencent/hy4-20261104`): through
+  Hugging Face (`provider=hf`) and `openrouter` fallback pricing, checked
+  November 20, 2026 against [Hugging Face's router model listing](https://router.huggingface.co/v1/models)
+  and [OpenRouter's Tencent Hy4 endpoints](https://openrouter.ai/tencent/hy4).
+  Tencent first-party (`upstream_provider=tencent`, `tencent/fp4` with its listed
+  50% promotional discount) and `openrouter` fallback are `$0.417` input,
+  `$0.021` cache reads, and `$1.2505` output per million tokens; Hugging Face
+  Together (`upstream_provider=together`) is `$0.834` input, `$0.042` cache
+  reads, and `$2.501` output.
+- Tencent Hy4-flash (`hy4-flash-dev`, `tencent/Hy4-flash`, `tencent/hy4-flash`,
   `tencent/hy4-flash-20261116`): `$0.035` input, `$0.0015` cache reads, and
-  `$0.1405` output per million tokens, checked November 19, 2026 against
+  `$0.1405` output per million tokens, checked November 19–20, 2026 against
   [OpenRouter's Tencent first-party endpoint](https://openrouter.ai/tencent/hy4-flash)
-  (`tencent/fp8`, reflecting its listed 50% promotional discount). Applied to
-  `tencent-eval` (as API-equivalent estimates) and `openrouter` fallback pricing.
+  (`tencent/fp8`, reflecting its listed 50% promotional discount) and Hugging
+  Face's router model listing. Applied to `tencent-eval` (as API-equivalent
+  estimates), `hf` (`upstream_provider=tencent`), and `openrouter` fallback
+  pricing.
 - Gemini 4 Neon: paid list rates per million tokens, checked November 18, 2026
   against [Google](https://aistudio.google.com/docs/pricing) and
   [GitHub Copilot](https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing).
@@ -398,5 +409,7 @@ Primary pricing sources:
 - [DeepSeek pricing](https://api-docs.deepseek.com/quick_start/pricing/)
 - [xAI models and pricing](https://docs.x.ai/developers/models)
 - [Hugging Face inference provider pricing](https://huggingface.co/docs/inference-providers/pricing)
+- [OpenRouter Tencent Hy4](https://openrouter.ai/tencent/hy4)
+  (Tencent first-party `tencent/fp4` and Together `tencent/hy4-20261104` endpoints checked November 20, 2026)
 - [OpenRouter Tencent Hy4-flash](https://openrouter.ai/tencent/hy4-flash)
-  (Tencent first-party `tencent/hy4-flash-20261116` endpoint checked November 19, 2026)
+  (Tencent first-party `tencent/hy4-flash-20261116` endpoint checked November 19–20, 2026)
