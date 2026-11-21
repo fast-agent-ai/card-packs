@@ -1,12 +1,12 @@
 schema_version: 2
 name: mermaid-render
-version: 0.1.0
+version: 0.1.1
 requires_fast_agent: ">=0.10.43"
 description: Render fenced Mermaid diagrams locally with merman-cli (PNG or Unicode text).
 commands:
   mermaid:
     description: Render Mermaid diagrams, configure settings, or install merman-cli
-    input_hint: "[image|text] [index] | on|off | mode|theme|background | status | install"
+    input_hint: "[image|text] [index] | test [image|text] | on|off | mode|theme|background | status | install"
     handler: ./mermaid_render.py:mermaid_command
     completer: ./mermaid_render.py:complete_mermaid
 hooks:

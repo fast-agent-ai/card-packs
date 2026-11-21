@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -30,7 +31,9 @@ FLOW = "graph LR\n  A[User] --> B[fast-agent]"
 
 
 @pytest.fixture
-def plugin():
+def plugin(monkeypatch):
+    monkeypatch.delenv("HC_TERMINAL_ID", raising=False)
+    monkeypatch.delenv("HC_TERMINAL_SOCKET", raising=False)
     spec = importlib.util.spec_from_file_location(
         "test_mermaid_render_plugin", PLUGIN / "mermaid_render.py"
     )
@@ -116,7 +119,7 @@ def test_merman_image_render_and_cache(plugin, monkeypatch, tmp_path):
         assert flags["-t"] == "dark"
         assert flags["-b"] == "#1e1e2e"
         Path(flags["-o"]).write_bytes(PNG)
-        return SimpleNamespace(wait=AsyncMock(return_value=0), returncode=0)
+        return SimpleNamespace(communicate=AsyncMock(return_value=(b"", b"")), returncode=0)
 
     monkeypatch.setattr(plugin.asyncio, "create_subprocess_exec", AsyncMock(side_effect=spawn))
 
@@ -128,19 +131,125 @@ def test_merman_image_render_and_cache(plugin, monkeypatch, tmp_path):
     assert Path(first.images[0].source).read_bytes() == PNG
 
 
-def test_merman_text_render_and_post_turn_escaping(plugin, monkeypatch, tmp_path):
+def test_merman_image_captures_stderr_and_font_fallback(plugin, monkeypatch, tmp_path):
     monkeypatch.setattr(plugin, "_find_merman", lambda: "/tools/merman-cli")
+    monkeypatch.setattr(plugin, "_resolve_fallback_font", lambda: "/fonts/Fallback.ttf")
+
+    # 1. system-cmap-bytes triggers automatic retry with --font-file
+    seen_args: list[tuple[str, ...]] = []
+
+    async def spawn_font_fallback(executable, subcommand, *args, **kwargs):
+        seen_args.append(args)
+        flags = dict(zip(args[::2], args[1::2], strict=True))
+        if "--font-file" not in flags:
+            return SimpleNamespace(
+                communicate=AsyncMock(
+                    return_value=(
+                        b"",
+                        b"I/O error: native font limit system-cmap-bytes exceeded: 16818872 > 16777216\n",
+                    )
+                ),
+                returncode=3,
+            )
+        assert flags["--font-file"] == "/fonts/Fallback.ttf"
+        Path(flags["-o"]).write_bytes(PNG)
+        return SimpleNamespace(communicate=AsyncMock(return_value=(b"", b"")), returncode=0)
+
+    monkeypatch.setattr(
+        plugin.asyncio, "create_subprocess_exec", AsyncMock(side_effect=spawn_font_fallback)
+    )
+    ok = run_command(plugin, "", [message(fence(FLOW))], tmp_path)
+    assert len(seen_args) == 2
+    assert len(ok.images) == 1
+
+    # 2. Other mmdc failures surface stderr detail (escaped for Rich)
+    async def spawn_parse_error(executable, subcommand, *args, **kwargs):
+        return SimpleNamespace(
+            communicate=AsyncMock(
+                return_value=(b"", b"Diagram parse error: Unterminated node label (missing `]`)\n")
+            ),
+            returncode=1,
+        )
+
+    monkeypatch.setattr(
+        plugin.asyncio, "create_subprocess_exec", AsyncMock(side_effect=spawn_parse_error)
+    )
+    err = run_command(plugin, "", [message(fence("graph LR\n  A[bad"))], tmp_path)
+    assert not err.images
+    assert "Unterminated node label" in (err.message or "")
+
+
+def test_herdr_theme_palette_detection(plugin, monkeypatch, tmp_path):
+    herdr_cfg = tmp_path / "xdg" / "herdr-app"
+    (herdr_cfg / "themes").mkdir(parents=True)
+    (herdr_cfg / "settings.json").write_text(
+        json.dumps({"theme": "omarchy", "font": "TestMono"}), encoding="utf-8"
+    )
+    (herdr_cfg / "themes" / "omarchy.json").write_text(
+        json.dumps(
+            {
+                "background": "#060b1e",
+                "foreground": "#ffcead",
+                "colors": {"accent": "#7d82d9", "raised": "#131a3a", "surface": "#0b1129"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("HC_TERMINAL_ID", "t1")
+    monkeypatch.setattr(plugin, "_find_merman", lambda: "/tools/merman-cli")
+    monkeypatch.setattr(plugin, "_resolve_font_via_fc_match", lambda pat: "/fonts/TestMono.ttf")
+
+    captured_cfg: dict[str, object] = {}
 
     async def spawn(executable, subcommand, *args, **kwargs):
+        flags = dict(zip(args[::2], args[1::2], strict=True))
+        assert flags["-b"] == "#060b1e"
+        assert flags["--font-file"] == "/fonts/TestMono.ttf"
+        captured_cfg.update(json.loads(Path(flags["-c"]).read_text(encoding="utf-8")))
+        Path(flags["-o"]).write_bytes(PNG)
+        return SimpleNamespace(communicate=AsyncMock(return_value=(b"", b"")), returncode=0)
+
+    monkeypatch.setattr(plugin.asyncio, "create_subprocess_exec", AsyncMock(side_effect=spawn))
+
+    res = run_command(plugin, "", [message(fence(FLOW))], tmp_path / "cache")
+    assert len(res.images) == 1
+    assert captured_cfg["theme"] == "base"
+    assert captured_cfg["themeVariables"]["background"] == "#060b1e"
+    assert captured_cfg["themeVariables"]["primaryBorderColor"] == "#7d82d9"
+
+    status = run_command(plugin, "status", [], tmp_path / "cache")
+    assert "auto -> herdr (omarchy)" in (status.message or "")
+    assert "#060b1e (from herdr)" in (status.message or "")
+
+
+def test_merman_text_render_and_layout_profile_fallback(plugin, monkeypatch, tmp_path):
+    monkeypatch.setattr(plugin, "_find_merman", lambda: "/tools/merman-cli")
+    attempts = 0
+
+    async def spawn(executable, subcommand, *args, **kwargs):
+        nonlocal attempts
+        attempts += 1
         assert executable == "/tools/merman-cli"
         assert subcommand == "render"
         assert "--format" in args and "unicode" in args
+        if "--ascii-layout-profile" in args:
+            return SimpleNamespace(
+                communicate=AsyncMock(
+                    return_value=(
+                        b"",
+                        b"invalid ASCII render option `layout_profile`: is not admitted for this diagram family\n",
+                    )
+                ),
+                returncode=1,
+            )
         box = "┌──────┐   ┌────┐\n│[bold]│──►│[B] │\n└──────┘   └────┘\n".encode("utf-8")
         return SimpleNamespace(communicate=AsyncMock(return_value=(box, b"")), returncode=0)
 
     monkeypatch.setattr(plugin.asyncio, "create_subprocess_exec", AsyncMock(side_effect=spawn))
 
     cmd = run_command(plugin, "text", [message(fence(FLOW))], tmp_path)
+    assert attempts == 2
     assert not cmd.images
     assert "┌──────┐" in (cmd.message or "")
 
@@ -150,6 +259,35 @@ def test_merman_text_render_and_post_turn_escaping(plugin, monkeypatch, tmp_path
     assert out is not None
     assert not out.images
     assert "\\[bold]" in (out.display or "")
+
+
+def test_mermaid_test_subcommand_and_usage_escaping(plugin, monkeypatch, tmp_path):
+    monkeypatch.setattr(plugin, "_find_merman", lambda: "/tools/merman-cli")
+
+    async def spawn(executable, subcommand, *args, **kwargs):
+        if subcommand == "mmdc":
+            flags = dict(zip(args[::2], args[1::2], strict=True))
+            Path(flags["-o"]).write_bytes(PNG)
+            return SimpleNamespace(communicate=AsyncMock(return_value=(b"", b"")), returncode=0)
+        return SimpleNamespace(
+            communicate=AsyncMock(return_value=(b"[ok]\n", b"")),
+            returncode=0,
+        )
+
+    monkeypatch.setattr(plugin.asyncio, "create_subprocess_exec", AsyncMock(side_effect=spawn))
+
+    res_img = run_command(plugin, "test", [], tmp_path)
+    assert len(res_img.images) == 3
+
+    res_txt = run_command(plugin, "test text", [], tmp_path)
+    assert not res_txt.images
+    assert "Flowchart (test)" in (res_txt.message or "")
+    assert "Sequence (test)" in (res_txt.message or "")
+    assert "State (test)" in (res_txt.message or "")
+
+    usage = run_command(plugin, "bogus", [], tmp_path)
+    assert "\\[image|text]" in (usage.message or "")
+    assert "\\[index]" in (usage.message or "")
 
 
 def test_session_config_commands_and_status(plugin, monkeypatch, tmp_path):
@@ -213,7 +351,7 @@ def test_post_turn_images_and_cross_loader_overrides(plugin, monkeypatch, tmp_pa
     async def spawn(executable, subcommand, *args, **kwargs):
         flags = dict(zip(args[::2], args[1::2], strict=True))
         Path(flags["-o"]).write_bytes(PNG)
-        return SimpleNamespace(wait=AsyncMock(return_value=0), returncode=0)
+        return SimpleNamespace(communicate=AsyncMock(return_value=(b"", b"")), returncode=0)
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", AsyncMock(side_effect=spawn))
 
@@ -266,6 +404,15 @@ def test_completer(plugin):
     )
     assert [c.value for c in plugin.complete_mermaid(ctx)] == ["install"]
 
+    ctx_test = PluginCommandCompletionContext(
+        command_name="mermaid",
+        arguments="te",
+        current_token="te",
+        completed_tokens=(),
+        agent=SimpleNamespace(message_history=[]),
+    )
+    assert set(c.value for c in plugin.complete_mermaid(ctx_test)) == {"test", "text"}
+
     ctx_mode = PluginCommandCompletionContext(
         command_name="mermaid",
         arguments="mode ",
@@ -274,3 +421,12 @@ def test_completer(plugin):
         agent=SimpleNamespace(message_history=[]),
     )
     assert [c.value for c in plugin.complete_mermaid(ctx_mode)] == ["image", "text"]
+
+    ctx_test_mode = PluginCommandCompletionContext(
+        command_name="mermaid",
+        arguments="test ",
+        current_token="",
+        completed_tokens=("test",),
+        agent=SimpleNamespace(message_history=[]),
+    )
+    assert [c.value for c in plugin.complete_mermaid(ctx_test_mode)] == ["image", "text"]
