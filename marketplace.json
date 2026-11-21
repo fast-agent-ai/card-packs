@@ -103,6 +103,16 @@
       "requires_fast_agent": ">=0.10.43"
     },
     {
+      "name": "usage-tracker",
+      "description": "Track model usage, estimated cost, latency, and tool time across sessions with social-ready ASCII charts",
+      "repo_url": "https://github.com/fast-agent-ai/card-packs",
+      "repo_ref": "main",
+      "repo_path": "plugins/usage-tracker",
+      "version": "0.1.0",
+      "requires_fast_agent": ">=0.10.43",
+      "path_oid": "01452dcb7f2f040ae46b39ef5146f811d68ba158"
+    },
+    {
       "name": "mermaid-render",
       "description": "Render fenced Mermaid diagrams locally with merman-cli (PNG or Unicode text)",
       "repo_url": "https://github.com/fast-agent-ai/card-packs",

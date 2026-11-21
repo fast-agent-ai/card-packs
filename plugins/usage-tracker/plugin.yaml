@@ -1,0 +1,23 @@
+schema_version: 2
+name: usage-tracker
+version: 0.1.0
+requires_fast_agent: ">=0.10.43"
+description: Track model usage, estimated cost, latency, and tool time across sessions with social-ready ASCII charts.
+commands:
+  stats:
+    description: Show machine-wide usage, perf, and tool ASCII cards, sweep sessions, or update pricing
+    input_hint: "[7d|30d|90d|all|share|perf|tools|sweep <dir>|pricing]"
+    handler: ./usage_tracker.py:stats_command
+    completer: ./usage_tracker.py:complete_stats
+  cost:
+    description: Show current session model cost by user turn, or a detailed provider-call ledger
+    input_hint: "[summary|detail]"
+    handler: ./usage_tracker.py:cost_command
+    completer: ./usage_tracker.py:complete_cost
+  performance:
+    description: Show where current session turn time went (wait, stream, tools, process waits) with TTFT and tok/s
+    input_hint: "[summary|detail]"
+    handler: ./usage_tracker.py:performance_command
+    completer: ./usage_tracker.py:complete_performance
+hooks:
+  post_user_turn: ./usage_tracker.py:on_post_user_turn
