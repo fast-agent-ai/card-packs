@@ -118,6 +118,50 @@ def model_colors(names: Sequence[str]) -> dict[str, str]:
     return colors
 
 
+# -- model families --------------------------------------------------------------
+
+_ORG_PREFIX = re.compile(r"^[A-Za-z0-9_.-]+/(?=[A-Za-z0-9])")
+_CLAUDE_TIERS = frozenset({"opus", "sonnet", "haiku"})
+
+
+def model_family(name: str) -> tuple[str, bool]:
+    """``(family, has_minor_version)`` for a model name.
+
+    The family is the vendor's model line plus its major version when the name
+    leads with one: ``gemini-4-neon`` -> ``gemini-4``, ``gpt-6.1-sol`` ->
+    ``gpt-6`` (with a minor version), ``claude-opus-5.5`` -> ``claude``.
+    """
+    text = _ORG_PREFIX.sub("", name.strip())
+    tokens = [token for token in re.split(r"[-_:@/ ]+", text) if token]
+    if not tokens:
+        return name.strip() or "unknown", False
+    head = tokens[0]
+    if head.casefold() in _CLAUDE_TIERS:
+        return "claude", False
+    if len(tokens) > 1 and re.fullmatch(r"\d+(?:\.\d+)*", tokens[1]):
+        major, _, minor = tokens[1].partition(".")
+        return f"{head}-{major}", bool(minor)
+    return head, False
+
+
+def family_labels(names: Sequence[str]) -> dict[str, str]:
+    """Display label of each model's family; ``gpt-6.*`` when minor versions are merged."""
+    families: dict[str, list[str]] = {}
+    minors: set[str] = set()
+    keys: dict[str, str] = {}
+    for name in names:
+        family, minor = model_family(name)
+        key = family.casefold()
+        families.setdefault(key, []).append(family)
+        keys[name] = key
+        if minor:
+            minors.add(key)
+    labels = {
+        key: members[0] + (".*" if key in minors else "") for key, members in families.items()
+    }
+    return {name: labels[key] for name, key in keys.items()}
+
+
 # -- geometry ------------------------------------------------------------------
 
 
@@ -328,12 +372,19 @@ def resample(values: Sequence[float], width: int) -> list[float]:
     return [values[min(n - 1, i * n // width)] for i in range(width)]
 
 
-def spark(values: Sequence[float], width: int, color: str, *, floor: str = "dim") -> Line:
-    """One-row sparkline; ``·`` where idle."""
+def spark(
+    values: Sequence[float],
+    width: int,
+    color: str,
+    *,
+    floor: str = "dim",
+    peak: float | None = None,
+) -> Line:
+    """One-row sparkline; ``·`` where idle.  ``peak`` fixes the scale (default: the max)."""
     points = resample([max(0.0, float(v)) for v in values], width)
     if not points:
         return [(" " * width, "")]
-    peak = max(points)
+    peak = max(points) if peak is None else peak
     out: Line = []
     for value in points:
         if peak <= 0 or value <= 0:
@@ -369,17 +420,25 @@ def heat_levels(cells: Sequence[Sequence[float]], steps: int = 4) -> list[list[i
     return out
 
 
-HEAT_STYLES = ("dim cyan", "cyan", "bright_cyan", "bold bright_white")
+# Heat is drawn as braille "bubbles" that grow with the value, like a punch
+# card: colour is limited to a few ANSI steps, but dot patterns give five
+# clearly ordered sizes, and they read the same with no colour at all.
+HEAT_STYLES = ("cyan", "cyan", "cyan", "bright_cyan", "bold bright_cyan")
 HEAT_STEPS = len(HEAT_STYLES)
-_HEAT_PLAIN = "░▒▓█"
+_HEAT_PAIRS = ("⠐⠂", "⠰⠆", "⠶⠶", "⢾⡷", "⣿⣿")  # centred on a two-cell slot
+_HEAT_SINGLES = ("⠂", "⠒", "⠶", "⣶", "⣿")
 
 
-def heat_cell(level: int, width: int = 1, glyph: str = "█") -> Seg:
-    """One heatmap cell for ``level`` in ``0..HEAT_STEPS``."""
+def heat_cell(level: int, width: int = 1) -> Seg:
+    """One heatmap slot (``width`` cells) for ``level`` in ``0..HEAT_STEPS``."""
     if level <= 0:
-        return ("·" * width, "dim")
+        return (" " * width, "")
     level = min(level, HEAT_STEPS)
-    return (glyph * width, HEAT_STYLES[level - 1], _HEAT_PLAIN[level - 1] * width)
+    if width < 2:
+        return (_HEAT_SINGLES[level - 1], HEAT_STYLES[level - 1])
+    left = (width - 2) // 2
+    glyph = " " * left + _HEAT_PAIRS[level - 1] + " " * (width - 2 - left)
+    return (glyph, HEAT_STYLES[level - 1])
 
 
 def range_plot(low: float | None, high: float | None, scale: float, width: int, color: str) -> Line:

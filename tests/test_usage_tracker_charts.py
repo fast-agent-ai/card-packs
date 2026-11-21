@@ -474,7 +474,7 @@ def test_usage_card_content() -> None:
         assert needle in plain
     assert "148.1M" in plain or "148.2M" in plain
     assert "78 t/s" in plain
-    assert "less ··░░▒▒▓▓██ more" in plain
+    assert "quiet ▁▂▃▄▅▆▇█ busy" in plain
     assert any(block in plain for block in "▁▂▃▄▅▆▇")
     assert "87% cached" in plain and "reasoning" in plain
     assert "▲▼ vs previous 30d" in plain and "tokens ▲" in plain
@@ -611,6 +611,64 @@ def test_only_standard_ansi_colours_are_used() -> None:
     assert {"bright_cyan", "green", "yellow", "on"} <= seen
     for name in (*viz.SERIES_COLORS, *viz.MACHINE_COLORS, viz.C_OTHER, *viz.HEAT_STYLES):
         assert set(name.split()) <= allowed, name
+
+
+def test_models_card_shows_shares_not_raw_token_counts() -> None:
+    data = SCENARIOS["7d"]
+    plain = charts.render_models_card(data, color=False)
+    assert "daily share" in plain and "tokens  " not in plain.split("models · 6 used")[1]
+    assert not re.search(r"\d(\.\d)?[kMB]\b", plain.replace("480b", ""))  # no 92.1M, 1.7M, ...
+    assert "$132.40" in plain  # cost is not a token count
+    with_totals = charts.render_models_card(data, color=False, totals=True)
+    assert "92.1M" in with_totals and "148.1M total" in with_totals and "26.6M" in with_totals
+    _assert_card(with_totals, charts.render_models_card(data, color=True, totals=True))
+    # Ranking by cost always shows what it ranks by.
+    assert "$214.60 total" in charts.render_models_card(data, color=False, metric="cost")
+
+
+def test_model_families_and_grouping() -> None:
+    names = [
+        "claude-opus-5.5", "claude-fable-5.2", "haiku-4-5", "claude-sonnet-4-5-20250929",
+        "gpt-6.1-sol", "gpt-6-astra", "gpt-5.6-terra", "gemini-4-neon", "gemini-4-carbon",
+        "moonshotai/Kimi-K3", "kimi-k3", "deepseek-v4-flash", "glm-5.2",
+    ]  # fmt: skip
+    labels = viz.family_labels(names)
+    assert {labels[n] for n in names[:4]} == {"claude"}
+    assert labels["gpt-6.1-sol"] == labels["gpt-6-astra"] == "gpt-6.*"
+    assert labels["gpt-5.6-terra"] == "gpt-5.*"
+    assert labels["gemini-4-neon"] == labels["gemini-4-carbon"] == "gemini-4"
+    assert labels["moonshotai/Kimi-K3"] == labels["kimi-k3"] == "Kimi"
+    assert labels["deepseek-v4-flash"] == "deepseek" and labels["glm-5.2"] == "glm-5.*"
+
+    models = (
+        _model("claude-opus-5.5", 60_000_000, calls=100, cost=60.0, tps=100.0),
+        _model("gpt-6.1-sol", 20_000_000, calls=30, cost=10.0, tps=60.0),
+        _model("claude-fable-5.2", 10_000_000, calls=100, cost=5.0, tps=200.0),
+        _model("gpt-6-astra", 6_000_000, calls=10, cost=9.0, tps=None),
+        _model("gemini-4-neon", 4_000_000, calls=5, cost=2.0),
+    )
+    data = _data(days=7, window="7d", models=models)
+    grouped = charts.group_models(data)
+    assert [(m.model, m.total_tokens, m.calls) for m in grouped.models] == [
+        ("claude", 70_000_000, 200),
+        ("gpt-6.*", 26_000_000, 40),
+        ("gemini-4", 4_000_000, 5),
+    ]
+    claude = grouped.models[0]
+    assert claude.cost_usd == 65.0 and claude.tps == 150.0 and claude.ttft_p50_ms is None
+    assert grouped.models[1].tps == 60.0
+    # Totals are untouched and each day's points merge per family.
+    assert grouped.total_tokens == data.total_tokens
+    assert sum(p.total_tokens for p in grouped.daily_models) == sum(
+        p.total_tokens for p in data.daily_models
+    )
+    per_day = {(p.date_iso, p.model) for p in grouped.daily_models}
+    assert len(per_day) == len(grouped.daily_models)
+    assert {model for _, model in per_day} == {"claude", "gpt-6.*", "gemini-4"}
+    plain = charts.render_models_card(grouped, color=False)
+    _assert_card(plain, charts.render_models_card(grouped, color=True))
+    assert "█ claude " in plain and "▓ gpt-6.* " in plain and "3 used" in plain
+    assert "opus" not in plain
 
 
 def test_models_card_colours_are_stable_per_family() -> None:

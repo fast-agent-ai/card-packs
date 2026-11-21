@@ -88,7 +88,8 @@ _MIX_METRICS = ("tokens", "cost", "calls")
 
 _USAGE_HELP = """Usage:
   /stats [7d|30d|90d|all|24h] [--no-cost] [--plain] [--utc|--local] [--model <filter>]
-  /stats models [7d|30d|...] [--by tokens|cost|calls]   daily model mix (filled bars)
+  /stats models [7d|4d|30d|...] [--by tokens|cost|calls] [--group] [--totals]
+                                                        daily model mix (filled bars)
   /stats rhythm [30d|90d|all]                           calendar and weekday x hour heatmap
   /stats perf [7d|30d|90d|all]
   /stats tools [7d|30d|90d|all] [--raw]
@@ -100,7 +101,8 @@ _USAGE_HELP = """Usage:
   /stats pricing [status|update]
   /stats reprice
 Every report also takes --plain, --utc|--local, --model <filter> and
---machine <name|local> (reports aggregate all remotes by default)."""
+--machine <name|local> (reports aggregate all remotes by default).
+--group (usage, models, share) merges models into families: gemini-4, claude, gpt-6.*"""
 
 
 def _bool_setting(config: Mapping[str, object], key: str, default: bool) -> bool:
@@ -149,6 +151,8 @@ class _ReportFlags:
     model_filter: str | None = None
     machine: str | None = None
     metric: str = "tokens"
+    group: bool = False
+    totals: bool = False
     error: str | None = None
 
 
@@ -159,6 +163,7 @@ def _parse_report_flags(
     default_window: str = "30d",
     allow_raw: bool = False,
     allow_metric: bool = False,
+    allow_group: bool = False,
 ) -> _ReportFlags:
     """Parse ``[window] [--no-cost] [--plain] [--raw] [--utc|--local]`` plus the
     valued options ``--model``, ``--machine`` and ``--by`` (``--opt value`` or ``--opt=value``).
@@ -180,6 +185,10 @@ def _parse_report_flags(
             flags.plain = True
         elif low == "--raw" and allow_raw:
             flags.raw = True
+        elif low == "--group" and allow_group:
+            flags.group = True
+        elif low == "--totals" and allow_metric:
+            flags.totals = True
         elif low == "--utc":
             flags.tz_mode = "utc"
         elif low == "--local":
@@ -406,6 +415,15 @@ async def complete_stats(
             candidates.append(
                 PluginCommandCompletion("--by", detail="Share by tokens (default), cost, or calls")
             )
+            candidates.append(
+                PluginCommandCompletion("--totals", detail="Also show raw token counts")
+            )
+        if first in {"models", "share"} or first in _WINDOWS:
+            candidates.append(
+                PluginCommandCompletion(
+                    "--group", detail="Merge models into families (gemini-4, claude, gpt-6.*)"
+                )
+            )
         if first == "tools":
             candidates.append(
                 PluginCommandCompletion(
@@ -623,6 +641,7 @@ async def stats_command(ctx: PluginCommandActionContext) -> PluginCommandActionR
         default_window=_DEFAULT_WINDOW.get(mode, "30d"),
         allow_raw=(mode == "tools"),
         allow_metric=(mode == "models"),
+        allow_group=(mode in {"usage", "models", "share"}),
     )
     if flags.error is not None:
         return _make_result(message=f"{flags.error}\n\n{_USAGE_HELP}")
@@ -667,6 +686,9 @@ async def stats_command(ctx: PluginCommandActionContext) -> PluginCommandActionR
         machine_filter=machine_label,
     )
 
+    if flags.group:
+        report = charts.group_models(report)
+
     if mode == "share":
         return _make_result(markdown=charts.render_share_card(report, show_cost=flags.show_cost))
 
@@ -677,7 +699,11 @@ async def stats_command(ctx: PluginCommandActionContext) -> PluginCommandActionR
         card = charts.render_tools_card(report, color=use_color, raw=flags.raw)
     elif mode == "models":
         card = charts.render_models_card(
-            report, color=use_color, show_cost=flags.show_cost, metric=flags.metric
+            report,
+            color=use_color,
+            show_cost=flags.show_cost,
+            metric=flags.metric,
+            totals=flags.totals,
         )
     elif mode == "rhythm":
         card = charts.render_rhythm_card(report, color=use_color)

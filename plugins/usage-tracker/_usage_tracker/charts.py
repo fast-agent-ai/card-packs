@@ -54,6 +54,7 @@ __all__ = [
     "render_usage_card",
     "render_share_card",
     "render_models_card",
+    "group_models",
     "render_rhythm_card",
     "render_perf_card",
     "render_tools_card",
@@ -747,6 +748,61 @@ class _Legend:
         return _swatch(color, glyph)
 
 
+def group_models(data: UsageReportData) -> UsageReportData:
+    """Merge models into families (``gemini-4``, ``claude``, ``gpt-6.*``).
+
+    Latency percentiles cannot be merged, so grouped rows carry none: use this
+    for the usage and model-mix cards, not the perf card.
+    """
+    from dataclasses import replace
+
+    from .models import DailyModelPoint
+    from .models import ModelUsageRow as Row
+
+    names = [m.model for m in sorted(data.models, key=lambda m: (-m.total_tokens, m.model))]
+    names += [p.model for p in data.daily_models if p.model not in names]
+    labels = viz.family_labels(list(dict.fromkeys(names)))
+    grouped: dict[str, list[ModelUsageRow]] = {}
+    for model in data.models:
+        grouped.setdefault(labels[model.model], []).append(model)
+    rows: list[ModelUsageRow] = []
+    for label, members in grouped.items():
+        weighted = [(m.tps, max(1, m.calls)) for m in members if m.tps is not None]
+        weight = sum(w for _, w in weighted)
+        providers = dict.fromkeys(p.strip() for m in members for p in m.provider.split(","))
+        rows.append(
+            Row(
+                model=label,
+                provider=", ".join(p for p in providers if p),
+                calls=sum(m.calls for m in members),
+                input_tokens=sum(m.input_tokens for m in members),
+                uncached_tokens=sum(m.uncached_tokens for m in members),
+                cache_read_tokens=sum(m.cache_read_tokens for m in members),
+                cache_write_tokens=sum(m.cache_write_tokens for m in members),
+                output_tokens=sum(m.output_tokens for m in members),
+                reasoning_tokens=sum(m.reasoning_tokens for m in members),
+                cost_usd=sum(m.cost_usd for m in members),
+                priced_calls=sum(m.priced_calls for m in members),
+                unpriced_calls=sum(m.unpriced_calls for m in members),
+                tps=sum(t * w for t, w in weighted) / weight if weight else None,
+                streamed_calls=sum(m.streamed_calls for m in members),
+                burst_calls=sum(m.burst_calls for m in members),
+            )
+        )
+    rows.sort(key=lambda m: (-m.total_tokens, m.model))
+    days: dict[tuple[str, str], list[float]] = {}
+    for point in data.daily_models:
+        slot = days.setdefault((point.date_iso, labels[point.model]), [0, 0.0, 0])
+        slot[0] += point.total_tokens
+        slot[1] += point.cost_usd
+        slot[2] += point.calls
+    daily = tuple(
+        DailyModelPoint(day, label, int(tokens), cost, int(calls))
+        for (day, label), (tokens, cost, calls) in sorted(days.items())
+    )
+    return replace(data, models=tuple(rows), daily_models=daily)
+
+
 # =============================================================================
 # Stacked daily charts
 # =============================================================================
@@ -996,6 +1052,7 @@ def _models_section(
     show_cost: bool,
     legend: _Legend,
     mix: _DailyMix | None = None,
+    show_tokens: bool = True,
 ) -> None:
     entries = legend.entries
     if not entries:
@@ -1011,8 +1068,12 @@ def _models_section(
         extra.append(("cost", 8, "cost"))
     else:
         extra.append(("cache", 5, "cache"))
+    if not show_tokens:
+        tok_w = -1  # column and its separator dropped: shares only
     if mix is not None:
-        extra.append(("daily", max(7, min(12, len(mix.columns))), "trend"))
+        count = max(1, len(mix.columns))
+        trend_w = count * max(1, 12 // count) if count <= 12 else 12
+        extra.append(("daily" if show_tokens else "daily share", max(7, trend_w), "trend"))
     elif has_speed:
         extra.append(("speed", 8, "speed"))
     elif show_cost:
@@ -1023,7 +1084,8 @@ def _models_section(
 
     header: Line = [*_cell("model", 2 + name_w, S_DIM), (" ", ""), (" " * bar_w, "")]
     header += [(" ", ""), *_cell("share", share_w, S_DIM, "right")]
-    header += [(" ", ""), *_cell("tokens", tok_w, S_DIM, "right")]
+    if show_tokens:
+        header += [(" ", ""), *_cell("tokens", tok_w, S_DIM, "right")]
     for label, width, kind in extra:
         header += [(" ", ""), *_cell(label, width, S_DIM, "left" if kind == "trend" else "right")]
     card.row(header)
@@ -1037,7 +1099,8 @@ def _models_section(
         line += [*_cell(_display_name(entry.name), name_w, name_style), (" ", "")]
         line += viz.line_bar(share, bar_w, color)
         line += [(" ", ""), *_cell(_fmt_pct(share), share_w, color, "right")]
-        line += [(" ", ""), *_cell(_compact(entry.tokens), tok_w, S_TOKENS, "right")]
+        if show_tokens:
+            line += [(" ", ""), *_cell(_compact(entry.tokens), tok_w, S_TOKENS, "right")]
         for _, width, kind in extra:
             if kind == "cost":
                 if entry.priced <= 0 and entry.cost <= 0:
@@ -1050,7 +1113,14 @@ def _models_section(
             elif kind == "trend":
                 assert mix is not None
                 values = [column.get(key, 0.0) for column in mix.columns]
-                line += [(" ", ""), *_fit(viz.spark(values, width, color), width)]
+                if not show_tokens:  # the model's share of each day, not its volume
+                    values = [
+                        v / t if t > 0 else 0.0 for v, t in zip(values, mix.totals, strict=True)
+                    ]
+                    trend = viz.spark(values, width, color, peak=1.0)
+                else:
+                    trend = viz.spark(values, width, color)
+                line += [(" ", ""), *_fit(trend, width)]
                 continue
             else:
                 text = _fmt_pct(entry.cache)
@@ -1096,17 +1166,33 @@ def _busiest_slot(data: UsageReportData) -> str | None:
 
 
 def _heat_legend() -> Line:
-    legend: Line = [("less ", S_DIM), viz.heat_cell(0, 2)]
+    legend: Line = [("less ", S_DIM)]
     for level in range(1, viz.HEAT_STEPS + 1):
         legend.append(viz.heat_cell(level, 2))
     legend.append((" more", S_DIM))
     return legend
 
 
+RIDGE_STYLES = ("cyan", "bright_cyan")  # the two busiest levels are highlighted
+
+
+def _ridge_cell(level: int, width: int = 2) -> Seg:
+    """One hour of a weekday ridgeline: bar height carries the value (8 levels)."""
+    if level <= 0:
+        return ("·" * width, S_DIM)
+    level = min(level, 8)
+    return (viz.V_EIGHTHS[level] * width, RIDGE_STYLES[1 if level >= 7 else 0])
+
+
 def _punch_card(data: UsageReportData) -> list[Line]:
-    """Weekday x hour heatmap with weekday shares and an hour-of-day profile."""
+    """Weekday x hour ridgelines with weekday shares and an hour-of-day profile.
+
+    Each weekday is a small bar chart on one shared scale, so the shape of a
+    day and the busy hours of the week both read at a glance, without relying
+    on colour depth.
+    """
     grid = _hour_grid(data)
-    levels = viz.heat_levels(grid, steps=viz.HEAT_STEPS)
+    levels = viz.heat_levels(grid, steps=8)
     labels = _weekday_labels(data)
     day_totals = [sum(row) for row in grid]
     total = sum(day_totals)
@@ -1114,15 +1200,17 @@ def _punch_card(data: UsageReportData) -> list[Line]:
     rows: list[Line] = [[("    ", ""), ("".join(f"{h:02d}    " for h in range(0, 24, 3)), S_DIM)]]
     for label, row, day_total in zip(labels, levels, day_totals, strict=True):
         line: Line = [(f"{label:<3} ", S_DIM)]
-        line += [viz.heat_cell(level, 2) for level in row]
+        line += [_ridge_cell(level) for level in row]
         line.append(("  ", ""))
         line += viz.line_bar(day_total / peak_day if peak_day else 0.0, 4, S_TOKENS)
         share = _fmt_pct(day_total / total) if total else "-"
         line.append((f"{share:>4}", S_TOKENS if day_total else S_DIM))
         rows.append(line)
     hours = [sum(row[hour] for row in grid) for hour in range(24)]
-    rows.append([("all ", S_DIM), *viz.spark(hours, 48, S_TOKENS)])
-    footer = _heat_legend()
+    rows.append([("all ", S_DIM), *viz.spark(hours, 48, S_SESS)])
+    footer: Line = [("quiet ", S_DIM)]
+    footer += [_ridge_cell(level, 1) for level in range(1, 9)]
+    footer.append((" busy", S_DIM))
     busiest = _busiest_slot(data)
     if busiest:
         footer += [("  ·  busiest ", S_DIM), (busiest, S_TOKENS)]
@@ -1286,8 +1374,12 @@ def render_models_card(
     max_models: int = 8,
     metric: str = "tokens",
     height: int = 8,
+    totals: bool = False,
 ) -> str:
-    """``/stats models``: each day's model mix as a filled 100% stacked bar."""
+    """``/stats models``: each day's model mix as a filled 100% stacked bar.
+
+    The card is about proportions: raw token counts only appear with ``totals``.
+    """
     metric = metric if metric in MIX_METRICS else "tokens"
     if metric == "cost" and not show_cost:
         metric = "tokens"
@@ -1306,8 +1398,9 @@ def render_models_card(
     parts = [(entry.value(metric), *legend.paint(legend.entry_key(entry))) for entry in entries]
     card.row(viz.stacked_bar(parts, CONTENT))
     lead = entries[0] if entries else None
-    caption: Line = [(f"share of {metric}", S_DIM), (" · ", S_DIM), (fmt(total), S_TOKENS)]
-    caption.append((" total", S_DIM))
+    caption: Line = [(f"share of {metric}", S_DIM)]
+    if totals or metric == "cost":
+        caption += [(" · ", S_DIM), (fmt(total), S_TOKENS), (" total", S_DIM)]
     if lead is not None and total > 0:
         lead_color, _ = legend.paint(legend.entry_key(lead))
         caption += [
@@ -1333,12 +1426,12 @@ def render_models_card(
             card.row(axis, line)
         card.row([("  0% └", S_DIM), ("─" * mix.plot_width, S_DIM)])
         card.row([(" " * axis_w, "")], mix.axis())
-        totals = mix.totals_row(fmt)
-        if totals is not None:
-            card.row([(" " * axis_w, "")], totals)
+        totals_row = mix.totals_row(fmt) if totals or metric == "cost" else None
+        if totals_row is not None:
+            card.row([(" " * axis_w, "")], totals_row)
 
     card.divider("models", f"{len(data.models)} used")
-    _models_section(card, data, show_cost, legend, mix)
+    _models_section(card, data, show_cost, legend, mix, show_tokens=totals)
     note: Line | None = None
     if show_cost and data.pricing_version and not data.unpriced_calls:
         note = [(f"pricing {_clean(data.pricing_version)}", S_DIM)]

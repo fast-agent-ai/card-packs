@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 PLUGIN_NAME = "usage-tracker"
-PLUGIN_VERSION = "0.2.0"
+PLUGIN_VERSION = "0.2.1"
 SUPPORTED_PRICING_SCHEMAS = frozenset({"fast-agent.pricing/v1"})
 DEFAULT_PRICING_URL = (
     "https://raw.githubusercontent.com/fast-agent-ai/card-packs/main/"

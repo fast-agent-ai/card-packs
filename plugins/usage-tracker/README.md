@@ -48,9 +48,14 @@ never double-count.
   heatmap, and (with remotes) a per-machine breakdown.
   - Options: `--no-cost` (tokens-only for sharing), `--plain` (no colour),
     `--utc` / `--local`, `--model <substring>`, `--machine <name|local>`.
-- `/stats models [7d|30d|...] [--by tokens|cost|calls]` — the model mix: one
-  filled 100% bar per day showing each model's share (last 7 days by
-  default), the overall split, and a per-model daily trend.
+- `/stats models [7d|4d|30d|...] [--by tokens|cost|calls] [--group] [--totals]`
+  — the model mix: one filled 100% bar per day showing each model's share
+  (last 7 days by default), the overall split, and each model's share trend.
+  The card shows proportions; pass `--totals` for raw token counts as well.
+- `--group` (on `/stats`, `/stats models` and `/stats share`) merges models
+  into families by model line and major version: `gemini-4-neon` and
+  `gemini-4-carbon` become `gemini-4`, every Claude model becomes `claude`,
+  and `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.2-sol` become `gpt-6.*`.
 - `/stats rhythm [30d|90d|all]` — when you work: a contribution-style calendar
   (windows of 15+ days), the weekday × hour heatmap, and streaks.
 - `/stats share [7d|30d|90d|all] [--no-cost]` — clean fenced card optimised for
@@ -88,6 +93,11 @@ a preferred colour (Claude red, GPT green, Gemini blue, …); siblings take the
 family's next choice. With `--plain`, in `/stats share`, and in non-TUI clients
 the same layout is drawn without colour, using a distinct texture per series
 (`█ ▓ ▒ ░ # = +`).
+
+With so few colours, shape carries the detail: the weekday × hour view is a
+set of ridgelines (one small bar chart per weekday, eight heights on a shared
+scale), and the calendar draws each day as a braille "bubble" that grows with
+that day's tokens. Both read the same with no colour at all.
 
 ### Other Machines (`/stats remote`, `/stats sync`)
 

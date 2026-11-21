@@ -431,6 +431,16 @@ class UsageTrackerIntegrationTests(unittest.TestCase):
         self.assertNotIn("[/]", models.message)
         self.assertIn("▸ by cost", self._stats("models 30d --by cost --plain").message)
         self.assertIn("Unknown --by", self._stats("models --by vibes").message)
+        # Shares by default; --totals adds raw counts; --group merges model families.
+        self.assertNotIn("21.0k", models.message)
+        self.assertIn("21.0k", self._stats("models --totals --plain").message)
+        grouped = self._stats("models --group --plain").message
+        self.assertIn("gpt-6.*", grouped)
+        self.assertNotIn("gpt-6.2-sol", grouped)
+        self.assertIn("gpt-6.*", self._stats("7d --group --plain").message)
+        self.assertIn("gpt-6.*", self._stats("share 7d --group").markdown)
+        self.assertIn("Unknown option: --group", self._stats("perf --group").message)
+        self.assertIn("Unknown option: --totals", self._stats("7d --totals").message)
         self.assertIn("Unknown option: --by", self._stats("perf --by cost").message)
         self.assertIn("[", self._stats("models").message)  # Rich markup in the TUI
         self.assertTrue(self._stats("models", is_tui=False).markdown.startswith("```text\n"))
