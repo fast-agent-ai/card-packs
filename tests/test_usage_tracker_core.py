@@ -22,7 +22,7 @@ PLUGIN_DIR = Path(__file__).resolve().parents[1] / "plugins" / "usage-tracker"
 if str(PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(PLUGIN_DIR))
 
-from _usage_tracker import perf, pricing, pricing_updater, store, sweep  # noqa: E402
+from _usage_tracker import perf, pricing, pricing_updater, remotes, store, sweep  # noqa: E402
 
 BUNDLED = json.loads(pricing.BUNDLED_CATALOG_PATH.read_text(encoding="utf-8"))
 NOW = datetime(2026, 11, 20, 12, 0, tzinfo=UTC)  # a Friday
@@ -1765,6 +1765,259 @@ class PtcTrackingTests(unittest.TestCase):
             raw_names,
             {"Bash", "bash", "github__getPullRequest", "Process", "process", "poll_process"},
         )
+
+
+# =========================================================================== remotes
+
+
+_FAKE_SSH = """#!/bin/sh
+# Stand-in for ssh: run the "remote" command line locally, stdin passed through.
+for arg; do last=$arg; done
+echo "$*" >> "$FAKE_SSH_LOG"
+case "$*" in
+  *unreachable*) echo "ssh: connect timed out" >&2; exit 255;;
+  *flaky*) head -c 64 /dev/urandom; echo "Connection reset by peer" >&2; exit 255;;
+esac
+exec sh -c "$last"
+"""
+
+
+class RemoteAggregationTests(_TempDirTest):
+    def setUp(self):
+        super().setUp()
+        self.catalog = _test_catalog()
+        self.data_dir = self.db.parent
+        self.other = self.tmp / "other-machine" / "usage.sqlite3"
+        ts = NOW.timestamp()
+        shared = _attempt(timestamp=ts - 3600, prompt=5_000)  # a session synced to both machines
+        self._record(self.db, "local-1", shared, _attempt(timestamp=ts - 60, prompt=1_000))
+        self._record(
+            self.other,
+            "local-1",
+            shared,
+        )
+        self._record(
+            self.other,
+            "remote-1",
+            _attempt("gpt-test", provider="openai", timestamp=ts - 7200, prompt=20_000),
+            _attempt("gpt-test", provider="openai", timestamp=ts - 9 * 86400, prompt=7_000),
+        )
+
+    def _record(self, db, session_id, *attempts):
+        store.record_turn(
+            db, session_id=session_id, attempts=attempts, turn_record=None, catalog=self.catalog
+        )
+
+    def _report(self, machine=None, **kwargs):
+        sources, label = remotes.report_sources(self.data_dir, local_name="desk", machine=machine)
+        kwargs.setdefault("window", "7d")
+        return store.query_report(self.db, now=NOW, sources=sources, machine_filter=label, **kwargs)
+
+    def _add(self, **kwargs):
+        remote = remotes.add_remote(self.data_dir, str(self.other), local_name="desk", **kwargs)
+        return remote, remotes.sync_remotes(self.data_dir)
+
+    def test_path_remote_syncs_and_reports_merge_without_double_counting(self):
+        remote, statuses = self._add(name="laptop")
+        self.assertEqual((remote.kind, remote.name), ("path", "laptop"))
+        self.assertEqual([s.last_error for s in statuses], [None])
+        self.assertEqual(statuses[0].calls, 3)
+        self.assertTrue(statuses[0].changed)
+        mirror = remotes.mirror_path(self.data_dir, "laptop")
+        self.assertTrue(mirror.is_file())
+
+        report = self._report()
+        # 2 local + 2 remote in the window; the shared call counts once, for this machine.
+        self.assertEqual(report.total_calls, 3)
+        self.assertEqual(report.total_sessions, 2)
+        self.assertEqual(
+            [(m.name, m.is_local, m.calls, m.total_tokens) for m in report.machines],
+            [("desk", True, 2, 6_200), ("laptop", False, 1, 20_100)],
+        )
+        self.assertIsNotNone(report.machines[1].synced_at)
+        self.assertEqual({m.model for m in report.models}, {"claude-test", "gpt-test"})
+        self.assertEqual(
+            sorted((p.model, p.total_tokens) for p in report.daily_models),
+            [("claude-test", 6_200), ("gpt-test", 20_100)],
+        )
+        self.assertEqual(sum(map(sum, report.rhythm.hourly)), 3)
+        # The previous 7 days hold only the older remote call.
+        assert report.previous is not None
+        self.assertEqual((report.previous.calls, report.previous.total_tokens), (1, 7_100))
+
+        # The local ledger itself is untouched by aggregation.
+        self.assertEqual(store.query_report(self.db, window="7d", now=NOW).total_calls, 2)
+        self.assertEqual(store.query_report(self.db, window="7d", now=NOW).machines, ())
+
+    def test_machine_filter(self):
+        self._add(name="laptop")
+        only_remote = self._report(machine="laptop")
+        # Narrowed to the remote, the shared session is that machine's own.
+        self.assertEqual((only_remote.total_calls, only_remote.machine_filter), (2, "laptop"))
+        only_local = self._report(machine="local")
+        self.assertEqual((only_local.total_calls, only_local.machine_filter), (2, "desk"))
+        self.assertEqual(self._report(machine="DESK").total_calls, 2)
+        with self.assertRaisesRegex(ValueError, "Unknown machine"):
+            self._report(machine="nope")
+
+    def test_resync_is_skipped_when_unchanged_and_picks_up_new_calls(self):
+        self._add(name="laptop")
+        again = remotes.sync_remotes(self.data_dir)
+        self.assertIs(again[0].changed, False)
+        self._record(self.other, "remote-2", _attempt(timestamp=NOW.timestamp() - 30))
+        updated = remotes.sync_remotes(self.data_dir)
+        self.assertTrue(updated[0].changed)
+        self.assertEqual(updated[0].calls, 4)
+        self.assertEqual(self._report().total_calls, 4)
+        # Fresh mirrors are left alone by the staleness-bounded (automatic) sync.
+        self._record(self.other, "remote-3", _attempt(timestamp=NOW.timestamp() - 20))
+        self.assertFalse(remotes.needs_sync(self.data_dir, 3600))
+        skipped = remotes.sync_remotes(self.data_dir, max_age_seconds=3600)
+        self.assertIsNone(skipped[0].changed)
+        self.assertTrue(remotes.needs_sync(self.data_dir, 0))
+
+    def test_failed_sync_keeps_the_last_mirror(self):
+        self._add(name="laptop")
+        self.other.unlink()
+        for suffix in ("-wal", "-shm"):
+            Path(str(self.other) + suffix).unlink(missing_ok=True)
+        failed = remotes.sync_remotes(self.data_dir)
+        self.assertIn("no usage ledger", failed[0].last_error)
+        self.assertIsNotNone(failed[0].synced_at)
+        report = self._report()
+        self.assertEqual(report.total_calls, 3)
+        self.assertIn("no usage ledger", report.machines[1].last_error)
+
+    def test_unusable_mirrors_are_reported_not_fatal(self):
+        remotes.add_remote(self.data_dir, str(self.other), name="laptop", local_name="desk")
+        report = self._report()  # never synced
+        self.assertEqual(report.total_calls, 2)
+        self.assertEqual(report.machines[1].last_error, "not synced yet")
+
+        remotes.sync_remotes(self.data_dir)
+        mirror = remotes.mirror_path(self.data_dir, "laptop")
+        with contextlib.closing(sqlite3.connect(mirror)) as connection:
+            connection.execute("UPDATE schema_meta SET value='999' WHERE key='schema_version'")
+            connection.commit()
+        report = self._report()
+        self.assertEqual(report.total_calls, 2)
+        self.assertIn("newer than supported", report.machines[1].last_error)
+
+        mirror.write_bytes(b"this is not a database")
+        self.assertEqual(self._report().total_calls, 2)
+
+    def test_registry_validation_and_removal(self):
+        for bad in ("-oProxyCommand=evil", "two words", ""):
+            with self.assertRaises(ValueError):
+                remotes.add_remote(self.data_dir, bad)
+        with self.assertRaisesRegex(ValueError, "names this machine"):
+            remotes.add_remote(self.data_dir, "desk.lan", local_name="desk")
+        with self.assertRaisesRegex(ValueError, "Invalid remote name"):
+            remotes.add_remote(self.data_dir, "host", name="../escape")
+        self.assertEqual(remotes.default_name("me@build-box.example.com"), "build-box")
+        self.assertEqual(remotes.default_name("/mnt/nas/usage.sqlite3"), "nas")
+
+        self._add(name="laptop")
+        mirror = remotes.mirror_path(self.data_dir, "laptop")
+        self.assertEqual(mirror.stat().st_mode & 0o777, 0o600)
+        self.assertTrue(remotes.remove_remote(self.data_dir, "LAPTOP"))
+        self.assertFalse(mirror.exists())
+        self.assertFalse(remotes.remove_remote(self.data_dir, "laptop"))
+        self.assertEqual(remotes.report_sources(self.data_dir, local_name="desk"), ([], None))
+
+    def _stub_ssh(self):
+        bin_dir = self.tmp / "bin"
+        bin_dir.mkdir()
+        fake = bin_dir / "ssh"
+        fake.write_text(_FAKE_SSH, encoding="utf-8")
+        fake.chmod(0o755)
+        old_path = os.environ["PATH"]
+        os.environ["PATH"] = f"{bin_dir}{os.pathsep}{old_path}"
+        self.addCleanup(os.environ.__setitem__, "PATH", old_path)
+        self.ssh_log = self.tmp / "ssh.log"
+        os.environ["FAKE_SSH_LOG"] = str(self.ssh_log)
+        self.addCleanup(os.environ.pop, "FAKE_SSH_LOG", None)
+
+    @unittest.skipIf(os.name == "nt", "needs a POSIX shell")
+    def test_ssh_remote_end_to_end_with_stub_ssh(self):
+        self._stub_ssh()
+        remote = remotes.add_remote(
+            self.data_dir, "me@build-box", db_path=str(self.other), local_name="desk"
+        )
+        self.assertEqual((remote.kind, remote.name), ("ssh", "build-box"))
+        first = remotes.sync_remotes(self.data_dir)
+        self.assertEqual((first[0].last_error, first[0].calls, first[0].changed), (None, 3, True))
+        self.assertTrue(first[0].host)
+        self.assertEqual(self._report().total_calls, 3)
+        self.assertIs(remotes.sync_remotes(self.data_dir)[0].changed, False)
+
+        remotes.add_remote(self.data_dir, "unreachable", local_name="desk")
+        remotes.add_remote(self.data_dir, "empty-box", db_path=str(self.tmp / "nope.sqlite3"))
+        by_name = {s.name: s for s in remotes.sync_remotes(self.data_dir)}
+        self.assertIn("timed out", by_name["unreachable"].last_error)
+        self.assertIn("no usage ledger", by_name["empty-box"].last_error)
+        self.assertIsNone(by_name["build-box"].last_error)
+        self.assertEqual(list(remotes.remotes_dir(self.data_dir).glob(".*")), [])  # no temp files
+
+    @unittest.skipIf(os.name == "nt", "needs a POSIX shell")
+    def test_disconnected_remote_never_breaks_reports(self):
+        self._stub_ssh()
+        # Off the LAN the first address is dead; the fallback reaches the same machine.
+        remote = remotes.add_remote(
+            self.data_dir,
+            "unreachable-lan",
+            name="box",
+            fallbacks=["me@build-box", "unreachable-lan"],
+            db_path=str(self.other),
+            local_name="desk",
+        )
+        self.assertEqual(remote.fallbacks, ("me@build-box",))
+        self.assertEqual(remotes.load_remotes(self.data_dir)[0].fallbacks, ("me@build-box",))
+        synced = remotes.sync_remotes(self.data_dir, connect_timeout=1)
+        self.assertEqual((synced[0].last_error, synced[0].calls), (None, 3))
+        self.assertIn("ConnectTimeout=1", self.ssh_log.read_text())
+        self.assertIn("BatchMode=yes", self.ssh_log.read_text())
+        mirror = remotes.mirror_path(self.data_dir, "box")
+        good = mirror.read_bytes()
+
+        # Fully offline: every address fails, the mirror and the report survive.
+        remotes.add_remote(
+            self.data_dir, "unreachable-lan", name="gone", fallbacks=["unreachable-vpn"]
+        )
+        registry = remotes.remotes_dir(self.data_dir) / remotes.REGISTRY_FILENAME
+        payload = json.loads(registry.read_text())
+        payload["remotes"][0].update(target="unreachable-lan", fallbacks=["unreachable-vpn"])
+        registry.write_text(json.dumps(payload))
+        offline = {s.name: s for s in remotes.sync_remotes(self.data_dir)}
+        self.assertIn("timed out", offline["box"].last_error)
+        self.assertIsNotNone(offline["box"].synced_at)
+        self.assertEqual(mirror.read_bytes(), good)
+        report = self._report()
+        self.assertEqual(report.total_calls, 3)
+        self.assertEqual(
+            [(m.name, m.calls, bool(m.last_error)) for m in report.machines],
+            [("desk", 2, False), ("box", 1, True), ("gone", 0, True)],
+        )
+        # A machine that just failed is not retried by the automatic refresh...
+        before = self.ssh_log.read_text()
+        self.assertFalse(remotes.needs_sync(self.data_dir, 1800))
+        remotes.sync_remotes(self.data_dir, max_age_seconds=1800)
+        self.assertEqual(self.ssh_log.read_text(), before)
+
+        # A connection dropped mid-transfer leaves garbage: it must not replace the mirror.
+        payload["remotes"][0].update(target="flaky", fallbacks=[])
+        registry.write_text(json.dumps(payload))
+        dropped = remotes.sync_remotes(self.data_dir, names=["box"])
+        self.assertIn("reset by peer", dropped[0].last_error)
+        self.assertEqual(mirror.read_bytes(), good)
+        self.assertEqual(self._report().total_calls, 3)
+        self.assertEqual(list(remotes.remotes_dir(self.data_dir).glob(".*")), [])
+
+        for bad in (["-oProxyCommand=x"], ["/a/path"], ["two words"]):
+            with self.assertRaises(ValueError):
+                remotes.add_remote(self.data_dir, "host", fallbacks=bad)
+        with self.assertRaisesRegex(ValueError, "only applies to SSH"):
+            remotes.add_remote(self.data_dir, str(self.other), name="p", fallbacks=["h"])
 
 
 if __name__ == "__main__":

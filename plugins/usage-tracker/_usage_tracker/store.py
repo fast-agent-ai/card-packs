@@ -14,14 +14,17 @@ import sqlite3
 import threading
 import time
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta, tzinfo
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Self
 
 from .models import (
+    DailyModelPoint,
     DailyUsagePoint,
+    MachineUsageRow,
     ModelUsageRow,
+    PeriodTotals,
     PhaseBreakdown,
     ProcessWaitSummary,
     PtcModelRow,
@@ -837,6 +840,8 @@ class UsageStore:
             now=now,
             pricing_version=pricing_version,
             upgrade_notice=upgrade_notice,
+            sources=(),
+            machine_filter=None,
         )
 
 
@@ -897,16 +902,178 @@ def query_report(
     now: datetime | float | None = None,
     pricing_version: str | None = None,
     upgrade_notice: str | None = None,
+    sources: Sequence[ReportSource] = (),
+    machine_filter: str | None = None,
 ) -> UsageReportData:
-    with UsageStore(db_path) as store:
-        return store.query_report(
+    """Build a report from the local ledger, optionally merged with mirrored remotes.
+
+    ``sources`` lists the machines to aggregate (see :func:`open_report_connection`).
+    With no sources the report covers the local ledger only, exactly as before.
+    """
+    if not sources:
+        with UsageStore(db_path) as store:
+            report = store.query_report(
+                window=window,
+                model_filter=model_filter,
+                tz_mode=tz_mode,
+                now=now,
+                pricing_version=pricing_version,
+                upgrade_notice=upgrade_notice,
+            )
+        return replace(report, machine_filter=machine_filter) if machine_filter else report
+    connection, used = open_report_connection(db_path, sources)
+    try:
+        return _query_report(
+            connection,
             window=window,
             model_filter=model_filter,
             tz_mode=tz_mode,
             now=now,
             pricing_version=pricing_version,
             upgrade_notice=upgrade_notice,
+            sources=used,
+            machine_filter=machine_filter,
         )
+    finally:
+        connection.close()
+
+
+# --------------------------------------------------------------------------- aggregation
+
+
+@dataclass(frozen=True, slots=True)
+class ReportSource:
+    """One machine's ledger taking part in an aggregated report.
+
+    ``path`` is ``None`` for the local ledger, otherwise a local mirror of a
+    remote machine's ``usage.sqlite3`` (see ``remotes.py``).
+    """
+
+    name: str
+    path: Path | None = None
+    synced_at: float | None = None
+    last_error: str | None = None
+
+
+MAX_REPORT_SOURCES = 8  # SQLite attaches at most 10 databases by default
+_REPORT_TABLES: tuple[tuple[str, str], ...] = (
+    ("calls", "attempt_hash"),
+    ("turns", "turn_hash"),
+    ("tool_runs", "run_hash"),
+    ("ptc_tool_calls", "call_hash"),
+)
+
+
+def migrate_mirror(path: Path) -> int:
+    """Bring a mirrored ledger up to this plugin's schema; returns its call count.
+
+    Raises ``RuntimeError`` when the mirror was written by a newer plugin and
+    ``sqlite3.DatabaseError`` when the file is not a usable ledger.
+    """
+    connection = sqlite3.connect(str(path), timeout=2.0, isolation_level=None)
+    try:
+        if not _has_schema(connection):
+            raise sqlite3.DatabaseError("not a usage-tracker ledger")
+        _ensure_schema(connection)
+        # A mirror is a private single-writer copy: keep it one self-contained file.
+        connection.execute("PRAGMA journal_mode=DELETE")
+        return int(connection.execute("SELECT COUNT(*) FROM calls").fetchone()[0])
+    finally:
+        connection.close()
+
+
+def open_report_connection(
+    db_path: Path, sources: Sequence[ReportSource]
+) -> tuple[sqlite3.Connection, tuple[ReportSource, ...]]:
+    """Open a read connection whose report tables span every usable source.
+
+    Each mirror is attached and the four report tables are shadowed by TEMP
+    views that union the sources and add an ``origin`` column.  TEMP objects
+    win unqualified name lookups, so the ordinary report SQL runs unchanged.
+    Rows are content-hashed, so a session recorded on two machines (a synced or
+    shared sessions directory) is counted once, for the first source listing it.
+
+    The connection must only be used for reading.  Returns it together with
+    the sources that were usable; unusable mirrors come back with ``last_error``.
+    """
+    connection = connect(db_path)
+    try:
+        usable: list[tuple[str, ReportSource]] = []  # (schema, source)
+        result: list[ReportSource] = []
+        columns = {
+            table: [row[1] for row in connection.execute(f"PRAGMA main.table_info({table})")]
+            for table, _key in _REPORT_TABLES
+        }
+        for source in sources:
+            if source.path is None:
+                usable.append(("main", source))
+                result.append(source)
+                continue
+            if len(usable) >= MAX_REPORT_SOURCES:
+                result.append(_source_error(source, "too many machines to aggregate"))
+                continue
+            schema = f"remote{len(usable)}"
+            try:
+                if not source.path.is_file():
+                    raise FileNotFoundError("not synced yet")
+                migrate_mirror(source.path)
+                connection.execute(f"ATTACH DATABASE ? AS {schema}", (str(source.path),))
+                try:
+                    for table, _key in _REPORT_TABLES:
+                        have = {
+                            row[1]
+                            for row in connection.execute(f"PRAGMA {schema}.table_info({table})")
+                        }
+                        missing = [name for name in columns[table] if name not in have]
+                        if missing:
+                            raise sqlite3.DatabaseError(f"mirror is missing {table}.{missing[0]}")
+                except BaseException:
+                    connection.execute(f"DETACH DATABASE {schema}")
+                    raise
+            except (OSError, RuntimeError, sqlite3.Error) as exc:
+                # Why the last sync failed says more than "the mirror is missing".
+                reason = source.last_error or str(exc) or type(exc).__name__
+                result.append(_source_error(source, reason))
+                continue
+            usable.append((schema, source))
+            result.append(source)
+
+        for table, key in _REPORT_TABLES:
+            names = ", ".join(columns[table])
+            selects: list[str] = []
+            seen: list[str] = []
+            for schema, source in usable:
+                where = "".join(
+                    f" AND {key} NOT IN (SELECT {key} FROM {earlier}.{table})" for earlier in seen
+                )
+                selects.append(
+                    f"SELECT {names}, {_sql_text(source.name)} AS origin "
+                    f"FROM {schema}.{table} WHERE 1{where}"
+                )
+                seen.append(schema)
+            if not selects:
+                selects.append(f"SELECT {names}, NULL AS origin FROM main.{table} WHERE 0")
+            connection.execute(f"CREATE TEMP VIEW {table} AS " + " UNION ALL ".join(selects))
+        return connection, tuple(result)
+    except BaseException:
+        connection.close()
+        raise
+
+
+def _sql_text(value: str) -> str:
+    """SQL string literal (views cannot take bound parameters)."""
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _source_error(source: ReportSource, error: str) -> ReportSource:
+    return ReportSource(source.name, source.path, source.synced_at, error)
+
+
+def _has_origin(connection: sqlite3.Connection) -> bool:
+    row = connection.execute(
+        "SELECT 1 FROM sqlite_temp_master WHERE type='view' AND name='calls'"
+    ).fetchone()
+    return row is not None
 
 
 # --------------------------------------------------------------------------- reporting
@@ -1006,6 +1173,8 @@ def _query_report(
     now: datetime | float | None,
     pricing_version: str | None,
     upgrade_notice: str | None,
+    sources: Sequence[ReportSource] = (),
+    machine_filter: str | None = None,
 ) -> UsageReportData:
     spec = parse_window(window)
     tz, tz_label = _timezone(tz_mode)
@@ -1024,23 +1193,32 @@ def _query_report(
     lower = start_ms if start_ms is not None else -(2**62)
     needle = model_filter.strip().casefold() if model_filter and model_filter.strip() else None
 
+    origin = "origin" if _has_origin(connection) else "NULL"
     rows = connection.execute(
         "SELECT timestamp_ms, session_id, provider, model, input_tokens, uncached_tokens, "
         "cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens, cost_usd, "
-        "ttft_ms, gen_ms, is_burst FROM calls WHERE timestamp_ms >= ? ORDER BY timestamp_ms",
+        f"ttft_ms, gen_ms, is_burst, {origin} FROM calls WHERE timestamp_ms >= ? "
+        "ORDER BY timestamp_ms",
         (lower,),
     ).fetchall()
     if needle is not None:
         rows = [row for row in rows if needle in row[3].casefold()]
 
     by_model: dict[str, list[tuple]] = defaultdict(list)
+    by_origin: dict[str, list[tuple]] = defaultdict(list)
     daily_calls: dict[date, list[tuple]] = defaultdict(list)
+    daily_model_calls: dict[tuple[date, str], list[tuple]] = defaultdict(list)
     cells = [[0] * len(SLOT_LABELS) for _ in WEEKDAY_LABELS]
+    hourly = [[0] * 24 for _ in WEEKDAY_LABELS]
     for row in rows:
         by_model[row[3]].append(row)
+        if row[14] is not None:
+            by_origin[row[14]].append(row)
         moment = _to_datetime(row[0], tz)
         daily_calls[moment.date()].append(row)
+        daily_model_calls[(moment.date(), row[3])].append(row)
         cells[moment.weekday()][moment.hour // _SLOT_HOURS] += 1
+        hourly[moment.weekday()][moment.hour] += 1
 
     models = sorted(
         (_model_row(model, model_rows) for model, model_rows in by_model.items()),
@@ -1069,9 +1247,35 @@ def _query_report(
                     cost_usd=sum(row[10] for row in day_rows if row[10] is not None),
                     calls=len(day_rows),
                     sessions=len({row[1] for row in day_rows if row[1] is not None}),
+                    cache_read_tokens=sum(row[6] for row in day_rows),
                 )
             )
             day += timedelta(days=1)
+    daily_models = tuple(
+        DailyModelPoint(
+            date_iso=day.isoformat(),
+            model=model,
+            total_tokens=sum(row[4] + row[8] for row in model_rows),
+            cost_usd=sum(row[10] for row in model_rows if row[10] is not None),
+            calls=len(model_rows),
+        )
+        for (day, model), model_rows in sorted(daily_model_calls.items())
+    )
+    machines = tuple(
+        MachineUsageRow(
+            name=source.name,
+            is_local=source.path is None,
+            calls=len(origin_rows),
+            total_tokens=sum(row[4] + row[8] for row in origin_rows),
+            cost_usd=sum(row[10] for row in origin_rows if row[10] is not None),
+            sessions=len({row[1] for row in origin_rows if row[1] is not None}),
+            synced_at=source.synced_at,
+            last_error=source.last_error,
+        )
+        for source in sources
+        for origin_rows in (by_origin.get(source.name, []),)
+    )
+    previous = _previous_totals(connection, spec, lower, needle)
     active = set(daily_calls)
     current_streak, longest_streak = _streaks(
         active, first_day if first_day is not None else today, today
@@ -1112,6 +1316,7 @@ def _query_report(
             weekday_labels=WEEKDAY_LABELS,
             slot_labels=SLOT_LABELS,
             cells=tuple(tuple(row) for row in cells),
+            hourly=tuple(tuple(row) for row in hourly),
         ),
         phases=phases,
         tools=tools,
@@ -1120,6 +1325,39 @@ def _query_report(
         process_waits=process_waits,
         pricing_version=pricing_version,
         upgrade_notice=upgrade_notice,
+        daily_models=daily_models,
+        previous=previous,
+        machines=machines if len(sources) > 1 or any(s.path for s in sources) else (),
+        machine_filter=machine_filter,
+    )
+
+
+def _previous_totals(
+    connection: sqlite3.Connection, spec: Window, lower: int, needle: str | None
+) -> PeriodTotals | None:
+    """Totals for the equally long window that ended where this one starts."""
+    if spec.days is not None:
+        span_ms = spec.days * 86_400_000
+    elif spec.hours is not None:
+        span_ms = spec.hours * 3_600_000
+    else:
+        return None
+    clause, extra = _model_where(needle)
+    row = connection.execute(
+        "SELECT COUNT(*), TOTAL(input_tokens), TOTAL(output_tokens), TOTAL(cost_usd), "
+        "COUNT(DISTINCT session_id), TOTAL(cache_read_tokens) FROM calls "
+        f"WHERE timestamp_ms >= ? AND timestamp_ms < ?{clause}",
+        (lower - span_ms, lower, *extra),
+    ).fetchone()
+    if not row or not row[0]:
+        return None
+    input_tokens = int(row[1])
+    return PeriodTotals(
+        total_tokens=input_tokens + int(row[2]),
+        cost_usd=float(row[3]),
+        calls=int(row[0]),
+        sessions=int(row[4]),
+        cache_hit_rate=(int(row[5]) / input_tokens) if input_tokens > 0 else None,
     )
 
 
@@ -1399,9 +1637,7 @@ def _tool_views_and_ptc(
                     )
                     parent_nested_sum[parent_hash] = (prev_sum + eff_ms, prev_wall)
             elif (
-                parent_ms is not None
-                and int(parent_nested or 0) == 1
-                and not int(parent_err or 0)
+                parent_ms is not None and int(parent_nested or 0) == 1 and not int(parent_err or 0)
             ):
                 eff_ms = float(parent_ms)
             else:

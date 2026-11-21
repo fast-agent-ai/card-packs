@@ -15,6 +15,7 @@ import shlex
 import sys
 import threading
 from contextlib import nullcontext
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -73,32 +74,33 @@ perf = importlib.import_module(f"{_PACKAGE_NAME}.perf")
 pricing = importlib.import_module(f"{_PACKAGE_NAME}.pricing")
 pricing_updater = importlib.import_module(f"{_PACKAGE_NAME}.pricing_updater")
 store = importlib.import_module(f"{_PACKAGE_NAME}.store")
+remotes = importlib.import_module(f"{_PACKAGE_NAME}.remotes")
 sweep = importlib.import_module(f"{_PACKAGE_NAME}.sweep")
 
 PLUGIN_NAME: str = models.PLUGIN_NAME
 PLUGIN_VERSION: str = models.PLUGIN_VERSION
 
 _WINDOWS = ("24h", "7d", "30d", "90d", "all")
-_USAGE_SUBCOMMANDS = ("share", "perf", "tools", "sweep", "pricing", "reprice", "help")
-_USAGE_FLAGS = (
-    "--no-cost",
-    "--plain",
-    "--utc",
-    "--local",
-    "--model",
-    "--raw",
-    "--dry-run",
-    "--all",
-)
+_REPORT_MODES = ("share", "models", "rhythm", "perf", "tools")
+_USAGE_SUBCOMMANDS = (*_REPORT_MODES, "remote", "sync", "sweep", "pricing", "reprice", "help")
+_DEFAULT_WINDOW = {"models": "7d"}
+_MIX_METRICS = ("tokens", "cost", "calls")
 
 _USAGE_HELP = """Usage:
   /stats [7d|30d|90d|all|24h] [--no-cost] [--plain] [--utc|--local] [--model <filter>]
-  /stats share [7d|30d|90d|all] [--no-cost] [--utc|--local] [--model <filter>]
-  /stats perf [7d|30d|90d|all] [--plain] [--utc|--local] [--model <filter>]
-  /stats tools [7d|30d|90d|all] [--raw] [--plain] [--utc|--local] [--model <filter>]
+  /stats models [7d|30d|...] [--by tokens|cost|calls]   daily model mix (filled bars)
+  /stats rhythm [30d|90d|all]                           calendar and weekday x hour heatmap
+  /stats perf [7d|30d|90d|all]
+  /stats tools [7d|30d|90d|all] [--raw]
+  /stats share [7d|30d|90d|all] [--no-cost]
+  /stats remote [add <ssh-host|path> [--name <n>] [--fallback <ssh-host>] [--db <path>]]
+  /stats remote remove <name>
+  /stats sync [name]                                    refresh remote machines now
   /stats sweep <dir> [--dry-run] [--all]
   /stats pricing [status|update]
-  /stats reprice"""
+  /stats reprice
+Every report also takes --plain, --utc|--local, --model <filter> and
+--machine <name|local> (reports aggregate all remotes by default)."""
 
 
 def _bool_setting(config: Mapping[str, object], key: str, default: bool) -> bool:
@@ -137,86 +139,86 @@ def _split_args(raw: str) -> list[str]:
         return stripped.split()
 
 
+@dataclass(slots=True)
+class _ReportFlags:
+    window: str = "30d"
+    show_cost: bool = True
+    plain: bool = False
+    raw: bool = False
+    tz_mode: Literal["utc", "local"] = "utc"
+    model_filter: str | None = None
+    machine: str | None = None
+    metric: str = "tokens"
+    error: str | None = None
+
+
 def _parse_report_flags(
     tokens: Sequence[str],
     *,
     default_tz: Literal["utc", "local"],
+    default_window: str = "30d",
     allow_raw: bool = False,
-) -> tuple[str, bool, bool, bool, Literal["utc", "local"], str | None, str | None]:
-    """Parse ``[window] [--no-cost] [--plain] [--raw] [--utc|--local] [--model <x>]``.
-
-    Returns ``(window, show_cost, plain, raw, tz_mode, model_filter, error)``.
+    allow_metric: bool = False,
+) -> _ReportFlags:
+    """Parse ``[window] [--no-cost] [--plain] [--raw] [--utc|--local]`` plus the
+    valued options ``--model``, ``--machine`` and ``--by`` (``--opt value`` or ``--opt=value``).
     """
-    window = "30d"
+    flags = _ReportFlags(window=default_window, tz_mode=default_tz)
+    valued = {"--model": "model_filter", "--machine": "machine"}
+    if allow_metric:
+        valued["--by"] = "metric"
     window_set = False
-    show_cost = True
-    plain = False
-    raw = False
-    tz_mode: Literal["utc", "local"] = default_tz
-    model_filter: str | None = None
 
     idx = 0
     while idx < len(tokens):
         tok = tokens[idx]
         low = tok.casefold()
+        option, has_inline, inline = tok.partition("=")
         if low in {"--no-cost", "--tokens-only"}:
-            show_cost = False
+            flags.show_cost = False
         elif low == "--plain":
-            plain = True
+            flags.plain = True
         elif low == "--raw" and allow_raw:
-            raw = True
+            flags.raw = True
         elif low == "--utc":
-            tz_mode = "utc"
+            flags.tz_mode = "utc"
         elif low == "--local":
-            tz_mode = "local"
-        elif low == "--model":
-            if idx + 1 >= len(tokens):
-                return (
-                    window,
-                    show_cost,
-                    plain,
-                    raw,
-                    tz_mode,
-                    model_filter,
-                    "Missing value for --model.",
-                )
-            idx += 1
-            model_filter = tokens[idx]
-        elif low.startswith("--model="):
-            value = tok.split("=", 1)[1].strip()
+            flags.tz_mode = "local"
+        elif option.casefold() in valued:
+            name = option.casefold()
+            if has_inline:
+                value = inline.strip()
+            elif idx + 1 < len(tokens):
+                idx += 1
+                value = tokens[idx]
+            else:
+                value = ""
             if not value:
-                return (
-                    window,
-                    show_cost,
-                    plain,
-                    raw,
-                    tz_mode,
-                    model_filter,
-                    "Missing value for --model.",
-                )
-            model_filter = value
+                flags.error = f"Missing value for {name}."
+                return flags
+            if name == "--by":
+                value = value.casefold()
+                if value not in _MIX_METRICS:
+                    flags.error = f"Unknown --by {value!r}: use tokens, cost, or calls."
+                    return flags
+            setattr(flags, valued[name], value)
         elif tok.startswith("-"):
-            return window, show_cost, plain, raw, tz_mode, model_filter, f"Unknown option: {tok}"
+            flags.error = f"Unknown option: {tok}"
+            return flags
         else:
             if window_set:
-                return (
-                    window,
-                    show_cost,
-                    plain,
-                    raw,
-                    tz_mode,
-                    model_filter,
-                    f"Unexpected argument: {tok}",
-                )
+                flags.error = f"Unexpected argument: {tok}"
+                return flags
             try:
                 store.parse_window(low)
             except ValueError as exc:
-                return window, show_cost, plain, raw, tz_mode, model_filter, str(exc)
-            window = low
+                flags.error = str(exc)
+                return flags
+            flags.window = low
             window_set = True
         idx += 1
 
-    return window, show_cost, plain, raw, tz_mode, model_filter, None
+    return flags
 
 
 def _make_result(**kwargs: Any) -> PluginCommandActionResult:
@@ -323,9 +325,13 @@ async def complete_stats(
             PluginCommandCompletion("30d", detail="Last 30 days usage card (default)"),
             PluginCommandCompletion("90d", detail="Last 90 days usage card"),
             PluginCommandCompletion("all", detail="All-time usage card"),
+            PluginCommandCompletion("models", detail="Daily model mix as filled stacked bars"),
+            PluginCommandCompletion("rhythm", detail="Calendar and weekday x hour heatmap"),
             PluginCommandCompletion("share", detail="Copy-pasteable social sharing card"),
             PluginCommandCompletion("perf", detail="Latency, throughput, and phase breakdown"),
             PluginCommandCompletion("tools", detail="Tool execution time and run counts"),
+            PluginCommandCompletion("remote", detail="Aggregate usage from other machines"),
+            PluginCommandCompletion("sync", detail="Refresh remote machines now"),
             PluginCommandCompletion("sweep", detail="Scan a directory of fast-agent sessions"),
             PluginCommandCompletion("pricing", detail="Check or update the pricing catalog"),
             PluginCommandCompletion("reprice", detail="Backfill costs for unpriced calls"),
@@ -341,6 +347,30 @@ async def complete_stats(
         ]
         return [item for item in items if not current or item.value.startswith(current)]
 
+    if first in {"remote", "remotes"}:
+        if len(completed) == 1:
+            items = [
+                PluginCommandCompletion("add", detail="Add a machine: <ssh-host> or a ledger path"),
+                PluginCommandCompletion("remove", detail="Forget a machine and delete its mirror"),
+                PluginCommandCompletion("sync", detail="Refresh remote machines now"),
+            ]
+            return [item for item in items if not current or item.value.startswith(current)]
+        if completed[1] == "add":
+            items = [
+                PluginCommandCompletion("--name", detail="Name shown on cards"),
+                PluginCommandCompletion(
+                    "--fallback", detail="Another SSH host for the same machine (e.g. over VPN)"
+                ),
+                PluginCommandCompletion("--db", detail="Ledger path on the remote"),
+            ]
+            return [item for item in items if current and item.value.startswith(current)]
+        if completed[1] in {"remove", "rm", "sync"} and len(completed) == 2:
+            return _machine_completions(ctx, current, include_local=False)
+        return []
+
+    if first == "sync" and len(completed) == 1:
+        return _machine_completions(ctx, current, include_local=False)
+
     if first == "sweep":
         items = [
             PluginCommandCompletion("--dry-run", detail="Preview sweep without writing"),
@@ -350,7 +380,16 @@ async def complete_stats(
         ]
         return [item for item in items if not current or item.value.startswith(current)]
 
-    if first in {"share", "perf", "tools"} or first in _WINDOWS:
+    if completed[-1] == "--machine":
+        return _machine_completions(ctx, current, include_local=True)
+    if completed[-1] == "--by" and first == "models":
+        return [
+            PluginCommandCompletion(metric)
+            for metric in _MIX_METRICS
+            if not current or metric.startswith(current)
+        ]
+
+    if first in _REPORT_MODES or first in _WINDOWS:
         candidates = [
             PluginCommandCompletion("7d", detail="Last 7 days"),
             PluginCommandCompletion("30d", detail="Last 30 days"),
@@ -361,7 +400,12 @@ async def complete_stats(
             PluginCommandCompletion("--utc", detail="4h rhythm heatmap in UTC"),
             PluginCommandCompletion("--local", detail="4h rhythm heatmap in local time"),
             PluginCommandCompletion("--model", detail="Filter by model substring"),
+            PluginCommandCompletion("--machine", detail="Only one machine (name or local)"),
         ]
+        if first == "models":
+            candidates.append(
+                PluginCommandCompletion("--by", detail="Share by tokens (default), cost, or calls")
+            )
         if first == "tools":
             candidates.append(
                 PluginCommandCompletion(
@@ -375,6 +419,146 @@ async def complete_stats(
         ]
 
     return []
+
+
+def _machine_completions(
+    ctx: PluginCommandCompletionContext, current: str, *, include_local: bool
+) -> list[PluginCommandCompletion]:
+    from fast_agent.command_actions import PluginCommandCompletion
+
+    try:
+        plugins = getattr(getattr(ctx, "settings", None), "plugins", None)
+        raw = getattr(plugins, "config", None)
+        config = perf.plugin_config(raw if isinstance(raw, dict) else None)
+        known = remotes.load_remotes(pricing_updater.resolve_data_dir(config))
+    except Exception:
+        return []
+    items = [PluginCommandCompletion("local", detail="This machine")] if include_local else []
+    items += [PluginCommandCompletion(r.name, detail=r.host or r.target) for r in known]
+    return [item for item in items if not current or item.value.casefold().startswith(current)]
+
+
+def _sync_minutes(config: Mapping[str, object]) -> float:
+    value = config.get("remote_sync_minutes")
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return remotes.DEFAULT_SYNC_MINUTES
+    return max(0.0, float(value))
+
+
+async def _sync_with_status(
+    data_dir: Path,
+    *,
+    is_tui: bool,
+    names: Sequence[str] = (),
+    max_age_seconds: float | None = None,
+    timeout: float = remotes.DEFAULT_TIMEOUT_SECONDS,
+    connect_timeout: int = remotes.DEFAULT_CONNECT_SECONDS,
+) -> list[Any]:
+    with _tui_status_context("[cyan]Syncing remote machines…[/cyan]", is_tui=is_tui):
+        return await asyncio.to_thread(
+            remotes.sync_remotes,
+            data_dir,
+            names=tuple(names),
+            max_age_seconds=max_age_seconds,
+            timeout=timeout,
+            connect_timeout=connect_timeout,
+        )
+
+
+async def _handle_remote(
+    tokens: Sequence[str],
+    *,
+    data_dir: Path,
+    config: Mapping[str, object],
+    is_tui: bool,
+) -> PluginCommandActionResult:
+    """``/stats remote [add|remove|sync] ...`` and ``/stats sync [name]``."""
+    usage = (
+        "Usage: /stats remote [add <ssh-host|path> [--name <n>] [--fallback <ssh-host>] "
+        "[--db <path>] | "
+        "remove <name> | sync [name]]"
+    )
+    plain = "--plain" in {tok.casefold() for tok in tokens}
+    tokens = [tok for tok in tokens if tok.casefold() != "--plain"]
+    action = tokens[0].casefold() if tokens else "list"
+    rest = list(tokens[1:])
+    local_name = remotes.local_machine_name(config)
+    note = ""
+
+    if action in {"list", "status", "ls"} and not rest:
+        statuses = [remotes.status_of(data_dir, r) for r in remotes.load_remotes(data_dir)]
+    elif action == "add":
+        name: str | None = None
+        db: str | None = None
+        fallbacks: list[str] = []
+        targets: list[str] = []
+        idx = 0
+        while idx < len(rest):
+            tok = rest[idx]
+            option, has_inline, inline = tok.partition("=")
+            if option in {"--name", "--db", "--fallback"}:
+                if has_inline:
+                    value = inline
+                elif idx + 1 < len(rest):
+                    idx += 1
+                    value = rest[idx]
+                else:
+                    return _make_result(message=f"Missing value for {option}.\n\n{usage}")
+                if option == "--name":
+                    name = value
+                elif option == "--fallback":
+                    fallbacks.append(value)
+                else:
+                    db = value
+            elif tok.startswith("-"):
+                return _make_result(message=f"Unknown option: {tok}\n\n{usage}")
+            else:
+                targets.append(tok)
+            idx += 1
+        if len(targets) != 1:
+            return _make_result(message=usage)
+        try:
+            added = remotes.add_remote(
+                data_dir,
+                targets[0],
+                name=name,
+                db_path=db,
+                fallbacks=fallbacks,
+                local_name=local_name,
+            )
+        except ValueError as exc:
+            return _make_result(message=str(exc))
+        await _sync_with_status(data_dir, is_tui=is_tui, names=[added.name])
+        statuses = [remotes.status_of(data_dir, r) for r in remotes.load_remotes(data_dir)]
+    elif action in {"remove", "rm", "delete"}:
+        if len(rest) != 1:
+            return _make_result(message=usage)
+        if not remotes.remove_remote(data_dir, rest[0]):
+            return _make_result(message=f"No remote named {rest[0]!r}.")
+        note = f"Removed {rest[0]} and deleted its local mirror."
+        statuses = [remotes.status_of(data_dir, r) for r in remotes.load_remotes(data_dir)]
+    elif action == "sync":
+        known = {r.name.casefold() for r in remotes.load_remotes(data_dir)}
+        unknown = [name for name in rest if name.casefold() not in known]
+        if unknown:
+            return _make_result(message=f"No remote named {unknown[0]!r}.")
+        if not known:
+            return _make_result(
+                message="No remotes configured. Add one with /stats remote add <ssh-host>."
+            )
+        synced = {s.name: s for s in await _sync_with_status(data_dir, is_tui=is_tui, names=rest)}
+        statuses = [
+            synced.get(r.name) or remotes.status_of(data_dir, r)
+            for r in remotes.load_remotes(data_dir)
+        ]
+    else:
+        return _make_result(message=usage)
+
+    use_color = is_tui and not plain
+    card = charts.render_remotes_card(statuses, color=use_color, local_name=local_name)
+    if note:
+        card = f"{card}\n{note}"
+    return _format_card_result(card, is_tui=is_tui, color=use_color)
 
 
 async def stats_command(ctx: PluginCommandActionContext) -> PluginCommandActionResult:
@@ -399,6 +583,14 @@ async def stats_command(ctx: PluginCommandActionContext) -> PluginCommandActionR
             burst_ms=perf_settings.burst_ms,
         )
 
+    if sub in {"remote", "remotes"}:
+        return await _handle_remote(tokens[1:], data_dir=data_dir, config=config, is_tui=is_tui)
+
+    if sub == "sync":
+        return await _handle_remote(
+            ["sync", *tokens[1:]], data_dir=data_dir, config=config, is_tui=is_tui
+        )
+
     if sub == "pricing":
         return await _handle_pricing(
             tokens[1:],
@@ -421,41 +613,76 @@ async def stats_command(ctx: PluginCommandActionContext) -> PluginCommandActionR
 
     mode = "usage"
     rest = tokens
-    if sub in {"share", "perf", "tools"}:
+    if sub in _REPORT_MODES:
         mode = sub
         rest = tokens[1:]
 
-    window, show_cost, plain, raw, tz_mode, model_filter, error = _parse_report_flags(
+    flags = _parse_report_flags(
         rest,
         default_tz=_default_tz_mode(config),
+        default_window=_DEFAULT_WINDOW.get(mode, "30d"),
         allow_raw=(mode == "tools"),
+        allow_metric=(mode == "models"),
     )
-    if error is not None:
-        return _make_result(message=f"{error}\n\n{_USAGE_HELP}")
+    if flags.error is not None:
+        return _make_result(message=f"{flags.error}\n\n{_USAGE_HELP}")
+
+    local_name = remotes.local_machine_name(config)
+    try:
+        sources, machine_label = remotes.report_sources(
+            data_dir, local_name=local_name, machine=flags.machine
+        )
+    except ValueError as exc:
+        return _make_result(message=str(exc))
+    if sources:
+        max_age = _sync_minutes(config) * 60.0
+        if max_age > 0 and remotes.needs_sync(data_dir, max_age):
+            # Best effort and bounded: an unreachable machine falls back to its last mirror.
+            try:
+                await _sync_with_status(
+                    data_dir,
+                    is_tui=is_tui,
+                    names=[source.name for source in sources if source.path is not None],
+                    max_age_seconds=max_age,
+                    timeout=remotes.AUTO_TIMEOUT_SECONDS,
+                    connect_timeout=remotes.AUTO_CONNECT_SECONDS,
+                )
+            except Exception:
+                # Offline, no ssh, a full disk...: never let that cost the report.
+                _LOGGER.debug("usage-tracker failed to refresh remotes", exc_info=True)
+            sources, machine_label = remotes.report_sources(
+                data_dir, local_name=local_name, machine=flags.machine
+            )
 
     status = pricing_updater.get_status(data_dir=data_dir, config=config)
     report = await asyncio.to_thread(
         store.query_report,
         db_path,
-        window=window,
-        model_filter=model_filter,
-        tz_mode=tz_mode,
+        window=flags.window,
+        model_filter=flags.model_filter,
+        tz_mode=flags.tz_mode,
         pricing_version=status.active_version,
         upgrade_notice=status.upgrade_notice,
+        sources=sources,
+        machine_filter=machine_label,
     )
 
     if mode == "share":
-        return _make_result(markdown=charts.render_share_card(report, show_cost=show_cost))
+        return _make_result(markdown=charts.render_share_card(report, show_cost=flags.show_cost))
 
-    use_color = is_tui and not plain
+    use_color = is_tui and not flags.plain
     if mode == "perf":
         card = charts.render_perf_card(report, color=use_color)
-        return _format_card_result(card, is_tui=is_tui, color=use_color)
-    if mode == "tools":
-        card = charts.render_tools_card(report, color=use_color, raw=raw)
-        return _format_card_result(card, is_tui=is_tui, color=use_color)
-
-    card = charts.render_usage_card(report, color=use_color, show_cost=show_cost)
+    elif mode == "tools":
+        card = charts.render_tools_card(report, color=use_color, raw=flags.raw)
+    elif mode == "models":
+        card = charts.render_models_card(
+            report, color=use_color, show_cost=flags.show_cost, metric=flags.metric
+        )
+    elif mode == "rhythm":
+        card = charts.render_rhythm_card(report, color=use_color)
+    else:
+        card = charts.render_usage_card(report, color=use_color, show_cost=flags.show_cost)
     return _format_card_result(card, is_tui=is_tui, color=use_color)
 
 

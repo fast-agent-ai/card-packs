@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 PLUGIN_NAME = "usage-tracker"
-PLUGIN_VERSION = "0.1.0"
+PLUGIN_VERSION = "0.2.0"
 SUPPORTED_PRICING_SCHEMAS = frozenset({"fast-agent.pricing/v1"})
 DEFAULT_PRICING_URL = (
     "https://raw.githubusercontent.com/fast-agent-ai/card-packs/main/"
@@ -53,6 +53,61 @@ class DailyUsagePoint:
     cost_usd: float
     calls: int
     sessions: int
+    cache_read_tokens: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class DailyModelPoint:
+    """One model's usage on one day (feeds the stacked model-mix charts)."""
+
+    date_iso: str
+    model: str
+    total_tokens: int
+    cost_usd: float
+    calls: int
+
+
+@dataclass(frozen=True, slots=True)
+class PeriodTotals:
+    """Headline totals for the window immediately before the reported one."""
+
+    total_tokens: int
+    cost_usd: float
+    calls: int
+    sessions: int
+    cache_hit_rate: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MachineUsageRow:
+    """Usage attributed to one machine (the local ledger or a synced remote)."""
+
+    name: str
+    is_local: bool
+    calls: int
+    total_tokens: int
+    cost_usd: float
+    sessions: int
+    synced_at: float | None = None  # epoch seconds; ``None`` for the local ledger
+    last_error: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RemoteStatus:
+    """A configured remote ledger and the state of its local mirror."""
+
+    name: str
+    target: str
+    kind: str  # "ssh" | "path"
+    db_path: str | None = None
+    fallbacks: tuple[str, ...] = ()
+    host: str | None = None
+    synced_at: float | None = None
+    last_attempt_at: float | None = None
+    last_error: str | None = None
+    calls: int | None = None
+    size_bytes: int | None = None
+    changed: bool | None = None  # set by a sync: did the mirror change?
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +117,7 @@ class RhythmHeatmap:
     weekday_labels: tuple[str, ...]
     slot_labels: tuple[str, ...]
     cells: tuple[tuple[int, ...], ...]  # 7 rows (Mon..Sun) x 6 cols (4h slots)
+    hourly: tuple[tuple[int, ...], ...] = ()  # 7 rows (Mon..Sun) x 24 cols (hours)
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,6 +219,10 @@ class UsageReportData:
     process_waits: ProcessWaitSummary | None = None
     pricing_version: str | None = None
     upgrade_notice: str | None = None
+    daily_models: tuple[DailyModelPoint, ...] = ()
+    previous: PeriodTotals | None = None
+    machines: tuple[MachineUsageRow, ...] = ()
+    machine_filter: str | None = None
 
     @property
     def total_tokens(self) -> int:

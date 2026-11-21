@@ -1,4 +1,4 @@
-"""Alignment, privacy and rendering tests for usage-tracker ASCII charts."""
+"""Alignment, privacy and rendering tests for usage-tracker terminal charts."""
 
 from __future__ import annotations
 
@@ -16,12 +16,16 @@ PLUGIN_DIR = Path(__file__).resolve().parents[1] / "plugins" / "usage-tracker"
 if str(PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(PLUGIN_DIR))
 
-from _usage_tracker import charts  # noqa: E402
+from _usage_tracker import charts, viz  # noqa: E402
 from _usage_tracker.models import (  # noqa: E402
+    DailyModelPoint,
     DailyUsagePoint,
+    MachineUsageRow,
     ModelUsageRow,
+    PeriodTotals,
     PhaseBreakdown,
     PricingUpdateStatus,
+    RemoteStatus,
     RhythmHeatmap,
     SweepSummary,
     ToolUsageRow,
@@ -99,9 +103,26 @@ def _daily(days: int, scale: int) -> tuple[DailyUsagePoint, ...]:
                 cost_usd=tokens / 1_000_000,
                 calls=20,
                 sessions=2,
+                cache_read_tokens=int(tokens * 0.7),
             )
         )
     return tuple(points)
+
+
+def _daily_models(
+    daily: tuple[DailyUsagePoint, ...], models: tuple[ModelUsageRow, ...]
+) -> tuple[DailyModelPoint, ...]:
+    """Split each day across the models, rotating the mix so shares move day to day."""
+    out = []
+    for index, point in enumerate(daily):
+        weights = [m.total_tokens * (1 + ((index + rank) % 4)) for rank, m in enumerate(models)]
+        total = sum(weights) or 1
+        for model, weight in zip(models, weights, strict=True):
+            tokens = int(point.total_tokens * weight / total)
+            if tokens <= 0:
+                continue
+            out.append(DailyModelPoint(point.date_iso, model.model, tokens, tokens / 1_000_000, 3))
+    return tuple(out)
 
 
 def _rhythm(monster: bool = True, empty: bool = False) -> RhythmHeatmap:
@@ -143,6 +164,8 @@ def _data(
     tools: tuple[ToolUsageRow, ...] | None = None,
     model_filter: str | None = None,
     notice: str | None = None,
+    per_model: bool = True,
+    previous: bool = True,
 ) -> UsageReportData:
     if models is None:
         models = (
@@ -156,6 +179,13 @@ def _data(
     inp = sum(m.input_tokens for m in models)
     out = sum(m.output_tokens for m in models)
     start = END - timedelta(days=days - 1)
+    daily = _daily(days, scale)
+    hourly = tuple(
+        tuple(
+            max(0, (r * 5 + h * 3) % 13 - 4) * (40 if (r, h) == (1, 10) else 1) for h in range(24)
+        )
+        for r in range(7)
+    )
     return UsageReportData(
         window_label=window,
         start_date=None if window == "all" else start.isoformat(),
@@ -176,8 +206,10 @@ def _data(
         priced_calls=sum(m.priced_calls for m in models),
         unpriced_calls=sum(m.unpriced_calls for m in models),
         models=models,
-        daily=_daily(days, scale),
-        rhythm=_rhythm(),
+        daily=daily,
+        daily_models=_daily_models(daily, models) if per_model else (),
+        previous=PeriodTotals(inp + out - 1_000_000, 180.0, 900, 50, 0.81) if previous else None,
+        rhythm=replace(_rhythm(), hourly=hourly) if per_model else _rhythm(),
         phases=(
             PhaseBreakdown(
                 turns=412,
@@ -249,6 +281,28 @@ SCENARIOS: dict[str, UsageReportData] = {
     "90d": _data(days=90, window="90d", model_filter="claude-sonnet-4-5"),
     "all-400d": _data(days=400, window="all", scale=40_000_000),
     "no-phases": _data(phases=False, tools=()),
+    "14d": _data(days=14, window="14d"),
+    "legacy-report": _data(per_model=False, previous=False),  # no per-model/hourly detail
+    "two-machines": replace(
+        _data(days=7, window="7d"),
+        machines=(
+            MachineUsageRow("desk", True, 900, 100_000_000, 150.0, 40),
+            MachineUsageRow(
+                "build-box", False, 384, 48_100_000, 64.6, 24, synced_at=1_795_000_000.0
+            ),
+            MachineUsageRow(
+                "[red]lab[/red]",
+                False,
+                0,
+                0,
+                0.0,
+                0,
+                synced_at=None,
+                last_error="Connection timed out",
+            ),
+        ),
+    ),
+    "one-machine": replace(_data(days=7, window="7d"), machine_filter="build-box"),
     "nasty-names": _data(models=NASTY_MODELS, tools=NASTY_TOOLS, model_filter="[red]x[/red]:fire:"),
     "all-unpriced": _data(
         models=(
@@ -280,6 +334,15 @@ def _visible(line: str) -> str:
     return BRIEF_MARKUP.sub("", line)
 
 
+def _ink(text: str) -> str:
+    """Collapse chart ink so colour and plain renderings compare equal.
+
+    A cell is ink in one rendering exactly when it is ink or blank in the other
+    (plain mode leaves a nearly empty cell blank where colour draws a sliver).
+    """
+    return "".join("#" if ch in viz.INK or ch == " " else ch for ch in text)
+
+
 def _rich_plain(line: str) -> str:
     assert Text is not None
     return Text.from_markup(line).plain
@@ -305,13 +368,15 @@ def _assert_card(plain: str, colored: str) -> None:
         for ch in line:
             assert unicodedata.east_asian_width(ch) not in ("W", "F"), (ch, line)
             assert not unicodedata.combining(ch), (ch, line)
-    # Colour mode carries the identical visible text, line for line.
+    # Colour mode carries the same layout, line for line and cell for cell; only
+    # chart ink differs (solid colour blocks vs. plain-mode textures).
     colored_lines = colored.splitlines()
     assert len(colored_lines) == len(plain_lines)
     for c_line, p_line in zip(colored_lines, plain_lines, strict=True):
         if Text is not None:
             rendered = Text.from_markup(c_line)
-            assert rendered.plain == p_line, (c_line, p_line)
+            assert len(rendered.plain) == len(p_line), (c_line, p_line)
+            assert _ink(rendered.plain) == _ink(p_line), (c_line, p_line)
             if p_line[:1] in BORDER_CHARS:
                 assert rendered.cell_len == WIDTH, c_line
         # The brief's naive strip is exact whenever the visible text itself has
@@ -322,6 +387,7 @@ def _assert_card(plain: str, colored: str) -> None:
 
 def _brackets_in_dynamic(data: UsageReportData) -> bool:
     names = [m.model for m in data.models] + [t.tool_name for t in data.tools]
+    names += [m.name for m in data.machines]
     names.append(data.model_filter or "")
     return any("[" in name or "]" in name for name in names)
 
@@ -353,12 +419,16 @@ def test_share_card_is_plain_fenced_and_aligned(name: str, show_cost: bool) -> N
     assert lines[0] == "```text" and lines[-1] == "```"
     body = "\n".join(lines[1:-1])
     assert "fast-agent · /stats" in body
+    # The share card is the plain usage card minus notices and machine names.
     assert body == charts.render_usage_card(
-        replace(data, upgrade_notice=None), color=False, show_cost=show_cost
+        replace(data, upgrade_notice=None, machines=(), machine_filter=None),
+        color=False,
+        show_cost=show_cost,
     )
+    assert "aggregated" not in body and "build-box" not in body
     for line in lines[1:-1]:
         assert line[0] in BORDER_CHARS and len(line) == WIDTH, line
-    if not _brackets_in_dynamic(data):
+    if not _brackets_in_dynamic(replace(data, machines=())):
         assert "[" not in share and "]" not in share
 
 
@@ -404,12 +474,15 @@ def test_usage_card_content() -> None:
         assert needle in plain
     assert "148.1M" in plain or "148.2M" in plain
     assert "78 t/s" in plain
-    assert "less ·· ░░ ▒▒ ▓▓ ██ more" in plain
+    assert "less ··░░▒▒▓▓██ more" in plain
     assert any(block in plain for block in "▁▂▃▄▅▆▇")
+    assert "87% cached" in plain and "reasoning" in plain
+    assert "▲▼ vs previous 30d" in plain and "tokens ▲" in plain
+    assert "busiest Tue 10:00" in plain
     # Model filter badge.
     badge = charts.render_usage_card(SCENARIOS["90d"], color=False).splitlines()[0]
     assert "▸ claude-sonnet-4-5" in badge
-    assert "3d per bar" in charts.render_usage_card(SCENARIOS["90d"], color=False)
+    assert "2d per bar" in charts.render_usage_card(SCENARIOS["90d"], color=False)
 
 
 def test_tail_models_collapse_into_other() -> None:
@@ -468,11 +541,192 @@ def test_heatmap_scaling_keeps_quiet_slots_visible() -> None:
     assert len({lvl for lvl in flat if 0 < lvl < 4}) >= 2
 
 
-def test_sparkline_resamples_to_fit() -> None:
+@pytest.mark.parametrize("name", sorted(SCENARIOS))
+@pytest.mark.parametrize("metric", ["tokens", "cost", "calls"])
+def test_models_card_alignment(name: str, metric: str) -> None:
+    data = SCENARIOS[name]
+    _assert_card(
+        charts.render_models_card(data, color=False, metric=metric),
+        charts.render_models_card(data, color=True, metric=metric),
+    )
+
+
+@pytest.mark.parametrize("name", sorted(SCENARIOS))
+def test_rhythm_card_alignment(name: str) -> None:
+    data = SCENARIOS[name]
+    _assert_card(
+        charts.render_rhythm_card(data, color=False), charts.render_rhythm_card(data, color=True)
+    )
+
+
+def test_models_card_content() -> None:
+    data = SCENARIOS["7d"]
+    plain = charts.render_models_card(data, color=False)
+    lines = plain.splitlines()
+    assert lines[0].startswith("╭─ fast-agent models · 7d")
+    for needle in ("daily share", "% of tokens per day", "100% ┤", " 50% ┤", "  0% └", "6 used"):
+        assert needle in plain, needle
+    # One column per day, labelled, each filled to the top of the 100% axis.
+    assert "Sun 15" in plain and "Sat 21" in plain
+    top = next(line for line in lines if "100% ┤" in line)
+    assert top.count("█") + top.count("▓") + top.count("▒") + top.count("░") >= 6 * 6
+    # Every model has a legend texture in plain mode, and "other" stays last.
+    assert "█ claude-sonnet-4" in plain and "▓ gpt-5.1-codex" in plain
+    by_cost = charts.render_models_card(data, color=False, metric="cost")
+    assert "▸ by cost" in by_cost.splitlines()[0] and "% of cost per day" in by_cost
+    # --no-cost never ranks or labels by cost.
+    hidden = charts.render_models_card(data, color=False, metric="cost", show_cost=False)
+    assert "$" not in hidden and "% of tokens per day" in hidden
+
+
+STYLE_TAG = re.compile(r"(?<!\\)\[([a-z_ ]+)\]")
+
+
+def _all_colored_cards() -> list[str]:
+    cards = [charts.render_sweep_summary(_sweep(True), color=True)]
+    cards.append(charts.render_remotes_card((RemoteStatus("a", "a", "ssh"),), color=True))
+    for data in SCENARIOS.values():
+        cards += [
+            charts.render_usage_card(data, color=True),
+            charts.render_models_card(data, color=True, metric="cost"),
+            charts.render_rhythm_card(data, color=True),
+            charts.render_perf_card(data, color=True),
+            charts.render_tools_card(data, color=True),
+        ]
+    return cards
+
+
+def test_only_standard_ansi_colours_are_used() -> None:
+    """Cards follow the terminal theme: named ANSI colours, never 256-colour or RGB."""
+    allowed = viz.ANSI_COLORS | viz.ANSI_ATTRIBUTES
+    seen: set[str] = set()
+    for card in _all_colored_cards():
+        assert not re.search(r"#[0-9a-fA-F]{3,6}\b|rgb\(|color\(", card)
+        for tag in STYLE_TAG.findall(card):
+            if tag == "i":  # the empty [i][/i] guard that stops Rich's :emoji: codes
+                continue
+            words = tag.split()
+            assert words and set(words) <= allowed, tag
+            seen.update(words)
+    assert {"bright_cyan", "green", "yellow", "on"} <= seen
+    for name in (*viz.SERIES_COLORS, *viz.MACHINE_COLORS, viz.C_OTHER, *viz.HEAT_STYLES):
+        assert set(name.split()) <= allowed, name
+
+
+def test_models_card_colours_are_stable_per_family() -> None:
+    colors = viz.model_colors(["claude-opus-5.5", "gpt-6.2-sol", "gpt-6.1-sol", "gemini-4-neon"])
+    assert colors == {
+        "claude-opus-5.5": "red",
+        "gpt-6.2-sol": "green",
+        "gpt-6.1-sol": "bright_green",
+        "gemini-4-neon": "blue",
+    }
+    many = viz.model_colors([f"gpt-{i}" for i in range(12)])
+    assert len(set(many.values())) == 12  # siblings spill onto unused colours
+    again = viz.model_colors(["gpt-6.2-sol", "claude-opus-5.5"])
+    assert again["claude-opus-5.5"] == colors["claude-opus-5.5"]
+    assert again["gpt-6.2-sol"] == colors["gpt-6.2-sol"]
+
+
+def test_rhythm_card_content() -> None:
+    plain = charts.render_rhythm_card(SCENARIOS["90d"], color=False)
+    for needle in ("active days", "current streak", "calendar", "Sep", "Oct", "Nov", "week · UTC"):
+        assert needle in plain, needle
+    # Short windows skip the calendar; reports without hourly detail still draw the week.
+    assert "calendar" not in charts.render_rhythm_card(SCENARIOS["7d"], color=False)
+    legacy = charts.render_rhythm_card(SCENARIOS["legacy-report"], color=False)
+    assert "Tue 16-20" in legacy
+
+
+def test_machines_section_and_filter_badge() -> None:
+    plain = charts.render_usage_card(SCENARIOS["two-machines"], color=False, now=1_795_000_600.0)
+    assert "▸ 3 machines" in plain.splitlines()[0]
+    assert "machines · 3 aggregated" in plain
+    assert "10m ago" in plain and "local" in plain and "no data" in plain
+    assert "Connection timed out" in plain
+    colored = charts.render_usage_card(SCENARIOS["two-machines"], color=True)
+    if Text is not None:
+        assert "[red]lab[/red]" in Text.from_markup(colored).plain
+    one = charts.render_usage_card(SCENARIOS["one-machine"], color=False)
+    assert "▸ @build-box" in one.splitlines()[0] and "aggregated" not in one
+    assert "aggregated" not in charts.render_usage_card(SCENARIOS["rich-30d"], color=False)
+
+
+@pytest.mark.parametrize("variant", ["none", "ok", "failing"])
+def test_remotes_card(variant: str) -> None:
+    remotes = {
+        "none": (),
+        "ok": (
+            RemoteStatus("build-box", "build-box", "ssh", host="BUILD", synced_at=1_795_000_000.0,
+                         calls=38_928, size_bytes=29_609_984, changed=False),
+            RemoteStatus("nas", "/mnt/nas/usage.sqlite3", "path", synced_at=1_795_000_000.0,
+                         calls=12, size_bytes=4096, changed=True),
+        ),
+        "failing": (
+            RemoteStatus("lab", "me@lab.example", "ssh", synced_at=1_794_000_000.0, calls=5,
+                         size_bytes=4096, last_error="Could not resolve hostname [lab]: no " * 4),
+            RemoteStatus("new", "new-host", "ssh", last_error="Permission denied (publickey)."),
+        ),
+    }[variant]  # fmt: skip
+    plain = charts.render_remotes_card(remotes, color=False, local_name="desk", now=1_795_000_300.0)
+    colored = charts.render_remotes_card(
+        remotes, color=True, local_name="desk", now=1_795_000_300.0
+    )
+    _assert_card(plain, colored)
+    assert "desk" in plain and "this machine" in plain
+    if variant == "none":
+        assert "/stats remote add <ssh-host>" in plain
+    elif variant == "ok":
+        assert "▸ 2 synced" in plain.splitlines()[0]
+        assert "up to date · 5m ago" in plain and "38,928 calls" in plain and "28.2 MB" in plain
+    else:
+        assert "▸ 2 failing" in plain.splitlines()[0]
+        assert "stale · 12d ago" in plain and "never synced" in plain
+
+
+def test_deltas() -> None:
+    assert charts._delta(150, 100) == "▲50%"
+    assert charts._delta(50, 100) == "▼50%"
+    assert charts._delta(100, 100) == ""
+    assert charts._delta(5000, 100) == "▲50x"
+    assert charts._delta(10, 0) == "" and charts._delta(None, 3) == ""
+    assert charts._delta(0.96, 0.93, points=True) == "▲3pt"
+
+
+def test_stack_columns_geometry() -> None:
+    red, blue = ("red", "█"), ("blue", "▓")
+    columns = [[(75, *red), (25, *blue)], [], [(1, *red)]]
+    share = viz.stack_columns(columns, 4, col_width=3, gap=1)
+    assert len(share) == 4 and all(charts._width(line) == 3 * 3 + 2 for line in share)
+    # 100% chart: the first column is full height, 3 rows of red under 1 of blue.
+    firsts = [line[0] for line in share]
+    assert [seg[2] for seg in firsts] == ["▓▓▓", "███", "███", "███"]
+    assert all(seg[0] == "███" for seg in firsts)
+    # The empty day shows a baseline dot only.
+    assert share[-1][2][0] == "···" and share[0][2][0] == "   "
+    # Absolute chart: heights follow the scale; a sliver still shows on the baseline.
+    absolute = viz.stack_columns(columns, 4, scale=100.0)
+    assert absolute[-1][2][0] in viz.V_EIGHTHS and absolute[0][2][0] == " "
+    # A boundary inside a cell is the lower series' partial block on the upper's colour.
+    half = viz.stack_columns([[(50, *red), (50, *blue)]], 1)
+    assert half[0][0][:2] == ("▄", "red on blue")
+    bar = viz.stacked_bar([(1, *red), (1, *blue)], 3)
+    assert [seg[0] for seg in bar] == ["█", "▌", "█"] and bar[1][1] == "red on blue"
+
+
+def test_resample_and_spark() -> None:
+    assert viz.resample([1, 2, 3], 6) == [1, 1, 2, 2, 3, 3]
+    assert viz.resample([1, 3, 5, 7], 2) == [2, 6]
     for days in (1, 7, 30, 90, 400):
-        top, bottom, per = charts._sparkline([i % 9 for i in range(days)])
-        assert charts._width(top) == charts._width(bottom) <= charts.SPARK_W
-        assert per == max(1, math.ceil(days / charts.SPARK_W))
+        line = viz.spark([i % 9 for i in range(days)], 12, "cyan")
+        assert charts._width(line) == 12
+    assert viz.column_layout(7, 62) == ([6] * 7, 2)
+    assert viz.column_layout(14, 62) == ([3] * 14, 1)
+    assert viz.column_layout(62, 62) == ([1] * 62, 0)
+    # Touching columns share the whole width: 30 days over 56 cells are 1 or 2 wide.
+    widths, gap = viz.column_layout(30, 56)
+    assert (sum(widths), gap, set(widths)) == (56, 0, {1, 2})
+    assert viz.column_layout(0, 62) == ([], 0)
 
 
 @pytest.mark.parametrize(
@@ -508,8 +762,9 @@ def test_perf_card_content() -> None:
         "agent time",
         "3h 12m",
         "412",
-        "ttft p50",
-        "ttft p90",
+        "● ttft p50 ━╸ p90",
+        "p50",
+        "p90",
         "tok/s",
         "burst",
         "top tools",
@@ -694,6 +949,10 @@ def charts_url() -> str:
 def test_print_samples_for_visual_inspection(capsys: pytest.CaptureFixture[str]) -> None:
     data = SCENARIOS["rich-30d"]
     samples = [
+        charts.render_usage_card(SCENARIOS["two-machines"], color=False),
+        charts.render_models_card(SCENARIOS["7d"], color=False),
+        charts.render_rhythm_card(SCENARIOS["90d"], color=False),
+        charts.render_remotes_card((), color=False),
         charts.render_usage_card(data, color=False),
         charts.render_share_card(SCENARIOS["90d"], show_cost=False),
         charts.render_perf_card(data, color=False),

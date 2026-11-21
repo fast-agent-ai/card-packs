@@ -1,15 +1,19 @@
 """Share-worthy, fixed-width terminal cards for the usage-tracker plugin.
 
 Every card is exactly :data:`CARD_WIDTH` visible cells wide.  Lines are built
-from ``(text, style)`` segments whose widths are measured *before* any Rich
-markup is added, so the plain (``color=False``) and Rich (``color=True``)
-renderings always contain the identical visible text: colour mode only wraps
-segments in ``[style]...[/]`` tags and escapes anything Rich could mistake for
-markup (``[tag]`` look-alikes, trailing backslashes, ``:emoji:`` codes).
+from segments (see ``viz.py``) whose widths are measured *before* any Rich
+markup is added.  The Rich (``color=True``) and plain (``color=False``)
+renderings share one layout, cell for cell; they differ only in chart "ink":
+colour charts paint solid blocks and tell series apart by hue, plain charts
+use textures (``█ ▓ ▒ ░ # = +``), because a share card has no colour.
 
-Only single-width glyphs are used inside the frame (box drawing, shade/blocks,
+Colour means the 16 standard ANSI colours only (see ``viz.py``): the cards
+take their actual shades from the terminal theme.
+
+Only single-width glyphs are used inside the frame (box drawing, blocks,
 ``·``, ``▸``, ``…``); dynamic strings (model and tool names, notices) are
-sanitised so wide or zero-width characters can never break alignment.
+sanitised so wide or zero-width characters can never break alignment, and
+escaped so Rich never mistakes them for markup.
 
 Privacy: cards never show file paths or session ids (the sweep summary shows
 only the last two components of the swept directory).
@@ -20,19 +24,25 @@ from __future__ import annotations
 import math
 import re
 import textwrap
+import time
 import unicodedata
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
+
+from . import viz
+from .viz import Line, Seg
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
     from .models import (
+        DailyUsagePoint,
         ModelUsageRow,
         PhaseBreakdown,
         PricingUpdateStatus,
         ProcessWaitSummary,
         PtcSummary,
+        RemoteStatus,
         SweepSummary,
         ToolUsageRow,
         UsageReportData,
@@ -43,8 +53,11 @@ __all__ = [
     "BRAND",
     "render_usage_card",
     "render_share_card",
+    "render_models_card",
+    "render_rhythm_card",
     "render_perf_card",
     "render_tools_card",
+    "render_remotes_card",
     "render_sweep_summary",
     "render_pricing_status",
 ]
@@ -52,49 +65,41 @@ __all__ = [
 CARD_WIDTH = 68
 PAD = 2
 CONTENT = CARD_WIDTH - 2 - 2 * PAD  # 62 usable cells between the side borders
-LEFT_W = 24  # lower panel: heatmap column
-RIGHT_W = CONTENT - LEFT_W - 2 * PAD - 1  # 33: sparkline / cache / time column
-SPLIT_COL = 1 + PAD + LEFT_W + PAD  # column of the inner vertical rule (29)
-SPARK_W = 30
+SPARK_W = 12  # KPI trend sparkline
 BRAND = "fast-agent · /stats"
 ELLIPSIS = "…"
+SWATCH = "■"
+MIX_METRICS = ("tokens", "cost", "calls")
 
 # -- palette -------------------------------------------------------------------
 S_BORDER = "dim"
 S_DIM = "dim"
 S_TITLE = "bold"
-S_BRAND = "bold bright_cyan"
-S_TOKENS = "bright_cyan"
-S_TOKENS_BIG = "bold bright_cyan"
-S_BAR = "cyan"
-S_PEAK = "bold bright_cyan"
-S_TRACK = "dim"
-S_COST = "green"
-S_COST_BIG = "bold green"
-S_CACHE = "yellow"
-S_CACHE_BIG = "bold yellow"
-S_SESS_BIG = "bold magenta"
-S_SPEED = "bright_blue"
+S_TOKENS = viz.C_TOKENS
+S_TOKENS_BIG = f"bold {viz.C_TOKENS}"
+S_BAR = viz.C_TOKENS
+S_COST = viz.C_COST
+S_COST_BIG = f"bold {viz.C_COST}"
+S_CACHE = viz.C_CACHE
+S_CACHE_BIG = f"bold {viz.C_CACHE}"
+S_SESS = viz.C_SESSIONS
+S_SESS_BIG = f"bold {viz.C_SESSIONS}"
+S_SPEED = viz.C_SPEED
+S_TOOLS = viz.C_TOOLS
+S_PROCESS = viz.C_PROCESS
 S_WARN = "yellow"
 S_ERR = "red"
 S_OK = "green"
 S_BADGE = "bold magenta"
 
 PHASES: tuple[tuple[str, str, str, str], ...] = (
-    # key, label, glyph, style
-    ("wait", "wait", "░", "yellow"),
+    # key, label, plain glyph, colour
+    ("wait", "wait", "░", viz.C_CACHE),
     ("stream", "stream", "█", "green"),
-    ("tools", "tools", "▓", "blue"),
-    ("process", "process", "▒", "magenta"),
-    ("other", "other", "·", "dim"),
+    ("tools", "tools", "▓", viz.C_TOOLS),
+    ("process", "process", "▒", viz.C_PROCESS),
+    ("other", "other", ":", viz.C_OTHER),
 )
-
-HEAT_GLYPHS = ("··", "░░", "▒▒", "▓▓", "██")
-HEAT_STYLES = ("dim", "#155e75", "#0891b2", "#22d3ee", "bold #a5f3fc")
-SPARK_BLOCKS = " ▁▂▃▄▅▆▇█"
-
-Seg = tuple[str, str]
-Line = list[Seg]
 
 
 # =============================================================================
@@ -127,15 +132,22 @@ def _clean(value: object) -> str:
 _DATE_SUFFIX = re.compile(r"[-@_](?:20\d{6}|20\d{2}-\d{2}-\d{2})$")
 
 
+_ORG_PREFIX = re.compile(r"^[A-Za-z0-9_.-]+/(?=[A-Za-z0-9])")
+
+
 def _display_name(name: str) -> str:
-    """Model names lose dated snapshot suffixes (``-20250929``) for display."""
+    """Model names lose ``org/`` prefixes and dated snapshot suffixes (``-20250929``)."""
     text = _clean(name).strip()
-    short = _DATE_SUFFIX.sub("", text)
+    short = _DATE_SUFFIX.sub("", _ORG_PREFIX.sub("", text))
     return short or text
 
 
 def _width(segs: Iterable[Seg]) -> int:
-    return sum(len(text) for text, _ in segs)
+    return sum(len(seg[0]) for seg in segs)
+
+
+def _plain(seg: Seg) -> str:
+    return seg[2] if len(seg) > 2 else seg[0]
 
 
 def _fit(segs: Sequence[Seg], width: int, align: str = "left") -> Line:
@@ -147,17 +159,17 @@ def _fit(segs: Sequence[Seg], width: int, align: str = "left") -> Line:
             return []
         out: Line = []
         room = width - 1
-        for text, style in segs:
+        for seg in segs:
             if room <= 0:
                 break
-            piece = text[:room]
+            piece = seg[0][:room]
             if piece:
-                out.append((piece, style))
+                out.append((piece, seg[1], seg[2][:room]) if len(seg) > 2 else (piece, seg[1]))
             room -= len(piece)
         # Avoid "name …": drop trailing blanks before the ellipsis.
         while out and not out[-1][0].strip():
             out.pop()
-        if out:
+        if out and len(out[-1]) == 2:
             out[-1] = (out[-1][0].rstrip(" "), out[-1][1])
         style = out[-1][1] if out else segs[0][1]
         out.append((ELLIPSIS, style))
@@ -212,9 +224,10 @@ def _markup_text(text: str, before_tag: bool) -> str:
 
 def _render_line(segs: Sequence[Seg], color: bool) -> str:
     if not color:
-        return "".join(text for text, _ in segs)
+        return "".join(_plain(seg) for seg in segs)
     merged: list[list[str]] = []
-    for text, style in segs:
+    for seg in segs:
+        text, style = seg[0], seg[1]
         if not text:
             continue
         if merged and merged[-1][1] == style:
@@ -363,42 +376,35 @@ def _date_range(data: UsageReportData, short: bool = False) -> str:
 # Geometry helpers
 # =============================================================================
 
-
-def _alloc(values: Sequence[float], width: int) -> list[int]:
-    """Largest-remainder allocation of ``width`` cells; nonzero values get >= 1."""
-    clean = [max(0.0, float(v)) if math.isfinite(v) else 0.0 for v in values]
-    total = sum(clean)
-    if width <= 0 or total <= 0:
-        return [0 for _ in clean]
-    raw = [v / total * width for v in clean]
-    cells = [int(math.floor(r)) for r in raw]
-    order = sorted(range(len(raw)), key=lambda i: raw[i] - cells[i], reverse=True)
-    for i in order[: width - sum(cells)]:
-        cells[i] += 1
-    # Give visible slivers to tiny-but-present values, stealing from the largest.
-    for i, v in enumerate(clean):
-        if v > 0 and cells[i] == 0:
-            donor = max(range(len(cells)), key=lambda j: cells[j])
-            if cells[donor] > 1:
-                cells[donor] -= 1
-                cells[i] = 1
-    return cells
+_alloc = viz.alloc
+_heat_levels = viz.heat_levels
 
 
 def _bar(fraction: float, width: int, style: str, *, min_one: bool = True) -> Line:
-    fraction = 0.0 if not math.isfinite(fraction) else max(0.0, min(1.0, fraction))
-    filled = int(round(fraction * width))
-    if min_one and fraction > 0 and filled == 0:
-        filled = 1
-    return [("█" * filled, style), ("░" * (width - filled), S_TRACK)]
+    return viz.line_bar(fraction, width, style, min_one=min_one)
 
 
 def _stacked(parts: Sequence[tuple[float, str, str]], width: int) -> Line:
-    """``parts`` = (value, glyph, style); empty when nothing to show."""
-    cells = _alloc([value for value, _, _ in parts], width)
-    if sum(cells) == 0:
-        return [("·" * width, S_TRACK)]
-    return [(glyph * n, style) for n, (_, glyph, style) in zip(cells, parts, strict=True) if n]
+    """``parts`` = (value, plain glyph, colour); a dotted track when empty."""
+    return viz.stacked_bar([(value, style, glyph) for value, glyph, style in parts], width)
+
+
+def _swatch(color: str, glyph: str = "█") -> Seg:
+    """Legend chip: a coloured square, or the series' texture in plain mode."""
+    return (SWATCH, color, glyph)
+
+
+def _fmt_age(seconds: float | None) -> str:
+    if seconds is None or not math.isfinite(seconds):
+        return "never"
+    seconds = max(0.0, seconds)
+    if seconds < 90:
+        return "just now"
+    if seconds < 5400:
+        return f"{round(seconds / 60)}m ago"
+    if seconds < 36 * 3600:
+        return f"{round(seconds / 3600)}h ago"
+    return f"{round(seconds / 86400)}d ago"
 
 
 # =============================================================================
@@ -439,25 +445,12 @@ class _Card:
         line.append(("╮", S_BORDER))
         self.lines.append(line)
 
-    def divider(self, title: str = "", right: str | None = None) -> None:
-        """Full-width ├─ title ──┤ or split ├─ left ──┬─ right ──┤."""
-        if right is None:
-            self.lines.append(_rule("├", "┤", title, CARD_WIDTH))
-            return
-        left = _rule("├", "", title, SPLIT_COL)
-        right_part = _rule("┬", "┤", right, CARD_WIDTH - SPLIT_COL)
-        self.lines.append(left + right_part)
+    def divider(self, title: str = "", detail: str = "") -> None:
+        """Full-width ``├─ title · detail ──┤`` (``detail`` is dimmed)."""
+        self.lines.append(_rule("├", "┤", title, CARD_WIDTH, detail))
 
-    def bottom(self, note: Line | None = None, split: bool = False) -> None:
-        brand: Line = [("fast-agent", S_BRAND), (" · /stats", S_DIM)]
-        tail: Line = [(" ", S_BORDER), *brand, (" ─╯", S_BORDER)]
-        if split:
-            left_len = SPLIT_COL
-            right_len = CARD_WIDTH - SPLIT_COL
-            left = _bottom_left(note, left_len)
-            fill = right_len - 1 - _width(tail)
-            self.lines.append(left + [("┴" + "─" * fill, S_BORDER)] + tail)
-            return
+    def bottom(self, note: Line | None = None) -> None:
+        tail: Line = [(" ", S_BORDER), *_brand(), (" · /stats", S_DIM), (" ─╯", S_BORDER)]
         head_len = CARD_WIDTH - _width(tail)
         self.lines.append(_bottom_left(note, head_len) + tail)
 
@@ -471,24 +464,6 @@ class _Card:
     def blank(self) -> None:
         self.row([])
 
-    def split_rows(self, left: Sequence[Line], right: Sequence[Line]) -> None:
-        for index in range(max(len(left), len(right))):
-            lhs = _fit(left[index] if index < len(left) else [], LEFT_W)
-            rhs = _fit(right[index] if index < len(right) else [], RIGHT_W)
-            self.lines.append(
-                [
-                    ("│", S_BORDER),
-                    (" " * PAD, ""),
-                    *lhs,
-                    (" " * PAD, ""),
-                    ("│", S_BORDER),
-                    (" " * PAD, ""),
-                    *rhs,
-                    (" " * PAD, ""),
-                    ("│", S_BORDER),
-                ]
-            )
-
     def wrapped(self, text: str, style: str = "", prefix: str = "", pstyle: str = "") -> None:
         body = _clean(text)
         indent = " " * len(prefix)
@@ -499,13 +474,21 @@ class _Card:
         return "\n".join(_render_line(line, self.color) for line in [*self.lines, *after])
 
 
-def _rule(start: str, end: str, title: str, width: int) -> Line:
-    """``start─ title ────end`` exactly ``width`` cells (end may be empty)."""
+def _brand() -> Line:
+    return [("fast-agent", viz.C_BRAND)]
+
+
+def _rule(start: str, end: str, title: str, width: int, detail: str = "") -> Line:
+    """``start─ title · detail ────end`` exactly ``width`` cells."""
     inner = width - len(start) - len(end)
     title = _clean(title)
     if title:
         room = inner - 4  # "─ " + " " + at least one "─"
-        label = _fit([(title, S_TITLE)], min(len(title), max(1, room)))
+        segs: Line = [(title, S_TITLE)]
+        detail = _clean(detail)
+        if detail:
+            segs.append((f" · {detail}", S_DIM))
+        label = _fit(segs, min(_width(segs), max(1, room)))
         fill = inner - 3 - _width(label)
         return [(start + "─ ", S_BORDER), *label, (" " + "─" * fill + end, S_BORDER)]
     return [(start + "─" * inner + end, S_BORDER)]
@@ -521,7 +504,7 @@ def _bottom_left(note: Line | None, width: int) -> Line:
 
 def _title(kind: str, data: UsageReportData | None = None) -> list[Line]:
     """Title variants, most to least detailed (the frame picks the first that fits)."""
-    base: Line = [("fast-agent", S_BRAND), (f" {kind}", S_TITLE)]
+    base: Line = [*_brand(), (f" {kind}", S_TITLE)]
     if data is None:
         return [base]
     window = _clean(data.window_label).strip()
@@ -532,19 +515,69 @@ def _title(kind: str, data: UsageReportData | None = None) -> list[Line]:
     return variants
 
 
-def _filter_badge(data: UsageReportData) -> Line | None:
-    if not data.model_filter:
+def _filter_badge(data: UsageReportData, extra: str = "") -> Line | None:
+    parts = [extra] if extra else []
+    if data.model_filter:
+        parts.append(_clean(data.model_filter).strip())
+    if data.machine_filter:
+        parts.append("@" + _clean(data.machine_filter).strip())
+    elif len(data.machines) > 1:
+        parts.append(f"{len(data.machines)} machines")
+    if not parts:
         return None
-    return [("▸ ", S_BADGE), (_clean(data.model_filter).strip(), S_BADGE)]
+    return [("▸ ", S_BADGE), (" · ".join(parts), S_BADGE)]
 
 
-def _kpi_rows(items: Sequence[tuple[str, str, str]], widths: Sequence[int]) -> list[Line]:
+KPI_WIDTHS = (16, 16, 16, 14)
+
+
+def _kpi_rows(
+    items: Sequence[tuple[str, str, str]],
+    widths: Sequence[int] = KPI_WIDTHS,
+    deltas: Sequence[str] = (),
+    sparks: Sequence[Line | None] = (),
+) -> list[Line]:
+    """Big values over dim labels, optionally with ``▲12%`` deltas and trend sparks."""
     values: Line = []
     labels: Line = []
-    for (value, style, label), width in zip(items, widths, strict=True):
+    trends: Line = []
+    for index, ((value, style, label), width) in enumerate(zip(items, widths, strict=True)):
         values += _cell(value, width, style)
-        labels += _cell(label, width, S_DIM)
-    return [values, labels]
+        delta = deltas[index] if index < len(deltas) else ""
+        color = style.removeprefix("bold ")
+        if delta and len(label) + 1 + len(delta) <= width:
+            labels += _fit([(label, S_DIM), (" ", ""), (delta, color)], width)
+        else:
+            labels += _cell(label, width, S_DIM)
+        trend = sparks[index] if index < len(sparks) else None
+        trends += _fit(trend or [], width)
+    rows = [values, labels]
+    if any(spark for spark in sparks):
+        rows.append(trends)
+    return rows
+
+
+def _delta(current: float | None, previous: float | None, *, points: bool = False) -> str:
+    """``▲12%`` / ``▼3%`` against the previous window (``▲2pt`` for rates)."""
+    if current is None or previous is None:
+        return ""
+    if not math.isfinite(current) or not math.isfinite(previous):
+        return ""
+    if points:
+        diff = round((current - previous) * 100)
+        if diff == 0:
+            return ""
+        return f"{'▲' if diff > 0 else '▼'}{abs(diff)}pt"
+    if previous <= 0:
+        return ""
+    change = (current - previous) / previous
+    arrow = "▲" if change > 0 else "▼"
+    pct = abs(change) * 100
+    if pct < 0.5:
+        return ""
+    if pct >= 999.5:
+        return f"{arrow}{current / previous:.0f}x"
+    return f"{arrow}{pct:.0f}%"
 
 
 def _after_notice(notice: str | None) -> list[Line]:
@@ -559,7 +592,7 @@ def _after_notice(notice: str | None) -> list[Line]:
 
 
 # =============================================================================
-# Usage card
+# Shared report helpers
 # =============================================================================
 
 
@@ -586,21 +619,17 @@ def _empty_usage_card(data: UsageReportData, color: bool, title_kind: str = "usa
     return card.render(_after_notice(data.upgrade_notice))
 
 
-def _daily_series(data: UsageReportData) -> tuple[list[int], date | None, date | None]:
-    """Daily totals with gap days filled in (when dates are parseable)."""
-    points: list[tuple[date, int]] = []
+def _daily_points(data: UsageReportData) -> list[tuple[date | None, DailyUsagePoint | None]]:
+    """One entry per day of the window, gap days included (``None`` point)."""
+    by_day: dict[date, DailyUsagePoint] = {}
     for point in data.daily:
         day = _parse_date(point.date_iso)
-        if day is None:
-            return [max(0, int(p.total_tokens)) for p in data.daily], None, None
-        points.append((day, max(0, int(point.total_tokens))))
-    if not points:
-        return [], None, None
-    by_day: dict[date, int] = {}
-    for day, tokens in points:
-        by_day[day] = by_day.get(day, 0) + tokens
-    start = min(by_day)
-    end = max(by_day)
+        if day is None:  # unparseable dates: show the recorded points as they are
+            return [(None, p) for p in data.daily]
+        by_day[day] = point
+    if not by_day:
+        return []
+    start, end = min(by_day), max(by_day)
     window_start = _parse_date(data.start_date)
     window_end = _parse_date(data.end_date)
     if window_start is not None and window_start < start:
@@ -609,204 +638,18 @@ def _daily_series(data: UsageReportData) -> tuple[list[int], date | None, date |
         end = window_end
     span = (end - start).days + 1
     if span > 20_000:  # defensive: absurd ranges fall back to recorded days only
-        days = sorted(by_day)
-        return [by_day[d] for d in days], days[0], days[-1]
-    series = [by_day.get(start + timedelta(days=i), 0) for i in range(span)]
-    return series, start, end
+        return [(day, by_day[day]) for day in sorted(by_day)]
+    days = (start + timedelta(days=i) for i in range(span))
+    return [(day, by_day.get(day)) for day in days]
 
 
-def _sparkline(values: Sequence[int], width: int = SPARK_W) -> tuple[Line, Line, int]:
-    """Two-row sparkline (16 levels). Returns (top, bottom, days_per_column)."""
-    n = len(values)
-    if n == 0:
-        return [], [], 1
-    per = max(1, math.ceil(n / width))
-    buckets: list[float] = []
-    for i in range(0, n, per):
-        chunk = values[i : i + per]
-        buckets.append(sum(chunk) / len(chunk))
-    count = len(buckets)
-    col = 1
-    gap = 0
-    if count <= width // 2:
-        col = max(1, min(4, width // count))
-        gap = 1 if col >= 2 else 0
-    peak = max(buckets)
-    peak_index = buckets.index(peak) if peak > 0 else -1
-    top: Line = []
-    bottom: Line = []
-    for index, value in enumerate(buckets):
-        bar_w = col - gap
-        level = 0 if peak <= 0 or value <= 0 else max(1, math.ceil(value / peak * 16))
-        style = S_PEAK if index == peak_index else S_BAR
-        if level == 0:
-            top.append((" " * bar_w, ""))
-            bottom.append(("·" * bar_w, S_TRACK))
-        else:
-            hi = SPARK_BLOCKS[level - 8] if level > 8 else " "
-            lo = SPARK_BLOCKS[min(level, 8)]
-            top.append((hi * bar_w, style if level > 8 else ""))
-            bottom.append((lo * bar_w, style))
-        if gap:
-            top.append((" " * gap, ""))
-            bottom.append((" " * gap, ""))
-    return top, bottom, per
-
-
-def _heat_levels(cells: Sequence[Sequence[int]]) -> list[list[int]]:
-    """Map raw counts to 0..4 blending sqrt magnitude with rank (quantile).
-
-    The rank half keeps quiet-but-real slots visible even when one monster
-    session dwarfs the rest of the week; the sqrt half keeps magnitude honest.
-    """
-    flat = [max(0, int(v)) for row in cells for v in row]
-    nonzero = sorted(set(v for v in flat if v > 0))
-    if not nonzero:
-        return [[0 for _ in row] for row in cells]
-    peak = nonzero[-1]
-    rank = {v: (i + 1) / len(nonzero) for i, v in enumerate(nonzero)}
-    out: list[list[int]] = []
-    for row in cells:
-        levels: list[int] = []
-        for raw in row:
-            v = max(0, int(raw))
-            if v <= 0:
-                levels.append(0)
-                continue
-            score = 0.5 * math.sqrt(v / peak) + 0.5 * rank[v]
-            levels.append(max(1, min(4, math.ceil(score * 4 - 1e-9))))
-        out.append(levels)
-    return out
-
-
-def _heatmap_rows(data: UsageReportData) -> list[Line]:
-    rhythm = data.rhythm
-    weekdays = list(rhythm.weekday_labels or ())
-    defaults = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
-    weekdays = [_clean(w)[:3] for w in weekdays[:7]] + list(defaults[len(weekdays[:7]) :])
-    slots = [_clean(s)[:2] for s in (rhythm.slot_labels or ())[:6]]
-    slots += [f"{h:02d}" for h in range(len(slots) * 4, 24, 4)]
-    raw_cells = [list(row[:6]) + [0] * (6 - len(row[:6])) for row in list(rhythm.cells)[:7]]
-    raw_cells += [[0] * 6 for _ in range(7 - len(raw_cells))]
-    levels = _heat_levels(raw_cells)
-    rows: list[Line] = [[("    ", ""), (" ".join(f"{s:<2}" for s in slots), S_DIM)]]
-    for label, row in zip(weekdays, levels, strict=True):
-        line: Line = [(f"{label:<3} ", S_DIM)]
-        for i, level in enumerate(row):
-            if i:
-                line.append((" ", ""))
-            line.append((HEAT_GLYPHS[level], HEAT_STYLES[level]))
-        rows.append(line)
-    rows.append([])
-    legend: Line = [("less ", S_DIM)]
-    for i, (glyph, style) in enumerate(zip(HEAT_GLYPHS, HEAT_STYLES, strict=True)):
-        if i:
-            legend.append((" ", ""))
-        legend.append((glyph, style))
-    legend.append((" more", S_DIM))
-    rows.append(legend)
-    return rows
-
-
-def _busiest_slot(data: UsageReportData) -> str | None:
-    rhythm = data.rhythm
-    best = (0, -1, -1)
-    for r, row in enumerate(list(rhythm.cells)[:7]):
-        for c, value in enumerate(list(row)[:6]):
-            if int(value) > best[0]:
-                best = (int(value), r, c)
-    if best[0] <= 0:
-        return None
-    defaults = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
-    weekdays = list(rhythm.weekday_labels or defaults)
-    day = _clean(weekdays[best[1]] if best[1] < len(weekdays) else defaults[best[1]])[:3]
-    slots = [_clean(s)[:2] for s in (rhythm.slot_labels or ())]
-    start = slots[best[2]] if best[2] < len(slots) else f"{best[2] * 4:02d}"
-    end = slots[best[2] + 1] if best[2] + 1 < len(slots) else f"{(best[2] + 1) * 4:02d}"
-    return f"{day} {start}-{end}"
-
-
-def _right_panel(data: UsageReportData) -> list[Line]:
-    rows: list[Line] = []
-    series, start, end = _daily_series(data)
-    top, bottom, _per = _sparkline(series)
-    if series and any(series):
-        rows.append(top)
-        rows.append(bottom)
-        spark_w = _width(bottom)
-        if start is not None and end is not None:
-            long_range = (end - start).days > 330
-            fmt = (lambda d: d.strftime("%b %Y")) if long_range else _fmt_day
-            first, last = fmt(start), fmt(end)
-            if start == end:
-                axis: Line = [(first, S_DIM)]
-            elif spark_w >= len(first) + len(last) + 1:
-                axis = [
-                    (first, S_DIM),
-                    (" " * (spark_w - len(first) - len(last)), ""),
-                    (last, S_DIM),
-                ]
-            else:
-                axis = [(f"{first} - {last}", S_DIM)]
-        else:
-            axis = [(f"{len(series)} days", S_DIM)]
-        rows.append(axis)
-        peak = max(series)
-        active = [v for v in series if v > 0]
-        avg = sum(active) / len(active) if active else 0
-        stat: Line = [("peak ", S_DIM), (_compact(peak), S_TOKENS)]
-        if start is not None:
-            peak_day = start + timedelta(days=series.index(peak))
-            stat.append((f" {_fmt_day(peak_day)}", S_DIM))
-        stat += [(" · avg ", S_DIM), (_compact(avg), S_TOKENS)]
-        rows.append(stat)
-    else:
-        rows += [[("no daily activity", S_DIM)], [], [], []]
-
-    hit = data.cache_hit_rate
-    pct = _fmt_pct(hit)
-    rows.append([])
-    rows.append(
-        [("cache ", S_DIM), *_bar(hit or 0.0, RIGHT_W - 6 - 5, S_CACHE), (f"{pct:>5}", S_CACHE)]
-    )
-
-    phases = data.phases
-    if phases is not None and _phase_total(phases) > 0:
-        parts = _phase_parts(phases)
-        rows.append(
-            [("time  ", S_DIM), *_stacked([(v, g, s) for _, _, g, s, v in parts], RIGHT_W - 6)]
-        )
-        shown = [p for p in parts if p[4] > 0]
-        total = sum(p[4] for p in parts)
-        items: list[Line] = []
-        for key, label, glyph, style, value in shown:
-            short = "proc" if key == "process" else label
-            items.append(
-                [(glyph, style), (f" {short:<7}", S_DIM), (f"{_fmt_pct(value / total):>4}", style)]
-            )
-        for i in range(0, min(len(items), 4), 2):
-            pair = items[i : i + 2]
-            line: Line = _fit(pair[0], 16)
-            if len(pair) > 1:
-                line += [(" ", ""), *_fit(pair[1], 16)]
-            rows.append(line)
-        if len(items) > 4:
-            rows.append(_fit(items[4], 16))
-    else:
-        busiest = _busiest_slot(data)
-        rows.append([])
-        if busiest:
-            rows.append([("busiest ", S_DIM), (busiest, S_TOKENS)])
-        window_days = len(series) if series else 0
-        if window_days:
-            rows.append(
-                [
-                    ("active  ", S_DIM),
-                    (f"{data.active_days}", S_TOKENS),
-                    (f" of {window_days} days", S_DIM),
-                ]
-            )
-    return rows
+def _daily_series(data: UsageReportData) -> tuple[list[int], date | None, date | None]:
+    """Daily token totals with gap days filled in (when dates are parseable)."""
+    points = _daily_points(data)
+    series = [max(0, int(p.total_tokens)) if p is not None else 0 for _, p in points]
+    if not points:
+        return [], None, None
+    return series, points[0][0], points[-1][0]
 
 
 def _phase_total(phases: PhaseBreakdown) -> float:
@@ -822,13 +665,18 @@ def _phase_parts(phases: PhaseBreakdown) -> list[tuple[str, str, str, str, float
 
 
 class _ModelEntry:
-    __slots__ = ("name", "tokens", "cost", "priced", "unpriced", "tps", "cache", "other")
+    __slots__ = (
+        "name", "members", "tokens", "cost", "calls", "priced", "unpriced", "tps", "cache",
+        "other",
+    )  # fmt: skip
 
     def __init__(self, rows: Sequence[ModelUsageRow], name: str, other: bool) -> None:
         self.name = name
         self.other = other
+        self.members = frozenset(r.model for r in rows)
         self.tokens = sum(r.total_tokens for r in rows)
         self.cost = sum(r.cost_usd for r in rows)
+        self.calls = sum(r.calls for r in rows)
         self.priced = sum(r.priced_calls for r in rows)
         self.unpriced = sum(r.unpriced_calls for r in rows)
         weighted = [(r.tps, max(1, r.calls)) for r in rows if r.tps is not None]
@@ -837,9 +685,18 @@ class _ModelEntry:
         inp = sum(r.input_tokens for r in rows)
         self.cache = sum(r.cache_read_tokens for r in rows) / inp if inp > 0 else None
 
+    def value(self, metric: str) -> float:
+        return float(getattr(self, metric if metric in MIX_METRICS else "tokens"))
 
-def _model_entries(data: UsageReportData, max_models: int) -> list[_ModelEntry]:
-    models = sorted(data.models, key=lambda m: (-m.total_tokens, -m.calls, m.model))
+
+def _model_entries(
+    data: UsageReportData, max_models: int, metric: str = "tokens"
+) -> list[_ModelEntry]:
+    def rank(m: ModelUsageRow) -> tuple[float, int, int, str]:
+        lead = {"cost": m.cost_usd, "calls": m.calls}.get(metric, m.total_tokens)
+        return (-lead, -m.total_tokens, -m.calls, m.model)
+
+    models = sorted(data.models, key=rank)
     max_models = max(1, max_models)
     if len(models) <= max_models:
         return [_ModelEntry([m], m.model, False) for m in models]
@@ -850,40 +707,336 @@ def _model_entries(data: UsageReportData, max_models: int) -> list[_ModelEntry]:
     return entries
 
 
-def _models_section(card: _Card, data: UsageReportData, show_cost: bool, max_models: int) -> None:
-    entries = _model_entries(data, max_models)
+_TOTAL_KEY = "\x00total"
+
+
+class _Legend:
+    """Colour and plain-mode texture for each model shown on a card."""
+
+    def __init__(self, data: UsageReportData, max_models: int, metric: str = "tokens") -> None:
+        self.metric = metric if metric in MIX_METRICS else "tokens"
+        self.entries = _model_entries(data, max_models, self.metric)
+        named = [entry.name for entry in self.entries if not entry.other]
+        colors = viz.model_colors(named)
+        self.keys: list[str | None] = []  # stack order, bottom to top
+        self._paint: dict[str | None, tuple[str, str]] = {
+            None: (viz.C_OTHER, viz.PLAIN_OTHER),
+            _TOTAL_KEY: (S_BAR, "█"),
+        }
+        for index, entry in enumerate(self.entries):
+            if entry.other:
+                self.keys.append(None)
+            else:
+                glyph = viz.PLAIN_FILLS[index % len(viz.PLAIN_FILLS)]
+                self._paint[entry.name] = (colors[entry.name], glyph)
+                self.keys.append(entry.name)
+        if None not in self.keys:
+            self.keys.append(None)  # unlisted models can still appear in daily data
+
+    def key(self, model: str) -> str | None:
+        return model if model in self._paint else None
+
+    def paint(self, key: str | None) -> tuple[str, str]:
+        return self._paint.get(key, self._paint[None])
+
+    def entry_key(self, entry: _ModelEntry) -> str | None:
+        return None if entry.other else entry.name
+
+    def swatch(self, key: str | None) -> Seg:
+        color, glyph = self.paint(key)
+        return _swatch(color, glyph)
+
+
+# =============================================================================
+# Stacked daily charts
+# =============================================================================
+
+
+class _DailyMix:
+    """Per-day values split by model, bucketed to fit a plot width."""
+
+    def __init__(self, data: UsageReportData, legend: _Legend, width: int) -> None:
+        points = _daily_points(data)
+        metric = legend.metric
+        attr = {"cost": "cost_usd", "calls": "calls"}.get(metric, "total_tokens")
+        per_day: dict[date, dict[str | None, float]] = {}
+        for item in data.daily_models:
+            day = _parse_date(item.date_iso)
+            if day is None:
+                continue
+            bucket = per_day.setdefault(day, {})
+            key = legend.key(item.model)
+            bucket[key] = bucket.get(key, 0.0) + max(0.0, float(getattr(item, attr)))
+        columns: list[dict[str | None, float]] = []
+        for day, point in points:
+            if day is not None and day in per_day:
+                columns.append(per_day[day])
+            elif point is not None and not data.daily_models:
+                # No per-model detail recorded: one series of daily totals.
+                columns.append({_TOTAL_KEY: max(0.0, float(getattr(point, attr)))})
+            else:
+                columns.append({})
+        days = [day for day, _ in points]
+        self.per = max(1, math.ceil(len(columns) / max(1, width)))
+        if self.per > 1:
+            merged: list[dict[str | None, float]] = []
+            for index in range(0, len(columns), self.per):
+                bucket = {}
+                for column in columns[index : index + self.per]:
+                    for key, value in column.items():
+                        bucket[key] = bucket.get(key, 0.0) + value
+                merged.append(bucket)
+            columns = merged
+            days = days[:: self.per]
+        self.days = days
+        self.columns = columns
+        self.totals = [sum(column.values()) for column in columns]
+        self.width = width
+        self.cols, self.gap = viz.column_layout(len(columns), width)
+        self.col = min(self.cols, default=1)  # narrowest column: what a label must fit
+        self.legend = legend
+
+    @property
+    def plot_width(self) -> int:
+        return sum(self.cols) + self.gap * max(0, len(self.cols) - 1)
+
+    @property
+    def empty(self) -> bool:
+        return not any(total > 0 for total in self.totals)
+
+    def rows(self, height: int, *, share: bool) -> list[Line]:
+        order = [_TOTAL_KEY, *self.legend.keys]
+        stacks = [
+            [(column[key], *self.legend.paint(key)) for key in order if column.get(key, 0) > 0]
+            for column in self.columns
+        ]
+        scale = None if share else max(self.totals, default=0.0)
+        return viz.stack_columns(stacks, height, col_width=self.cols, gap=self.gap, scale=scale)
+
+    def peak(self) -> tuple[float, date | None]:
+        if self.empty:
+            return 0.0, None
+        index = max(range(len(self.totals)), key=lambda i: self.totals[i])
+        return self.totals[index], self.days[index]
+
+    def axis(self) -> Line:
+        """Day labels under the columns (or just the ends when columns are narrow)."""
+        days = self.days
+        if not days or any(day is None for day in days):
+            return [(f"{len(self.columns)} days", S_DIM)]
+        step = self.col + self.gap
+        if self.col >= 6:
+            labels = [f"{day:%a} {day.day:02d}" for day in days if day is not None]
+        elif step >= 3:
+            labels = [f"{day.day:02d}" for day in days if day is not None]
+        else:
+            first, last = days[0], days[-1]
+            assert first is not None and last is not None
+            long_range = (last - first).days > 330
+            fmt = (lambda d: d.strftime("%b %Y")) if long_range else _fmt_day
+            left, right = fmt(first), fmt(last)
+            room = self.plot_width - len(left) - len(right)
+            if first == last or room < 1:
+                return [(left, S_DIM)]
+            return [(left, S_DIM), (" " * room, ""), (right, S_DIM)]
+        line: Line = []
+        for index, label in enumerate(labels):
+            line += _cell(label, self.col, S_DIM, "center")
+            if self.gap and index + 1 < len(labels):
+                line.append((" " * self.gap, ""))
+        return line
+
+    def totals_row(self, fmt) -> Line | None:  # noqa: ANN001
+        if self.col < 6:
+            return None
+        line: Line = []
+        for index, total in enumerate(self.totals):
+            text = fmt(total) if total > 0 else "·"
+            line += _cell(text, self.col, S_DIM, "center")
+            if self.gap and index + 1 < len(self.totals):
+                line.append((" " * self.gap, ""))
+        return line
+
+
+def _metric_fmt(metric: str):  # noqa: ANN202
+    if metric == "cost":
+        return _fmt_cost
+    return _compact
+
+
+# =============================================================================
+# Usage card
+# =============================================================================
+
+
+def _empty_usage_card(data: UsageReportData, color: bool, title_kind: str = "usage") -> str:
+    card = _Card(color)
+    card.top(_title(title_kind, data), _filter_badge(data))
+    card.blank()
+    card.row([("No usage recorded yet", S_TITLE), (" for this window.", S_DIM)])
+    card.blank()
+    card.row([("▸ ", S_TOKENS), ("chat a turn", ""), (" · usage is tracked automatically", S_DIM)])
+    card.row([("▸ ", S_TOKENS), ("import history ", ""), ("/stats sweep <dir>", S_TOKENS)])
+    card.blank()
+    card.bottom()
+    return card.render(_after_notice(data.upgrade_notice))
+
+
+def _prior_note(card: _Card, data: UsageReportData) -> None:
+    """Spacer row under the title, explaining the KPI deltas when there are any."""
+    if data.previous is None:
+        card.blank()
+        return
+    window = _clean(data.window_label).strip().casefold().removeprefix("last ")
+    card.row(
+        _cell(f"▲▼ vs previous {window}" if window else "▲▼ vs previous", CONTENT, S_DIM, "right")
+    )
+
+
+def _kpi_sparks(data: UsageReportData, show_cost: bool) -> list[Line | None]:
+    points = [point for _, point in _daily_points(data)]
+    if len(points) < 2:
+        return []
+
+    def series(fn) -> list[float]:  # noqa: ANN001
+        return [float(fn(point)) if point is not None else 0.0 for point in points]
+
+    tokens = series(lambda p: p.total_tokens)
+    second = series(lambda p: p.cost_usd) if show_cost else series(lambda p: p.calls)
+    cache = series(lambda p: p.cache_read_tokens / p.input_tokens if p.input_tokens > 0 else 0.0)
+    sessions = series(lambda p: p.sessions)
+    count = len(points)
+    width = count * max(1, SPARK_W // count) if count <= SPARK_W else SPARK_W
+    out: list[Line | None] = []
+    for values, color in (
+        (tokens, S_TOKENS),
+        (second, S_COST),
+        (cache, S_CACHE),
+        (sessions, S_SESS),
+    ):
+        out.append(viz.spark(values, width, color) if any(values) else None)
+    return out
+
+
+def _anatomy_rows(data: UsageReportData) -> list[Line]:
+    """Where the tokens went: input split by caching, output split by reasoning."""
+    bar_w = 32
+    text_color = viz.C_ANSWER
+    fresh = max(0, data.input_tokens - data.cache_read_tokens - data.cache_write_tokens)
+    answer = max(0, data.output_tokens - data.reasoning_tokens)
+    reasoning = min(data.output_tokens, max(0, data.reasoning_tokens))
+    input_bar = viz.stacked_bar(
+        [
+            (data.cache_read_tokens, S_CACHE, "█"),
+            (fresh, S_TOKENS, "▒"),
+            (data.cache_write_tokens, viz.C_WRITE, "░"),
+        ],
+        bar_w,
+    )
+    output_bar = viz.stacked_bar([(answer, text_color, "█"), (reasoning, viz.C_REASON, "▒")], bar_w)
+    reason_rate = reasoning / data.output_tokens if data.output_tokens > 0 else None
+    rows: list[Line] = [
+        [
+            ("in   ", S_DIM),
+            *input_bar,
+            ("  ", ""),
+            (f"{_compact(data.input_tokens):>6}", S_TOKENS),
+            (" · ", S_DIM),
+            (_fmt_pct(data.cache_hit_rate), S_CACHE),
+            (" cached", S_DIM),
+        ],
+        [
+            ("out  ", S_DIM),
+            *output_bar,
+            ("  ", ""),
+            (f"{_compact(data.output_tokens):>6}", text_color),
+            (" · ", S_DIM),
+            (_fmt_pct(reason_rate), viz.C_REASON),
+            (" reasoning", S_DIM),
+        ],
+    ]
+    legend: Line = [("     ", "")]
+    for index, (color, glyph, label) in enumerate(
+        (
+            (S_CACHE, "█", "cached"),
+            (S_TOKENS, "▒", "fresh"),
+            (viz.C_WRITE, "░", "cache write"),
+            (text_color, "█", "answer"),
+            (viz.C_REASON, "▒", "reasoning"),
+        )
+    ):
+        if index:
+            legend.append(("  ", ""))
+        legend += [_swatch(color, glyph), (f" {label}", S_DIM)]
+    rows.append(legend)
+    return rows
+
+
+def _daily_section(card: _Card, data: UsageReportData, legend: _Legend, height: int = 5) -> None:
+    mix = _DailyMix(data, legend, CONTENT)
+    peak, peak_day = mix.peak()
+    detail = "by model" if data.daily_models else ""
+    if mix.per > 1:
+        detail = " · ".join(part for part in (detail, f"{mix.per}d per bar") if part)
+    if peak > 0:
+        when = f" {_fmt_day(peak_day)}" if peak_day is not None else ""
+        detail = " · ".join(part for part in (detail, f"peak {_compact(peak)}{when}") if part)
+    card.divider("daily tokens", detail)
+    if mix.empty:
+        card.row([("no daily activity", S_DIM)])
+        return
+    for line in mix.rows(height, share=False):
+        card.row(line)
+    card.row(mix.axis())
+
+
+def _models_section(
+    card: _Card,
+    data: UsageReportData,
+    show_cost: bool,
+    legend: _Legend,
+    mix: _DailyMix | None = None,
+) -> None:
+    entries = legend.entries
     if not entries:
         card.row([("no per-model breakdown recorded", S_DIM)])
         return
-    total = sum(e.tokens for e in entries) or 1
+    metric = legend.metric
+    total = sum(e.value(metric) for e in entries) or 1
     has_speed = any(e.tps is not None for e in entries)
-    name_w, share_w, tok_w = 18, 5, 7
+    name_w, share_w, tok_w = 16, 5, 7
     # (header, width, renderer)
     extra: list[tuple[str, int, str]] = []
     if show_cost:
         extra.append(("cost", 8, "cost"))
-        extra.append(("speed", 8, "speed") if has_speed else ("cache", 8, "cache"))
     else:
         extra.append(("cache", 5, "cache"))
-        if has_speed:
-            extra.append(("speed", 8, "speed"))
-    fixed = name_w + share_w + tok_w + sum(w for _, w, _ in extra)
+    if mix is not None:
+        extra.append(("daily", max(7, min(12, len(mix.columns))), "trend"))
+    elif has_speed:
+        extra.append(("speed", 8, "speed"))
+    elif show_cost:
+        extra.append(("cache", 8, "cache"))
+    fixed = 2 + name_w + share_w + tok_w + sum(w for _, w, _ in extra)
     seps = 3 + len(extra)
     bar_w = CONTENT - fixed - seps
 
-    header: Line = [*_cell("model", name_w, S_DIM), (" ", ""), (" " * bar_w, "")]
+    header: Line = [*_cell("model", 2 + name_w, S_DIM), (" ", ""), (" " * bar_w, "")]
     header += [(" ", ""), *_cell("share", share_w, S_DIM, "right")]
     header += [(" ", ""), *_cell("tokens", tok_w, S_DIM, "right")]
-    for label, width, _ in extra:
-        header += [(" ", ""), *_cell(label, width, S_DIM, "right")]
+    for label, width, kind in extra:
+        header += [(" ", ""), *_cell(label, width, S_DIM, "left" if kind == "trend" else "right")]
     card.row(header)
 
     for index, entry in enumerate(entries):
-        share = entry.tokens / total
+        key = legend.entry_key(entry)
+        color, _glyph = legend.paint(key)
+        share = entry.value(metric) / total
         name_style = S_DIM if entry.other else ("bold" if index == 0 else "")
-        line: Line = [*_cell(_display_name(entry.name), name_w, name_style), (" ", "")]
-        line += _bar(share, bar_w, S_DIM if entry.other else S_BAR)
-        line += [(" ", ""), *_cell(_fmt_pct(share), share_w, S_TOKENS, "right")]
+        line: Line = [legend.swatch(key), (" ", "")]
+        line += [*_cell(_display_name(entry.name), name_w, name_style), (" ", "")]
+        line += viz.line_bar(share, bar_w, color)
+        line += [(" ", ""), *_cell(_fmt_pct(share), share_w, color, "right")]
         line += [(" ", ""), *_cell(_compact(entry.tokens), tok_w, S_TOKENS, "right")]
         for _, width, kind in extra:
             if kind == "cost":
@@ -894,6 +1047,11 @@ def _models_section(card: _Card, data: UsageReportData, show_cost: bool, max_mod
                     text, style = ("~" + text if entry.unpriced else text), S_COST
             elif kind == "speed":
                 text, style = _fmt_tps(entry.tps), (S_SPEED if entry.tps is not None else S_DIM)
+            elif kind == "trend":
+                assert mix is not None
+                values = [column.get(key, 0.0) for column in mix.columns]
+                line += [(" ", ""), *_fit(viz.spark(values, width, color), width)]
+                continue
             else:
                 text = _fmt_pct(entry.cache)
                 style = S_CACHE if entry.cache is not None else S_DIM
@@ -901,36 +1059,148 @@ def _models_section(card: _Card, data: UsageReportData, show_cost: bool, max_mod
         card.row(line)
 
 
+def _hour_grid(data: UsageReportData) -> list[list[int]]:
+    """7 x 24 calls grid (4-hour slots are spread evenly when hours are unknown)."""
+    hourly = [list(row[:24]) for row in list(data.rhythm.hourly)[:7]]
+    if len(hourly) == 7 and all(len(row) == 24 for row in hourly):
+        return [[max(0, int(v)) for v in row] for row in hourly]
+    grid: list[list[int]] = []
+    for row in list(data.rhythm.cells)[:7]:
+        slots = [max(0, int(v)) for v in list(row)[:6]] + [0] * (6 - len(list(row)[:6]))
+        grid.append([math.ceil(slots[hour // 4] / 4) for hour in range(24)])
+    grid += [[0] * 24 for _ in range(7 - len(grid))]
+    return grid
+
+
+def _weekday_labels(data: UsageReportData) -> list[str]:
+    defaults = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+    given = [_clean(w)[:3] for w in list(data.rhythm.weekday_labels or ())[:7]]
+    return given + list(defaults[len(given) :])
+
+
+def _busiest_slot(data: UsageReportData) -> str | None:
+    grid = _hour_grid(data)
+    hourly = len(data.rhythm.hourly) == 7
+    best = (0, -1, -1)
+    for r, row in enumerate(grid):
+        for c, value in enumerate(row):
+            if value > best[0]:
+                best = (value, r, c)
+    if best[0] <= 0:
+        return None
+    day = _weekday_labels(data)[best[1]]
+    if hourly:
+        return f"{day} {best[2]:02d}:00"
+    start = best[2] // 4 * 4
+    return f"{day} {start:02d}-{start + 4:02d}"
+
+
+def _heat_legend() -> Line:
+    legend: Line = [("less ", S_DIM), viz.heat_cell(0, 2)]
+    for level in range(1, viz.HEAT_STEPS + 1):
+        legend.append(viz.heat_cell(level, 2))
+    legend.append((" more", S_DIM))
+    return legend
+
+
+def _punch_card(data: UsageReportData) -> list[Line]:
+    """Weekday x hour heatmap with weekday shares and an hour-of-day profile."""
+    grid = _hour_grid(data)
+    levels = viz.heat_levels(grid, steps=viz.HEAT_STEPS)
+    labels = _weekday_labels(data)
+    day_totals = [sum(row) for row in grid]
+    total = sum(day_totals)
+    peak_day = max(day_totals, default=0)
+    rows: list[Line] = [[("    ", ""), ("".join(f"{h:02d}    " for h in range(0, 24, 3)), S_DIM)]]
+    for label, row, day_total in zip(labels, levels, day_totals, strict=True):
+        line: Line = [(f"{label:<3} ", S_DIM)]
+        line += [viz.heat_cell(level, 2) for level in row]
+        line.append(("  ", ""))
+        line += viz.line_bar(day_total / peak_day if peak_day else 0.0, 4, S_TOKENS)
+        share = _fmt_pct(day_total / total) if total else "-"
+        line.append((f"{share:>4}", S_TOKENS if day_total else S_DIM))
+        rows.append(line)
+    hours = [sum(row[hour] for row in grid) for hour in range(24)]
+    rows.append([("all ", S_DIM), *viz.spark(hours, 48, S_TOKENS)])
+    footer = _heat_legend()
+    busiest = _busiest_slot(data)
+    if busiest:
+        footer += [("  ·  busiest ", S_DIM), (busiest, S_TOKENS)]
+    rows.append(footer)
+    return rows
+
+
+def _machines_section(card: _Card, data: UsageReportData, show_cost: bool, now: float) -> None:
+    machines = data.machines
+    card.divider("machines", f"{len(machines)} aggregated")
+    total = sum(m.total_tokens for m in machines) or 1
+    name_w, share_w, tok_w, last_w, state_w = 13, 5, 7, 8, 8
+    bar_w = CONTENT - 2 - name_w - share_w - tok_w - last_w - state_w - 5
+    for index, machine in enumerate(machines):
+        color = viz.MACHINE_COLORS[index % len(viz.MACHINE_COLORS)]
+        share = machine.total_tokens / total
+        if machine.is_local:
+            state, state_style = "local", S_DIM
+        elif machine.synced_at is None:
+            state, state_style = "no data", S_WARN
+        else:
+            state = _fmt_age(now - machine.synced_at)
+            state_style = S_WARN if machine.last_error else S_DIM
+        last = _fmt_cost(machine.cost_usd) if show_cost else _count(machine.calls)
+        line: Line = [_swatch(color, viz.PLAIN_FILLS[index % len(viz.PLAIN_FILLS)]), (" ", "")]
+        line += [
+            *_cell(_clean(machine.name), name_w, "bold" if machine.is_local else ""),
+            (" ", ""),
+        ]
+        line += viz.line_bar(share, bar_w, color)
+        line += [(" ", ""), *_cell(_fmt_pct(share), share_w, color, "right")]
+        line += [(" ", ""), *_cell(_compact(machine.total_tokens), tok_w, S_TOKENS, "right")]
+        line += [(" ", ""), *_cell(last, last_w, S_COST, "right")]
+        line += [(" ", ""), *_cell(state, state_w, state_style, "right")]
+        card.row(line)
+    for machine in machines:
+        if machine.last_error:
+            card.wrapped(f"{machine.name}: {machine.last_error}", S_DIM, prefix="▸ ", pstyle=S_WARN)
+
+
 def _usage_card(
-    data: UsageReportData, color: bool, show_cost: bool, max_models: int
+    data: UsageReportData, color: bool, show_cost: bool, max_models: int, now: float | None = None
 ) -> _Card | None:
     if data.total_calls <= 0:
         return None
     card = _Card(color)
     card.top(_title("usage", data), _filter_badge(data))
-    card.blank()
+    prev = data.previous
+    _prior_note(card, data)
 
     if show_cost:
         cost_text, cost_style = _cost_display(data)
         second = (cost_text, cost_style, "est. cost")
+        second_delta = _delta(data.total_cost_usd, prev.cost_usd) if prev else ""
     else:
         second = (_count(data.total_calls), S_COST_BIG, "llm calls")
+        second_delta = _delta(data.total_calls, prev.calls) if prev else ""
     kpis = [
         (_compact(data.total_tokens), S_TOKENS_BIG, "tokens"),
         second,
         (_fmt_pct(data.cache_hit_rate), S_CACHE_BIG, "cache hit"),
         (_int(data.total_sessions), S_SESS_BIG, "sessions"),
     ]
-    for line in _kpi_rows(kpis, (16, 16, 16, 14)):
+    deltas: list[str] = []
+    if prev is not None:
+        deltas = [
+            _delta(data.total_tokens, prev.total_tokens),
+            second_delta,
+            _delta(data.cache_hit_rate, prev.cache_hit_rate, points=True),
+            _delta(data.total_sessions, prev.sessions),
+        ]
+    for line in _kpi_rows(kpis, KPI_WIDTHS, deltas, _kpi_sparks(data, show_cost)):
         card.row(line)
     card.blank()
 
-    card.row(
-        [("in ", S_DIM), (_compact(data.input_tokens), S_TOKENS)]
-        + [(" (", S_DIM), (_compact(data.cache_read_tokens), S_CACHE), (" cached)", S_DIM)]
-        + [("  ·  ", S_DIM), ("out ", S_DIM), (_compact(data.output_tokens), S_TOKENS)]
-        + [(" (", S_DIM), (_compact(data.reasoning_tokens), S_TOKENS), (" reasoning)", S_DIM)]
-    )
+    for line in _anatomy_rows(data):
+        card.row(line)
+    card.blank()
     days = "day" if data.active_days == 1 else "days"
     activity: Line = [
         (_int(data.active_days), ""),
@@ -954,20 +1224,24 @@ def _usage_card(
             note += f" · pricing {_clean(data.pricing_version)}"
         card.row([(note, S_WARN)])
 
+    legend = _Legend(data, max_models)
+    _daily_section(card, data, legend)
+
     card.divider("models")
-    _models_section(card, data, show_cost, max_models)
+    _models_section(card, data, show_cost, legend)
 
     tz = _clean(data.rhythm.timezone_label).strip() or "UTC"
-    series_len = len(_daily_series(data)[0])
-    per = max(1, math.ceil(series_len / SPARK_W)) if series_len else 1
-    right_title = "daily tokens" + (f" · {per}d per bar" if per > 1 else "")
-    card.divider(f"rhythm · {tz}", right=right_title)
-    card.split_rows(_heatmap_rows(data), _right_panel(data))
+    card.divider(f"rhythm · {tz}", "calls by weekday and hour")
+    for line in _punch_card(data):
+        card.row(line)
+
+    if len(data.machines) > 1 or any(m.last_error for m in data.machines):
+        _machines_section(card, data, show_cost, time.time() if now is None else now)
 
     note: Line | None = None
     if show_cost and data.pricing_version and not data.unpriced_calls:
         note = [(f"pricing {_clean(data.pricing_version)}", S_DIM)]
-    card.bottom(note, split=True)
+    card.bottom(note)
     return card
 
 
@@ -977,28 +1251,290 @@ def render_usage_card(
     color: bool = True,
     show_cost: bool = True,
     max_models: int = 6,
+    now: float | None = None,
 ) -> str:
     """Main ``/stats`` overview card (68 columns)."""
-    card = _usage_card(data, color, show_cost, max_models)
+    card = _usage_card(data, color, show_cost, max_models, now)
     if card is None:
         return _empty_usage_card(data, color)
     return card.render(_after_notice(data.upgrade_notice))
 
 
 def render_share_card(data: UsageReportData, *, show_cost: bool = True) -> str:
-    """Plain card in a ```text fence, ready to paste into Discord/Slack/GitHub/X."""
+    """Plain card in a ```text fence, ready to paste into Discord/Slack/GitHub/X.
+
+    Shows the combined totals only: notices and machine names stay private.
+    """
+    from dataclasses import replace
+
+    data = replace(data, upgrade_notice=None, machines=(), machine_filter=None)
     card = _usage_card(data, False, show_cost, 6)
-    if card is None:
-        body = _empty_usage_card(_without_notice(data), False)
-    else:
-        body = card.render()
+    body = _empty_usage_card(data, False) if card is None else card.render()
     return f"```text\n{body}\n```"
 
 
-def _without_notice(data: UsageReportData) -> UsageReportData:
-    from dataclasses import replace
+# =============================================================================
+# Models card
+# =============================================================================
 
-    return replace(data, upgrade_notice=None)
+
+def render_models_card(
+    data: UsageReportData,
+    *,
+    color: bool = True,
+    show_cost: bool = True,
+    max_models: int = 8,
+    metric: str = "tokens",
+    height: int = 8,
+) -> str:
+    """``/stats models``: each day's model mix as a filled 100% stacked bar."""
+    metric = metric if metric in MIX_METRICS else "tokens"
+    if metric == "cost" and not show_cost:
+        metric = "tokens"
+    if data.total_calls <= 0:
+        return _empty_usage_card(data, color, "models")
+    card = _Card(color)
+    card.top(
+        _title("models", data), _filter_badge(data, "" if metric == "tokens" else f"by {metric}")
+    )
+    card.blank()
+
+    legend = _Legend(data, max_models, metric)
+    fmt = _metric_fmt(metric)
+    entries = legend.entries
+    total = sum(entry.value(metric) for entry in entries)
+    parts = [(entry.value(metric), *legend.paint(legend.entry_key(entry))) for entry in entries]
+    card.row(viz.stacked_bar(parts, CONTENT))
+    lead = entries[0] if entries else None
+    caption: Line = [(f"share of {metric}", S_DIM), (" · ", S_DIM), (fmt(total), S_TOKENS)]
+    caption.append((" total", S_DIM))
+    if lead is not None and total > 0:
+        lead_color, _ = legend.paint(legend.entry_key(lead))
+        caption += [
+            (" · top ", S_DIM),
+            (_display_name(lead.name), lead_color),
+            (" ", ""),
+            (_fmt_pct(lead.value(metric) / total), lead_color),
+        ]
+    card.row(caption)
+
+    axis_w = 6
+    mix = _DailyMix(data, legend, CONTENT - axis_w)
+    detail = f"% of {metric} per day" + (f" · {mix.per}d per bar" if mix.per > 1 else "")
+    card.divider("daily share", detail)
+    if mix.empty:
+        card.row([("no daily activity", S_DIM)])
+    else:
+        rows = mix.rows(height, share=True)
+        ticks = {0: "100%", height // 2: " 50%"}
+        for index, line in enumerate(rows):
+            label = ticks.get(index)
+            axis: Line = [(f"{label} ┤" if label else "     │", S_DIM)]
+            card.row(axis, line)
+        card.row([("  0% └", S_DIM), ("─" * mix.plot_width, S_DIM)])
+        card.row([(" " * axis_w, "")], mix.axis())
+        totals = mix.totals_row(fmt)
+        if totals is not None:
+            card.row([(" " * axis_w, "")], totals)
+
+    card.divider("models", f"{len(data.models)} used")
+    _models_section(card, data, show_cost, legend, mix)
+    note: Line | None = None
+    if show_cost and data.pricing_version and not data.unpriced_calls:
+        note = [(f"pricing {_clean(data.pricing_version)}", S_DIM)]
+    card.bottom(note)
+    return card.render(_after_notice(data.upgrade_notice))
+
+
+# =============================================================================
+# Rhythm card
+# =============================================================================
+
+
+def _calendar_rows(data: UsageReportData) -> list[Line]:
+    """Contribution-graph calendar: one column per week, one row per weekday."""
+    points = [(day, point) for day, point in _daily_points(data) if day is not None]
+    if not points:
+        return []
+    tokens = {day: (max(0, int(point.total_tokens)) if point else 0) for day, point in points}
+    start, end = points[0][0], points[-1][0]
+    first_monday = start - timedelta(days=start.weekday())
+    weeks = ((end - first_monday).days // 7) + 1
+    room = CONTENT - 4
+    if weeks > room:  # keep the most recent weeks
+        first_monday += timedelta(days=7 * (weeks - room))
+        weeks = room
+    if weeks <= 14:
+        cell, gap = 3, 1
+    elif weeks <= 19:
+        cell, gap = 2, 1
+    elif weeks <= room // 2:
+        cell, gap = 2, 0
+    else:
+        cell, gap = 1, 0
+    step = cell + gap
+
+    grid = [
+        [tokens.get(first_monday + timedelta(days=7 * week + weekday)) for week in range(weeks)]
+        for weekday in range(7)
+    ]
+    levels = viz.heat_levels([[v or 0 for v in row] for row in grid], steps=viz.HEAT_STEPS)
+
+    header = [" "] * (weeks * step)
+    cursor = 0
+    for week in range(weeks):
+        monday = first_monday + timedelta(days=7 * week)
+        days = [monday + timedelta(days=i) for i in range(7)]
+        starts = next((d for d in days if d.day == 1), None)
+        label_day = starts or (max(monday, start) if week == 0 else None)
+        if label_day is None:
+            continue
+        label = label_day.strftime("%b")
+        at = week * step
+        if at < cursor or at + len(label) > len(header):
+            continue
+        header[at : at + len(label)] = label
+        cursor = at + len(label) + 1
+    rows: list[Line] = [[("    ", ""), ("".join(header).rstrip(), S_DIM)]]
+    labels = _weekday_labels(data)
+    for weekday in range(7):
+        line: Line = [(f"{labels[weekday]:<3} ", S_DIM)]
+        for week in range(weeks):
+            value = grid[weekday][week]
+            if value is None:
+                line.append((" " * cell, ""))
+            else:
+                line.append(viz.heat_cell(levels[weekday][week], cell))
+            if gap and week + 1 < weeks:
+                line.append((" " * gap, ""))
+        rows.append(line)
+    series = [tokens[day] for day, _ in points]
+    peak = max(series)
+    footer = _heat_legend()
+    if peak > 0:
+        peak_day = points[series.index(peak)][0]
+        footer += [
+            ("  ·  peak ", S_DIM),
+            (_compact(peak), S_TOKENS),
+            (f" {_fmt_day(peak_day)}", S_DIM),
+        ]
+    rows.append(footer)
+    return rows
+
+
+def render_rhythm_card(data: UsageReportData, *, color: bool = True) -> str:
+    """``/stats rhythm``: when you work — calendar, weekday x hour, streaks."""
+    if data.total_calls <= 0:
+        return _empty_usage_card(data, color, "rhythm")
+    card = _Card(color)
+    card.top(_title("rhythm", data), _filter_badge(data))
+    card.blank()
+    span = len(_daily_points(data))
+    active = f"{data.active_days}/{span}" if span else _int(data.active_days)
+    kpis = [
+        (active, S_TOKENS_BIG, "active days"),
+        (f"{data.current_streak_days}d", S_COST_BIG, "current streak"),
+        (f"{data.longest_streak_days}d", S_CACHE_BIG, "best streak"),
+        (_busiest_slot(data) or "-", S_SESS_BIG, "busiest hour"),
+    ]
+    for line in _kpi_rows(kpis):
+        card.row(line)
+    card.blank()
+    if span >= 15:
+        card.divider("calendar", "tokens per day")
+        for line in _calendar_rows(data):
+            card.row(line)
+    tz = _clean(data.rhythm.timezone_label).strip() or "UTC"
+    card.divider(f"week · {tz}", "calls by weekday and hour")
+    for line in _punch_card(data):
+        card.row(line)
+    card.bottom()
+    return card.render(_after_notice(data.upgrade_notice))
+
+
+# =============================================================================
+# Remotes card
+# =============================================================================
+
+
+def _fmt_bytes(size: int | None) -> str:
+    if size is None:
+        return "-"
+    value = float(size)
+    for unit in ("B", "kB", "MB", "GB"):
+        if value < 999.5 or unit == "GB":
+            return f"{value:.0f} {unit}" if unit in ("B", "kB") else f"{value:.1f} {unit}"
+        value /= 1024.0
+    return "-"
+
+
+def render_remotes_card(
+    remotes: Sequence[RemoteStatus],
+    *,
+    color: bool = True,
+    local_name: str = "local",
+    now: float | None = None,
+) -> str:
+    """``/stats remote``: configured remote ledgers and the state of their mirrors."""
+    now = time.time() if now is None else now
+    card = _Card(color)
+    failed = sum(1 for remote in remotes if remote.last_error)
+    if not remotes:
+        badge: Line = [("▸ none configured", S_DIM)]
+    elif failed:
+        badge = [(f"▸ {failed} failing", S_WARN)]
+    else:
+        badge = [(f"▸ {len(remotes)} synced", S_OK)]
+    card.top([*_brand(), (" remotes", S_TITLE)], badge)
+    card.blank()
+    card.row(
+        [_swatch(viz.MACHINE_COLORS[0]), (" ", ""), (_clean(local_name), "bold")]
+        + [("  this machine · live ledger", S_DIM)]
+    )
+    for index, remote in enumerate(remotes, start=1):
+        chip_color = viz.MACHINE_COLORS[index % len(viz.MACHINE_COLORS)]
+        glyph = viz.PLAIN_FILLS[index % len(viz.PLAIN_FILLS)]
+        card.blank()
+        if remote.last_error and remote.synced_at is None:
+            state: Line = [("never synced", S_ERR)]
+        elif remote.last_error:
+            state = [(f"stale · {_fmt_age(now - (remote.synced_at or now))}", S_WARN)]
+        elif remote.synced_at is None:
+            state = [("not synced yet", S_WARN)]
+        else:
+            fresh = "up to date" if remote.changed is False else "synced"
+            state = [(f"{fresh} · {_fmt_age(now - remote.synced_at)}", S_OK)]
+        via = "ssh " if remote.kind == "ssh" else ""
+        head: Line = [_swatch(chip_color, glyph), (" ", ""), (_clean(remote.name), "bold")]
+        targets = " | ".join(_clean(item) for item in (remote.target, *remote.fallbacks))
+        head.append((f"  {via}{targets}", S_DIM))
+        room = CONTENT - _width(state) - 1
+        card.row(_fit(head, room), [(" ", "")], state)
+        facts: list[str] = []
+        if remote.host:
+            facts.append(f"host {_clean(remote.host)}")
+        if remote.calls is not None:
+            facts.append(f"{_count(remote.calls)} calls")
+        if remote.size_bytes is not None:
+            facts.append(_fmt_bytes(remote.size_bytes))
+        if facts:
+            card.row([("  " + " · ".join(facts), S_DIM)])
+        if remote.last_error:
+            card.wrapped(remote.last_error, S_ERR, prefix="  ▸ ", pstyle=S_ERR)
+    card.blank()
+    if remotes:
+        card.row(
+            [("▸ ", S_TOKENS), ("/stats sync", S_TOKENS), (" refreshes now", S_DIM)]
+            + [(" · ", S_DIM), ("/stats --machine <name>", S_TOKENS), (" narrows", S_DIM)]
+        )
+    else:
+        card.row(
+            [("▸ ", S_TOKENS), ("/stats remote add <ssh-host>", S_TOKENS)]
+            + [(" to include another machine", S_DIM)]
+        )
+    card.blank()
+    card.bottom()
+    return card.render()
 
 
 # =============================================================================
@@ -1015,7 +1551,7 @@ def _phase_legend(phases: PhaseBreakdown) -> list[Line]:
             continue
         items.append(
             [
-                (glyph, style),
+                _swatch(style, glyph),
                 (f" {label:<8}", ""),
                 (f"{_fmt_dur(value):>8}", style),
                 (f"{_fmt_pct(value / total):>6}", S_DIM),
@@ -1082,12 +1618,12 @@ def _tool_bars(card: _Card, tools: Sequence[ToolUsageRow], limit: int, *, with_m
             total_text, total_style = "-", S_DIM
             avg_text, max_text = "-", "-"
         else:
-            line += _bar(total / peak, bar_w, S_DIM if other else "blue")
+            line += _bar(total / peak, bar_w, S_DIM if other else S_TOOLS)
             total_text = _fmt_dur(total) + ("*" if timed < runs else "")
             total_style = ""
             avg_text = _fmt_dur(avg)
             max_text = _fmt_dur(mx)
-        line += [(" ", ""), *_cell(_compact(runs), runs_w, "bright_blue", "right")]
+        line += [(" ", ""), *_cell(_compact(runs), runs_w, S_SPEED, "right")]
         line += [(" ", ""), *_cell(total_text, total_w, total_style, "right")]
         line += [(" ", ""), *_cell(avg_text, avg_w, S_DIM, "right")]
         if with_max:
@@ -1104,7 +1640,7 @@ def _ptc_summary_rows(card: _Card, ptc: PtcSummary) -> None:
             ("sandbox ", S_DIM),
             (_int(ptc.cells), S_TITLE),
             (" cells · ", S_DIM),
-            (_int(ptc.nested_calls), "bright_blue"),
+            (_int(ptc.nested_calls), S_SPEED),
             (f" calls ({ratio:.1f}/c) · ", S_DIM),
             (_fmt_pct(py_pct), S_CACHE),
             (" py-only", S_DIM),
@@ -1164,7 +1700,7 @@ def _ptc_model_table(card: _Card, ptc: PtcSummary, limit: int = 6) -> None:
         )
         cells = (
             (_display_name(item.model), ""),
-            (_compact(item.cells), "bright_blue"),
+            (_compact(item.cells), S_SPEED),
             (f"{ratio:.1f}", ""),
             (_fmt_pct(py_pct), S_CACHE if item.pure_python_cells else S_DIM),
             (_fmt_pct(err_pct), S_WARN if item.error_cells else S_DIM),
@@ -1207,35 +1743,45 @@ def render_perf_card(data: UsageReportData, *, color: bool = True) -> str:
         card.row([("No turn timing recorded yet", S_TITLE), (" · chat a turn to start", S_DIM)])
     card.blank()
 
-    card.divider("latency & throughput")
-    widths = (20, 6, 9, 9, 7, 6)
-    heads = ("model", "calls", "ttft p50", "ttft p90", "tok/s", "burst")
-    header: Line = []
-    for i, (head, width) in enumerate(zip(heads, widths, strict=True)):
-        if i:
-            header.append((" ", ""))
-        header += _cell(head, width, S_DIM, "left" if i == 0 else "right")
-    card.row(header)
+    card.divider("latency & throughput", "● ttft p50 ━╸ p90")
     models = sorted(data.models, key=lambda m: (-m.calls, -m.total_tokens, m.model))
+    colors = viz.model_colors(
+        [m.model for m in sorted(data.models, key=lambda m: (-m.total_tokens, -m.calls, m.model))]
+    )
+    limit = 8
+    shown = models[: limit if len(models) <= limit else limit - 1]
+    name_w, calls_w, plot_w, dur_w, tps_w, burst_w = 14, 6, 12, 6, 5, 5
+    header: Line = [*_cell("model", 2 + name_w, S_DIM), (" ", "")]
+    header += [*_cell("calls", calls_w, S_DIM, "right"), (" ", "")]
+    header += [*_cell("ttft", plot_w, S_DIM), (" ", "")]
+    header += [*_cell("p50", dur_w, S_DIM, "right"), (" ", "")]
+    header += [*_cell("p90", dur_w, S_DIM, "right"), (" ", "")]
+    header += [*_cell("tok/s", tps_w, S_DIM, "right"), (" ", "")]
+    header += _cell("burst", burst_w, S_DIM, "right")
+    card.row(header)
     if not models:
         card.row([("no model calls recorded", S_DIM)])
-    limit = 8
-    for model in models[: limit if len(models) <= limit else limit - 1]:
+    spans = [m.ttft_p90_ms or m.ttft_p50_ms or 0.0 for m in shown]
+    scale = max(spans, default=0.0) * 1.0001
+    for index, model in enumerate(shown):
         burst = model.burst_calls / model.calls if model.calls > 0 else None
         tps = "-" if model.tps is None else _fmt_tps(model.tps).removesuffix(" t/s")
-        cells = (
-            (_display_name(model.model), ""),
-            (_int(model.calls), ""),
-            (_fmt_dur(model.ttft_p50_ms), S_WARN if model.ttft_p50_ms is not None else S_DIM),
-            (_fmt_dur(model.ttft_p90_ms), S_WARN if model.ttft_p90_ms is not None else S_DIM),
-            (tps, S_COST if model.tps is not None else S_DIM),
-            (_fmt_pct(burst), "magenta" if burst else S_DIM),
-        )
-        line: Line = []
-        for i, ((text, style), width) in enumerate(zip(cells, widths, strict=True)):
-            if i:
-                line.append((" ", ""))
-            line += _cell(text, width, style, "left" if i == 0 else "right")
+        chip = colors.get(model.model, viz.C_OTHER)
+        line: Line = [_swatch(chip, viz.PLAIN_FILLS[index % len(viz.PLAIN_FILLS)]), (" ", "")]
+        line += [*_cell(_display_name(model.model), name_w, ""), (" ", "")]
+        line += [*_cell(_int(model.calls), calls_w, "", "right"), (" ", "")]
+        line += viz.range_plot(model.ttft_p50_ms, model.ttft_p90_ms, scale, plot_w, chip)
+        has_ttft = model.ttft_p50_ms is not None
+        line += [
+            (" ", ""),
+            *_cell(_fmt_dur(model.ttft_p50_ms), dur_w, S_CACHE if has_ttft else S_DIM, "right"),
+        ]
+        line += [(" ", ""), *_cell(_fmt_dur(model.ttft_p90_ms), dur_w, S_DIM, "right")]
+        line += [(" ", ""), *_cell(tps, tps_w, S_COST if model.tps is not None else S_DIM, "right")]
+        line += [
+            (" ", ""),
+            *_cell(_fmt_pct(burst), burst_w, S_PROCESS if burst else S_DIM, "right"),
+        ]
         card.row(line)
     if len(models) > limit:
         card.row([(f"+ {len(models) - (limit - 1)} more models", S_DIM)])
@@ -1268,9 +1814,9 @@ def _process_waits_section(card: _Card, waits: ProcessWaitSummary) -> None:
         card.row(
             [
                 ("p50 ", S_DIM),
-                (_fmt_dur(waits.p50_ms), "bold magenta"),
+                (_fmt_dur(waits.p50_ms), f"bold {S_PROCESS}"),
                 (" · p90 ", S_DIM),
-                (_fmt_dur(waits.p90_ms), "magenta"),
+                (_fmt_dur(waits.p90_ms), S_PROCESS),
                 (" · avg ", S_DIM),
                 (_fmt_dur(waits.avg_ms), ""),
                 (" · max ", S_DIM),
@@ -1332,10 +1878,10 @@ def render_tools_card(
         else (measured_ms / timed_runs if timed_runs else None)
     )
     kpis = [
-        (_fmt_dur(wall_ms), "bold blue", "tool time"),
-        (_int(runs), "bold bright_blue", "runs"),
+        (_fmt_dur(wall_ms), f"bold {S_TOOLS}", "tool time"),
+        (_int(runs), f"bold {S_SPEED}", "runs"),
         (_fmt_dur(avg_run_ms), S_COST_BIG, "avg / run"),
-        (_fmt_pct(wait_runs / runs if runs else None), "bold magenta", "process wait"),
+        (_fmt_pct(wait_runs / runs if runs else None), f"bold {S_PROCESS}", "process wait"),
     ]
     for line in _kpi_rows(kpis, (16, 16, 16, 14)):
         card.row(line)
@@ -1346,7 +1892,7 @@ def render_tools_card(
         card.row(
             [
                 ("tools + process = ", S_DIM),
-                (_fmt_pct(share), "bold blue"),
+                (_fmt_pct(share), f"bold {S_TOOLS}"),
                 (" of agent time", S_DIM),
             ]
         )
@@ -1395,7 +1941,7 @@ def render_sweep_summary(summary: SweepSummary, *, color: bool = True) -> str:
     badge: Line | None = [("▸ dry run", S_WARN)] if summary.dry_run else None
     card.top(
         [
-            ("fast-agent", S_BRAND),
+            *_brand(),
             (" sweep", S_TITLE),
             (f" · {_short_dir(summary.root_dir)}", S_DIM),
         ],
@@ -1513,7 +2059,7 @@ def render_pricing_status(status: PricingUpdateStatus, *, color: bool = True) ->
         badge = [("▸ upgrade required", S_WARN)]
     else:
         badge = [("▸ up to date", S_OK)]
-    card.top([("fast-agent", S_BRAND), (" pricing", S_TITLE)], badge)
+    card.top([*_brand(), (" pricing", S_TITLE)], badge)
     card.blank()
     label_w = 10
 

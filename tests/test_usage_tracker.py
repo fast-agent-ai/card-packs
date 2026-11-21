@@ -398,6 +398,120 @@ class UsageTrackerIntegrationTests(unittest.TestCase):
         )
         self.assertIn("Repriced 0", reprice_res.message)
 
+    def _stats(self, arguments: str, *, is_tui: bool = True, extra: dict | None = None):
+        ctx = _make_command_ctx(
+            arguments, db_path=self.db_path, data_dir=self.data_dir, is_tui=is_tui
+        )
+        ctx.settings.plugins.config["usage-tracker"].update(
+            {"machine_name": "desk", **(extra or {})}
+        )
+        return asyncio.run(self.mod.stats_command(ctx))
+
+    def test_models_rhythm_and_remote_commands(self):
+        catalog, _source = self.mod.pricing_updater.get_active_catalog(self.data_dir)
+        other_db = self.root / "other-machine" / "usage.sqlite3"
+        now = time.time()
+        for db, session, model, tokens in (
+            (self.db_path, "sess-local", "gpt-6.2-sol", 20_000),
+            (other_db, "sess-remote", "claude-opus-5.5", 60_000),
+        ):
+            self.mod.store.record_turn(
+                db,
+                session_id=session,
+                attempts=(_make_attempt(model=model, prompt_total=tokens, timestamp=now - 600),),
+                turn_record=None,
+                catalog=catalog,
+            )
+
+        # /stats models: 7 days by default, a filled daily-share chart, plain when asked.
+        models = self._stats("models --plain")
+        self.assertIn("fast-agent models · Last 7 days", models.message)
+        self.assertIn("100% ┤", models.message)
+        self.assertIn("gpt-6.2-sol", models.message)
+        self.assertNotIn("[/]", models.message)
+        self.assertIn("▸ by cost", self._stats("models 30d --by cost --plain").message)
+        self.assertIn("Unknown --by", self._stats("models --by vibes").message)
+        self.assertIn("Unknown option: --by", self._stats("perf --by cost").message)
+        self.assertIn("[", self._stats("models").message)  # Rich markup in the TUI
+        self.assertTrue(self._stats("models", is_tui=False).markdown.startswith("```text\n"))
+
+        rhythm = self._stats("rhythm 30d --plain")
+        self.assertIn("fast-agent rhythm", rhythm.message)
+        self.assertIn("calendar", rhythm.message)
+
+        # No remotes yet: a hint, and reports cover this machine only.
+        self.assertIn("/stats remote add <ssh-host>", self._stats("remote --plain").message)
+        self.assertIn("No remotes configured", self._stats("sync").message)
+        self.assertNotIn("aggregated", self._stats("7d --plain").message)
+
+        added = self._stats(f"remote add {other_db} --name laptop --plain")
+        self.assertIn("laptop", added.message)
+        self.assertIn("▸ 1 synced", added.message)
+        self.assertIn("1 calls", added.message)
+
+        merged = self._stats("7d --plain")
+        self.assertIn("▸ 2 machines", merged.message)
+        self.assertIn("machines · 2 aggregated", merged.message)
+        self.assertIn("claude-opus-5.5", merged.message)
+        self.assertIn("gpt-6.2-sol", merged.message)
+
+        only = self._stats("7d --machine laptop --plain")
+        self.assertIn("▸ @laptop", only.message)
+        self.assertNotIn("gpt-6.2-sol", only.message)
+        local = self._stats("7d --machine=local --plain")
+        self.assertIn("▸ @desk", local.message)
+        self.assertNotIn("claude-opus-5.5", local.message)
+        self.assertIn("Unknown machine", self._stats("7d --machine nope").message)
+
+        share = self._stats("share 7d")
+        self.assertIn("claude-opus-5.5", share.markdown)
+        self.assertNotIn("laptop", share.markdown)
+        self.assertNotIn("desk", share.markdown)
+
+        # New remote calls arrive on /stats sync, or by themselves once the mirror is stale.
+        self.mod.store.record_turn(
+            other_db,
+            session_id="sess-remote-2",
+            attempts=(_make_attempt(model="claude-opus-5.5", timestamp=now - 60),),
+            turn_record=None,
+            catalog=catalog,
+        )
+        self.assertIn("1 calls", self._stats("remote --plain").message)
+        stale = self._stats("remote --plain", extra={"remote_sync_minutes": 0})
+        self.assertIn("1 calls", stale.message)  # listing never syncs
+        self._stats("7d --plain", extra={"remote_sync_minutes": 0})  # 0 = manual only
+        self.assertIn("1 calls", self._stats("remote --plain").message)
+        self._stats("7d --plain", extra={"remote_sync_minutes": 1e-9})
+        self.assertIn("2 calls", self._stats("remote --plain").message)
+        self.assertIn("up to date", self._stats("sync laptop --plain").message)
+        self.assertIn("No remote named", self._stats("sync nope").message)
+
+        removed = self._stats("remote remove laptop --plain")
+        self.assertIn("Removed laptop", removed.message)
+        self.assertNotIn("aggregated", self._stats("7d --plain").message)
+
+    def test_remote_completers(self):
+        self.mod.remotes.add_remote(self.data_dir, "build-box", local_name="desk")
+        settings = SimpleNamespace(
+            plugins=SimpleNamespace(config={"usage-tracker": {"data_dir": str(self.data_dir)}})
+        )
+
+        def complete(*completed: str, current: str = "") -> set[str]:
+            ctx = SimpleNamespace(
+                completed_tokens=completed, current_token=current, settings=settings
+            )
+            return {item.value for item in asyncio.run(self.mod.complete_stats(ctx))}
+
+        self.assertTrue({"models", "rhythm", "remote", "sync"}.issubset(complete()))
+        self.assertEqual(complete("remote"), {"add", "remove", "sync"})
+        self.assertEqual(complete("remote", "remove"), {"build-box"})
+        self.assertEqual(complete("sync"), {"build-box"})
+        self.assertEqual(complete("models", "--machine"), {"local", "build-box"})
+        self.assertEqual(complete("models", "--by"), {"tokens", "cost", "calls"})
+        self.assertIn("--by", complete("models"))
+        self.assertNotIn("--by", complete("perf"))
+        self.assertIn("--machine", complete("perf"))
+
     def test_completers(self):
         ctx_empty = SimpleNamespace(completed_tokens=(), current_token="")
         items = asyncio.run(self.mod.complete_stats(ctx_empty))
