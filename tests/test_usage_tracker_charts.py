@@ -474,7 +474,7 @@ def test_usage_card_content() -> None:
         assert needle in plain
     assert "148.1M" in plain or "148.2M" in plain
     assert "78 t/s" in plain
-    assert "quiet ▁▂▃▄▅▆▇█ busy" in plain
+    assert "less ··░░▒▒▓▓██ more" in plain
     assert any(block in plain for block in "▁▂▃▄▅▆▇")
     assert "87% cached" in plain and "reasoning" in plain
     assert "▲▼ vs previous 30d" in plain and "tokens ▲" in plain

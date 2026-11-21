@@ -420,25 +420,17 @@ def heat_levels(cells: Sequence[Sequence[float]], steps: int = 4) -> list[list[i
     return out
 
 
-# Heat is drawn as braille "bubbles" that grow with the value, like a punch
-# card: colour is limited to a few ANSI steps, but dot patterns give five
-# clearly ordered sizes, and they read the same with no colour at all.
-HEAT_STYLES = ("cyan", "cyan", "cyan", "bright_cyan", "bold bright_cyan")
+HEAT_STYLES = ("dim cyan", "cyan", "bright_cyan", "bold bright_white")
 HEAT_STEPS = len(HEAT_STYLES)
-_HEAT_PAIRS = ("⠐⠂", "⠰⠆", "⠶⠶", "⢾⡷", "⣿⣿")  # centred on a two-cell slot
-_HEAT_SINGLES = ("⠂", "⠒", "⠶", "⣶", "⣿")
+_HEAT_PLAIN = "░▒▓█"
 
 
-def heat_cell(level: int, width: int = 1) -> Seg:
-    """One heatmap slot (``width`` cells) for ``level`` in ``0..HEAT_STEPS``."""
+def heat_cell(level: int, width: int = 1, glyph: str = "█") -> Seg:
+    """One heatmap cell for ``level`` in ``0..HEAT_STEPS``."""
     if level <= 0:
-        return (" " * width, "")
+        return ("·" * width, "dim")
     level = min(level, HEAT_STEPS)
-    if width < 2:
-        return (_HEAT_SINGLES[level - 1], HEAT_STYLES[level - 1])
-    left = (width - 2) // 2
-    glyph = " " * left + _HEAT_PAIRS[level - 1] + " " * (width - 2 - left)
-    return (glyph, HEAT_STYLES[level - 1])
+    return (glyph * width, HEAT_STYLES[level - 1], _HEAT_PLAIN[level - 1] * width)
 
 
 def range_plot(low: float | None, high: float | None, scale: float, width: int, color: str) -> Line:

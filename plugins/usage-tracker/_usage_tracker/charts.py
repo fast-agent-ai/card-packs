@@ -1166,33 +1166,17 @@ def _busiest_slot(data: UsageReportData) -> str | None:
 
 
 def _heat_legend() -> Line:
-    legend: Line = [("less ", S_DIM)]
+    legend: Line = [("less ", S_DIM), viz.heat_cell(0, 2)]
     for level in range(1, viz.HEAT_STEPS + 1):
         legend.append(viz.heat_cell(level, 2))
     legend.append((" more", S_DIM))
     return legend
 
 
-RIDGE_STYLES = ("cyan", "bright_cyan")  # the two busiest levels are highlighted
-
-
-def _ridge_cell(level: int, width: int = 2) -> Seg:
-    """One hour of a weekday ridgeline: bar height carries the value (8 levels)."""
-    if level <= 0:
-        return ("·" * width, S_DIM)
-    level = min(level, 8)
-    return (viz.V_EIGHTHS[level] * width, RIDGE_STYLES[1 if level >= 7 else 0])
-
-
 def _punch_card(data: UsageReportData) -> list[Line]:
-    """Weekday x hour ridgelines with weekday shares and an hour-of-day profile.
-
-    Each weekday is a small bar chart on one shared scale, so the shape of a
-    day and the busy hours of the week both read at a glance, without relying
-    on colour depth.
-    """
+    """Weekday x hour heatmap with weekday shares and an hour-of-day profile."""
     grid = _hour_grid(data)
-    levels = viz.heat_levels(grid, steps=8)
+    levels = viz.heat_levels(grid, steps=viz.HEAT_STEPS)
     labels = _weekday_labels(data)
     day_totals = [sum(row) for row in grid]
     total = sum(day_totals)
@@ -1200,17 +1184,15 @@ def _punch_card(data: UsageReportData) -> list[Line]:
     rows: list[Line] = [[("    ", ""), ("".join(f"{h:02d}    " for h in range(0, 24, 3)), S_DIM)]]
     for label, row, day_total in zip(labels, levels, day_totals, strict=True):
         line: Line = [(f"{label:<3} ", S_DIM)]
-        line += [_ridge_cell(level) for level in row]
+        line += [viz.heat_cell(level, 2) for level in row]
         line.append(("  ", ""))
         line += viz.line_bar(day_total / peak_day if peak_day else 0.0, 4, S_TOKENS)
         share = _fmt_pct(day_total / total) if total else "-"
         line.append((f"{share:>4}", S_TOKENS if day_total else S_DIM))
         rows.append(line)
     hours = [sum(row[hour] for row in grid) for hour in range(24)]
-    rows.append([("all ", S_DIM), *viz.spark(hours, 48, S_SESS)])
-    footer: Line = [("quiet ", S_DIM)]
-    footer += [_ridge_cell(level, 1) for level in range(1, 9)]
-    footer.append((" busy", S_DIM))
+    rows.append([("all ", S_DIM), *viz.spark(hours, 48, S_TOKENS)])
+    footer = _heat_legend()
     busiest = _busiest_slot(data)
     if busiest:
         footer += [("  ·  busiest ", S_DIM), (busiest, S_TOKENS)]

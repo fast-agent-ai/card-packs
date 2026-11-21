@@ -94,10 +94,9 @@ family's next choice. With `--plain`, in `/stats share`, and in non-TUI clients
 the same layout is drawn without colour, using a distinct texture per series
 (`█ ▓ ▒ ░ # = +`).
 
-With so few colours, shape carries the detail: the weekday × hour view is a
-set of ridgelines (one small bar chart per weekday, eight heights on a shared
-scale), and the calendar draws each day as a braille "bubble" that grows with
-that day's tokens. Both read the same with no colour at all.
+The calendar and the weekday × hour view are heatmaps of solid cells in four
+steps (dim cyan, cyan, bright cyan, bright white); without colour the steps
+are the shades `░ ▒ ▓ █`.
 
 ### Other Machines (`/stats remote`, `/stats sync`)
 

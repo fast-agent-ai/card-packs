@@ -1,6 +1,6 @@
 schema_version: 2
 name: usage-tracker
-version: 0.2.1
+version: 0.2.2
 requires_fast_agent: ">=0.10.43"
 description: Track model usage, estimated cost, latency, and tool time across sessions and machines with share-worthy terminal charts.
 commands:
