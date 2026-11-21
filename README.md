@@ -41,6 +41,7 @@ fast-agent plugins add session-html
 fast-agent plugins add discover
 fast-agent plugins add price-calculator
 fast-agent plugins add llm-perf
+fast-agent plugins add mermaid-render
 ```
 
 ### Maintaining plugins

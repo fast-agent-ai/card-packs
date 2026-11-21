@@ -101,6 +101,16 @@
       "version": "0.3.0",
       "path_oid": "2549b713ad1aea893c4c5b411aa42d6bbe1e7938",
       "requires_fast_agent": ">=0.10.43"
+    },
+    {
+      "name": "mermaid-render",
+      "description": "Render fenced Mermaid diagrams locally with merman-cli (PNG or Unicode text)",
+      "repo_url": "https://github.com/fast-agent-ai/card-packs",
+      "repo_ref": "main",
+      "repo_path": "plugins/mermaid-render",
+      "version": "0.1.0",
+      "requires_fast_agent": ">=0.10.43",
+      "path_oid": "7764bf6ef5b1943bb178af8580503d91aae0a0cc"
     }
   ],
   "plugin_bundles": [
