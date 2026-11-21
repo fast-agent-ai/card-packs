@@ -117,7 +117,7 @@ def _make_turn_messages(attempt, *, tool_name: str = "bash", tool_ms: float = 1_
         tool_results={
             "call-1": CallToolResult(
                 content=[TextContent(type="text", text="ok")],
-                isError=False,
+                is_error=False,
             )
         },
         channels={

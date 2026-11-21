@@ -117,10 +117,10 @@ def _default_tz_mode(config: Mapping[str, object]) -> Literal["utc", "local"]:
     return "utc"
 
 
-def _command_config(ctx: PluginCommandActionContext) -> Mapping[str, object]:
-    settings = getattr(ctx, "settings", None)
-    plugins = getattr(settings, "plugins", None)
-    raw = getattr(plugins, "config", None)
+def _command_config(
+    ctx: PluginCommandActionContext | PluginCommandCompletionContext,
+) -> Mapping[str, object]:
+    raw = ctx.settings.plugins.config if ctx.settings is not None else None
     return perf.plugin_config(raw if isinstance(raw, dict) else None)
 
 
@@ -259,8 +259,8 @@ async def on_post_user_turn(
 
     turn_usage = tuple(ctx.turn_usage)
     session_usage = tuple(ctx.session_usage)
-    turn_messages = tuple(getattr(ctx, "turn_messages", ()))
-    session_id = getattr(ctx, "session_id", None)
+    turn_messages = tuple(ctx.turn_messages)
+    session_id = ctx.session_id
 
     auto_update = _bool_setting(config, "pricing_auto_update", True)
     has_unpriced = False
@@ -445,9 +445,7 @@ def _machine_completions(
     from fast_agent.command_actions import PluginCommandCompletion
 
     try:
-        plugins = getattr(getattr(ctx, "settings", None), "plugins", None)
-        raw = getattr(plugins, "config", None)
-        config = perf.plugin_config(raw if isinstance(raw, dict) else None)
+        config = _command_config(ctx)
         known = remotes.load_remotes(pricing_updater.resolve_data_dir(config))
     except Exception:
         return []
@@ -584,7 +582,7 @@ async def stats_command(ctx: PluginCommandActionContext) -> PluginCommandActionR
     config = _command_config(ctx)
     data_dir, db_path = _configure_runtime(config)
     perf_settings = perf.Settings.from_config(config)
-    is_tui = bool(getattr(ctx, "is_tui", False))
+    is_tui = ctx.is_tui
     tokens = _split_args(ctx.arguments)
 
     sub = tokens[0].casefold() if tokens else ""
@@ -596,7 +594,7 @@ async def stats_command(ctx: PluginCommandActionContext) -> PluginCommandActionR
             tokens[1:],
             data_dir=data_dir,
             db_path=db_path,
-            session_cwd=getattr(ctx, "session_cwd", None),
+            session_cwd=ctx.session_cwd,
             is_tui=is_tui,
             burst_ms=perf_settings.burst_ms,
         )

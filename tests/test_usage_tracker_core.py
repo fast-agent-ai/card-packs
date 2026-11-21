@@ -1188,6 +1188,22 @@ class PerfHistoryTests(unittest.TestCase):
             [store.attempt_hash(attempt) for attempt in swept],
         )
 
+    def test_inspect_tool_result_reads_is_error_without_touching_deprecated_isError(self):
+        class _V2Result:
+            def __init__(self, is_error: bool) -> None:
+                self.is_error = is_error
+                self.meta = None
+                self.content = []
+
+            @property
+            def isError(self) -> bool:
+                raise AssertionError("deprecated isError property should not be accessed")
+
+        self.assertFalse(perf._inspect_tool_result(_V2Result(False), "shell")[0])
+        self.assertTrue(perf._inspect_tool_result(_V2Result(True), "shell")[0])
+        self.assertTrue(perf._inspect_tool_result({"isError": True}, "shell")[0])
+        self.assertFalse(perf._inspect_tool_result({"is_error": False}, "shell")[0])
+
 
 class ReviewHardeningTests(unittest.TestCase):
     def setUp(self):

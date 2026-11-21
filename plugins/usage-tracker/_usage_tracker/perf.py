@@ -22,6 +22,8 @@ from .models import PLUGIN_NAME
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from mcp.types import CallToolResult
+
     from fast_agent.command_actions import (
         PluginCommandActionContext,
         PluginCommandActionResult,
@@ -32,6 +34,8 @@ if TYPE_CHECKING:
 
 type HistoryMessage = PromptMessageExtended | Mapping[str, Any]
 """A fast-agent message, or its JSON form from a saved session history."""
+type ToolResultLike = CallToolResult | Mapping[str, Any]
+"""A live MCP ``CallToolResult`` or its serialized JSON dict."""
 
 # fast-agent channel names (stable wire constants, mirrored to avoid hard imports).
 FAST_AGENT_TIMING = "fast-agent-timing"
@@ -345,19 +349,13 @@ def _final_attempt(usage: object) -> tuple[str, int | None]:
 # messages. These helpers read the few fields perf and pricing need from either.
 
 
-def _field(message: HistoryMessage, name: str) -> Any:
-    if isinstance(message, Mapping):
-        return message.get(name)
-    return getattr(message, name, None)
-
-
 def message_role(message: HistoryMessage) -> str | None:
-    role = _field(message, "role")
-    return role if isinstance(role, str) else getattr(role, "value", None)
+    role = message.get("role") if isinstance(message, Mapping) else message.role
+    return role if isinstance(role, str) else None
 
 
 def message_channels(message: HistoryMessage) -> Mapping[str, Sequence[object]]:
-    channels = _field(message, "channels")
+    channels = message.get("channels") if isinstance(message, Mapping) else message.channels
     return channels if isinstance(channels, Mapping) else {}
 
 
@@ -391,7 +389,7 @@ def channel_json(message: HistoryMessage, channel: str) -> object:
 
 def tool_requests(message: HistoryMessage) -> list[tuple[str, str, Mapping[str, object]]]:
     """``(call_id, tool_name, arguments)`` for each tool call on an assistant message."""
-    tool_calls = _field(message, "tool_calls")
+    tool_calls = message.get("tool_calls") if isinstance(message, Mapping) else message.tool_calls
     if not isinstance(tool_calls, Mapping):
         return []
     requests: list[tuple[str, str, Mapping[str, object]]] = []
@@ -401,9 +399,7 @@ def tool_requests(message: HistoryMessage) -> list[tuple[str, str, Mapping[str, 
             params = params if isinstance(params, Mapping) else {}
             name, arguments = params.get("name"), params.get("arguments")
         else:
-            params = getattr(request, "params", None)
-            name = getattr(params, "name", None)
-            arguments = getattr(params, "arguments", None)
+            name, arguments = request.params.name, request.params.arguments
         if isinstance(name, str):
             requests.append(
                 (str(call_id), name, arguments if isinstance(arguments, Mapping) else {})
@@ -412,26 +408,22 @@ def tool_requests(message: HistoryMessage) -> list[tuple[str, str, Mapping[str, 
 
 
 def _tool_call_ids(message: HistoryMessage) -> list[str]:
-    tool_calls = _field(message, "tool_calls")
+    tool_calls = message.get("tool_calls") if isinstance(message, Mapping) else message.tool_calls
     return [str(key) for key in tool_calls] if isinstance(tool_calls, Mapping) else []
 
 
 def _tool_result_ids(message: HistoryMessage) -> list[str]:
-    results = _field(message, "tool_results")
+    results = message.get("tool_results") if isinstance(message, Mapping) else message.tool_results
     return [str(key) for key in results] if isinstance(results, Mapping) else []
 
 
-def _tool_results(message: HistoryMessage) -> Mapping[str, Any]:
-    results = _field(message, "tool_results")
+def _tool_results(message: HistoryMessage) -> Mapping[str, ToolResultLike]:
+    results = message.get("tool_results") if isinstance(message, Mapping) else message.tool_results
     return results if isinstance(results, Mapping) else {}
 
 
-def _classify_ptc_error(result: Any, has_ptc_meta: bool) -> str:
-    content = (
-        result.get("content")
-        if isinstance(result, Mapping)
-        else getattr(result, "content", None)
-    )
+def _classify_ptc_error(result: ToolResultLike, has_ptc_meta: bool) -> str:
+    content = result.get("content") if isinstance(result, Mapping) else result.content
     first_text = ""
     if isinstance(content, Sequence) and not isinstance(content, (str, bytes)):
         for block in content:
@@ -449,21 +441,20 @@ def _classify_ptc_error(result: Any, has_ptc_meta: bool) -> str:
 
 
 def _inspect_tool_result(
-    result: Any,
+    result: ToolResultLike | None,
     tool_name: str,
 ) -> tuple[bool, str | None, tuple[PtcNestedCall, ...], bool]:
     if result is None:
         return False, None, (), False
     if isinstance(result, Mapping):
-        is_error = bool(result.get("isError") or result.get("is_error"))
+        raw_is_error = result.get("is_error")
+        is_error = bool(result.get("isError") if raw_is_error is None else raw_is_error)
         raw_meta = result.get("_meta")
         if not isinstance(raw_meta, Mapping):
             raw_meta = result.get("meta")
     else:
-        is_error = bool(getattr(result, "isError", False) or getattr(result, "is_error", False))
-        raw_meta = getattr(result, "meta", None)
-        if not isinstance(raw_meta, Mapping):
-            raw_meta = getattr(result, "_meta", None)
+        is_error = bool(result.is_error)
+        raw_meta = result.meta
 
     meta = raw_meta if isinstance(raw_meta, Mapping) else {}
     raw_ptc = meta.get(FAST_AGENT_PTC_CALLS)
@@ -507,9 +498,12 @@ def _inspect_tool_result(
 
 def is_user_prompt(message: HistoryMessage) -> bool:
     """User input, as opposed to tool results and other messages fast-agent adds."""
+    tool_results = (
+        message.get("tool_results") if isinstance(message, Mapping) else message.tool_results
+    )
     return (
         message_role(message) == "user"
-        and not _field(message, "tool_results")
+        and not tool_results
         and _NON_PROMPT_CHANNELS.isdisjoint(message_channels(message))
     )
 
