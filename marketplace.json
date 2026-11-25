@@ -118,7 +118,7 @@
       "repo_url": "https://github.com/fast-agent-ai/card-packs",
       "repo_ref": "main",
       "repo_path": "plugins/mermaid-render",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "requires_fast_agent": ">=0.10.43",
       "path_oid": "1c9ae29ecb2c31e7b08ae175f02c4dbc5f0d8b06"
     }
