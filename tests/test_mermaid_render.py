@@ -308,7 +308,7 @@ def test_session_config_commands_and_status(plugin, monkeypatch, tmp_path):
 
     status = run_command(plugin, "status", [], tmp_path)
     assert "Mode: text" in (status.message or "")
-    assert "Theme: forest; background: transparent" in (status.message or "")
+    assert "Theme: forest; look: classic; background: transparent" in (status.message or "")
     assert "Session overrides:" in (status.message or "")
 
 
@@ -430,3 +430,99 @@ def test_completer(plugin):
         agent=SimpleNamespace(message_history=[]),
     )
     assert [c.value for c in plugin.complete_mermaid(ctx_test_mode)] == ["image", "text"]
+
+    ctx_open = PluginCommandCompletionContext(
+        command_name="mermaid",
+        arguments="op",
+        current_token="op",
+        completed_tokens=(),
+        agent=SimpleNamespace(message_history=[]),
+    )
+    assert [c.value for c in plugin.complete_mermaid(ctx_open)] == ["open"]
+
+
+def test_graphic_render_includes_clickable_links_and_open_subcommand(plugin, monkeypatch, tmp_path):
+    monkeypatch.setattr(plugin, "_find_merman", lambda: "/tools/merman-cli")
+
+    async def spawn(executable, subcommand, *args, **kwargs):
+        flags = dict(zip(args[::2], args[1::2], strict=True))
+        Path(flags["-o"]).write_bytes(PNG)
+        return SimpleNamespace(communicate=AsyncMock(return_value=(b"", b"")), returncode=0)
+
+    monkeypatch.setattr(plugin.asyncio, "create_subprocess_exec", AsyncMock(side_effect=spawn))
+
+    # Post-turn graphic render emits clickable file:// link + /mermaid open hint
+    out = asyncio.run(
+        plugin.render_post_turn(turn_context([message(fence(FLOW, title="Flow"))], tmp_path))
+    )
+    assert out is not None
+    assert len(out.images) == 1
+    assert out.display is not None
+    assert "[link=file://" in out.display
+    assert "/mermaid open" in out.display
+
+    # Internal _last_images must not leak into /mermaid status
+    status = run_command(plugin, "status", [], tmp_path)
+    assert "_last_images" not in (status.message or "")
+
+    # /mermaid open opens the rendered PNG via _open_file
+    opened: list[Path] = []
+    monkeypatch.setattr(
+        plugin,
+        "_open_file",
+        lambda path: (opened.append(path), (True, f"Opened `{path.name}`"))[1],
+    )
+    open_res = run_command(plugin, "open", [message(fence(FLOW, title="Flow"))], tmp_path)
+    assert len(opened) == 1
+    assert opened[0].is_file()
+    assert "Opened" in (open_res.message or "")
+    assert "[link=file://" in (open_res.message or "")
+
+    # /mermaid open 2 also works against last /mermaid test images when history has no diagrams
+    opened.clear()
+    test_res = run_command(plugin, "test", [], tmp_path)
+    assert len(test_res.images) == 3
+    assert "[link=file://" in (test_res.message or "")
+    open_second = run_command(plugin, "open 2", [], tmp_path)
+    assert len(opened) == 1
+    assert opened[0] == Path(test_res.images[1].source).with_suffix(".html")
+    assert opened[0].is_file()
+    assert ".png" in opened[0].read_text(encoding="utf-8")
+    assert "Opened" in (open_second.message or "")
+
+    # /mermaid look switches look override (default is classic, avoiding neo border gradients)
+    look_res = run_command(plugin, "look handdrawn", [], tmp_path)
+    assert "handDrawn" in (look_res.message or "")
+    status_after = run_command(plugin, "status", [], tmp_path)
+    assert "look: handDrawn" in (status_after.message or "")
+
+
+def test_wsl_file_uri_and_open_command(plugin, monkeypatch, tmp_path):
+    png = tmp_path / "my diagram.png"
+    png.write_bytes(PNG)
+
+    monkeypatch.setattr(plugin, "_is_wsl", lambda: True)
+    monkeypatch.setattr(
+        plugin,
+        "_wsl_windows_path",
+        lambda _p: r"\\wsl.localhost\Ubuntu\home\user\my diagram.png",
+    )
+    assert plugin._file_uri(png) == "file://wsl.localhost/Ubuntu/home/user/my%20diagram.png"
+
+    monkeypatch.setattr(
+        plugin,
+        "_wsl_windows_path",
+        lambda _p: r"C:\Users\user\my diagram.png",
+    )
+    assert plugin._file_uri(png) == "file:///C:/Users/user/my%20diagram.png"
+
+    monkeypatch.setattr(plugin.shutil, "which", lambda name: None)
+    cmd = plugin._open_path_command(png)
+    if Path("/mnt/c/Windows/System32/cmd.exe").is_file():
+        assert cmd == [
+            "/mnt/c/Windows/System32/cmd.exe",
+            "/c",
+            "start",
+            "",
+            r"C:\Users\user\my diagram.png",
+        ]

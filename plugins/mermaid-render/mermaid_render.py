@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import html
 import json
 import logging
 import math
@@ -17,6 +18,7 @@ import types
 from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 
 from rich.markup import escape as escape_markup
 
@@ -47,6 +49,8 @@ _PNG = b"\x89PNG\r\n\x1a\n"
 _POST_TURN_IMAGES = any(field.name == "images" for field in fields(PluginPostUserTurnOutput))
 _LOG = logging.getLogger(__name__)
 _THEMES = ("auto", "herdr", "dark", "default", "forest", "neutral")
+_LOOKS = ("classic", "neo", "handDrawn")
+_LOOK_BY_KEY = {look.casefold(): look for look in _LOOKS}
 _MODES = ("image", "text")
 _FALLBACK_FONT_CANDIDATES = (
     "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
@@ -82,6 +86,7 @@ class _HerdrPalette:
 class _Settings:
     mode: str = "image"
     theme: str = "auto"
+    look: str = "classic"
     background: str = "auto"
     auto_render: bool = True
     max_diagrams: int = 3
@@ -109,6 +114,11 @@ class _Settings:
         theme = merged.get("theme", defaults.theme)
         if not isinstance(theme, str) or theme not in _THEMES:
             raise ValueError(f"theme must be one of: {', '.join(_THEMES)}")
+
+        raw_look = merged.get("look", defaults.look)
+        if not isinstance(raw_look, str) or raw_look.casefold() not in _LOOK_BY_KEY:
+            raise ValueError(f"look must be one of: {', '.join(_LOOKS)}")
+        look = _LOOK_BY_KEY[raw_look.casefold()]
 
         background = merged.get("background", defaults.background)
         if not isinstance(background, str) or not background.strip():
@@ -157,6 +167,7 @@ class _Settings:
         return cls(
             mode=mode,
             theme=theme,
+            look=look,
             background=background.strip(),
             auto_render=auto_render,
             max_diagrams=limit,
@@ -173,6 +184,198 @@ class _RenderError(Exception):
 
 def _in_herdr() -> bool:
     return bool(os.environ.get("HC_TERMINAL_ID") or os.environ.get("HC_TERMINAL_SOCKET"))
+
+
+def _is_wsl() -> bool:
+    if os.environ.get("WSL_DISTRO_NAME") or os.environ.get("WSL_INTEROP"):
+        return True
+    try:
+        return (
+            "microsoft"
+            in Path("/proc/version").read_text(encoding="utf-8", errors="ignore").lower()
+        )
+    except OSError:
+        return False
+
+
+def _short_display_path(path: Path) -> str:
+    try:
+        rel = path.relative_to(Path.home())
+        return f"~/{rel.as_posix()}"
+    except ValueError:
+        return str(path)
+
+
+def _wsl_windows_path(path: Path) -> str | None:
+    wslpath = shutil.which("wslpath")
+    if not wslpath:
+        return None
+    try:
+        proc = subprocess.run(
+            [wslpath, "-w", str(path)],
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+            check=False,
+        )
+    except OSError:
+        return None
+    if proc.returncode == 0 and proc.stdout.strip():
+        return proc.stdout.strip()
+    return None
+
+
+def _windows_path_to_file_uri(win_path: str) -> str | None:
+    normalized = win_path.strip()
+    if not normalized:
+        return None
+    if normalized.startswith("\\\\"):
+        parts = normalized[2:].split("\\", 1)
+        if len(parts) == 2 and parts[0]:
+            host, rest = parts
+            posix_rest = rest.replace("\\", "/")
+            return f"file://{host}/{quote(posix_rest, safe='/')}"
+        return None
+    if len(normalized) >= 3 and normalized[1] == ":" and normalized[2] in ("\\", "/"):
+        posix_path = normalized.replace("\\", "/")
+        return f"file:///{quote(posix_path, safe='/:')}"
+    return None
+
+
+def _file_uri(path: Path) -> str:
+    resolved = path.expanduser().resolve()
+    if _is_wsl():
+        win_path = _wsl_windows_path(resolved)
+        if win_path:
+            win_uri = _windows_path_to_file_uri(win_path)
+            if win_uri:
+                return win_uri
+    return resolved.as_uri()
+
+
+def _browser_view_path(png_path: Path) -> Path:
+    resolved = png_path.expanduser().resolve()
+    html_path = resolved.with_suffix(".html")
+    return html_path if html_path.is_file() else resolved
+
+
+def _write_browser_view(png_path: Path, *, title: str, background: str) -> Path:
+    html_path = png_path.with_suffix(".html")
+    bg_css = "#1e1e2e" if background.lower() == "transparent" else background
+    safe_title = html.escape(title, quote=True)
+    safe_src = html.escape(png_path.name, quote=True)
+    safe_bg = html.escape(bg_css, quote=True)
+    doc = (
+        "<!doctype html>\n"
+        '<html lang="en">\n'
+        "<head>\n"
+        '  <meta charset="utf-8">\n'
+        f"  <title>{safe_title}</title>\n"
+        "  <style>\n"
+        f"    html, body {{ margin: 0; min-height: 100%; background: {safe_bg}; }}\n"
+        "    body { display: grid; place-items: center; padding: 24px; box-sizing: border-box; }\n"
+        "    img { max-width: 100%; height: auto; cursor: zoom-in; display: block; }\n"
+        "    img.full { max-width: none; cursor: zoom-out; }\n"
+        "  </style>\n"
+        "</head>\n"
+        "<body>\n"
+        f'  <img src="{safe_src}" alt="{safe_title}" '
+        "onclick=\"this.classList.toggle('full')\">\n"
+        "</body>\n"
+        "</html>\n"
+    )
+    html_path.write_text(doc, encoding="utf-8")
+    return html_path
+
+
+def _format_image_links(images: list[PluginCommandActionImage]) -> str:
+    if not images:
+        return ""
+    lines: list[str] = []
+    for idx, image in enumerate(images, start=1):
+        view_path = _browser_view_path(Path(image.source))
+        uri = _file_uri(view_path)
+        label = escape_markup(image.label or f"Diagram {idx}")
+        shown_path = escape_markup(_short_display_path(view_path))
+        prefix = f"{idx}. " if len(images) > 1 else ""
+        lines.append(
+            f"[dim]{prefix}{label}: [/dim][link={uri}][cyan]Open in browser[/cyan][/link]"
+            f" [dim]({shown_path})[/dim]"
+        )
+    open_hint = "/mermaid open <n>" if len(images) > 1 else "/mermaid open"
+    lines.append(f"[dim]Click to open in browser, or run {open_hint}[/dim]")
+    return "\n".join(lines)
+
+
+def _remember_rendered_images(images: list[PluginCommandActionImage]) -> None:
+    if images:
+        _session_overrides()["_last_images"] = [
+            (image.source, image.label or "") for image in images
+        ]
+
+
+def _last_rendered_images() -> list[tuple[str, str]]:
+    raw = _session_overrides().get("_last_images")
+    if isinstance(raw, list):
+        return [(str(src), str(lbl)) for src, lbl in raw]
+    return []
+
+
+def _open_path_command(path: Path) -> list[str] | None:
+    resolved = path.expanduser().resolve()
+    if sys.platform == "darwin":
+        opener = shutil.which("open")
+        return [opener, str(resolved)] if opener else None
+    if _is_wsl():
+        if wslview := shutil.which("wslview"):
+            return [wslview, str(resolved)]
+        win_path = _wsl_windows_path(resolved) or str(resolved)
+        cmd_exe = shutil.which("cmd.exe") or (
+            "/mnt/c/Windows/System32/cmd.exe"
+            if Path("/mnt/c/Windows/System32/cmd.exe").is_file()
+            else None
+        )
+        if cmd_exe:
+            return [cmd_exe, "/c", "start", "", win_path]
+        explorer = shutil.which("explorer.exe") or (
+            "/mnt/c/Windows/explorer.exe" if Path("/mnt/c/Windows/explorer.exe").is_file() else None
+        )
+        if explorer:
+            return [explorer, win_path]
+    if xdg := shutil.which("xdg-open"):
+        return [xdg, str(resolved)]
+    return None
+
+
+def _open_file(path: Path) -> tuple[bool, str]:
+    resolved = path.expanduser().resolve()
+    if not resolved.is_file():
+        return False, f"Diagram file not found: `{resolved}`"
+    if sys.platform == "win32":
+        startfile = getattr(os, "startfile", None)
+        if callable(startfile):
+            try:
+                startfile(str(resolved))
+                return True, f"Opened `{_short_display_path(resolved)}`"
+            except OSError as exc:
+                return False, f"Could not open `{_short_display_path(resolved)}`: {exc}"
+    cmd = _open_path_command(resolved)
+    if not cmd:
+        return False, (
+            f"No system opener found for `{_short_display_path(resolved)}`. "
+            f"File is at `{resolved}`."
+        )
+    try:
+        subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        return False, f"Could not open `{_short_display_path(resolved)}`: {exc}"
+    return True, f"Opened `{_short_display_path(resolved)}`"
 
 
 def _herdr_config_dir() -> Path:
@@ -367,8 +570,9 @@ def _resolve_render_style(
 
     if palette is not None:
         bg = palette.background if settings.background == "auto" else settings.background
-        mermaid_cfg = {
+        mermaid_cfg: dict[str, object] = {
             "theme": "base",
+            "look": settings.look,
             "themeVariables": {**palette.theme_variables, "background": bg},
         }
         font_file = explicit_font
@@ -381,7 +585,8 @@ def _resolve_render_style(
         bg = "#1e1e2e" if effective_theme == "dark" else "#ffffff"
     else:
         bg = settings.background
-    return effective_theme, bg, None, explicit_font, None
+    mermaid_cfg = {"look": settings.look}
+    return effective_theme, bg, mermaid_cfg, explicit_font, None
 
 
 def _find_merman() -> str | None:
@@ -475,7 +680,7 @@ async def _render_image(
         [code, theme_name, background, mermaid_cfg, font_file, "merman"],
         sort_keys=True,
     )
-    cached = settings.cache_dir / f"{hashlib.sha256(key.encode('utf-8')).hexdigest()}.png"
+    cached = settings.cache_dir / f"{hashlib.sha256(key.encode('utf-8')).hexdigest()[:6]}.png"
     if not _is_png(cached):
         settings.cache_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=settings.cache_dir) as staging:
@@ -497,6 +702,8 @@ async def _render_image(
                 cfg_path = Path(staging) / "mermaid-config.json"
                 cfg_path.write_text(json.dumps(mermaid_cfg), encoding="utf-8")
                 base_cmd.extend(["-c", str(cfg_path)])
+                if "theme" not in mermaid_cfg:
+                    base_cmd.extend(["-t", theme_name])
             else:
                 base_cmd.extend(["-t", theme_name])
 
@@ -523,9 +730,13 @@ async def _render_image(
                 raise _RenderError("merman-cli did not produce a PNG")
             output.replace(cached)
 
+    label = diagram.title or detect_diagram_type(code)
+    if not cached.with_suffix(".html").is_file():
+        _write_browser_view(cached, title=label, background=background)
+
     return PluginCommandActionImage(
         source=str(cached),
-        label=diagram.title or detect_diagram_type(code),
+        label=label,
         mime_type="image/png",
     )
 
@@ -636,7 +847,13 @@ async def render_post_turn(
         _LOG.warning("%s: %s", _NAME, error)
     if texts:
         return PluginPostUserTurnOutput(display=escape_markup("\n\n".join(texts)))
-    return PluginPostUserTurnOutput(images=tuple(images)) if images else None
+    if images:
+        _remember_rendered_images(images)
+        return PluginPostUserTurnOutput(
+            display=_format_image_links(images),
+            images=tuple(images),
+        )
+    return None
 
 
 async def _handle_install(confirm: bool) -> PluginCommandActionResult:
@@ -703,7 +920,7 @@ def _format_status(settings: _Settings) -> str:
         else f"auto ({_effective_text_width(settings)})"
     )
 
-    active_overrides = _session_overrides()
+    active_overrides = {k: v for k, v in _session_overrides().items() if not k.startswith("_")}
     overrides = (
         f"\nSession overrides: {', '.join(f'{k}={v}' for k, v in active_overrides.items())}"
         if active_overrides
@@ -712,7 +929,7 @@ def _format_status(settings: _Settings) -> str:
     return (
         f"merman-cli: {binary_line}\n"
         f"Mode: {settings.mode} (text width: {width_desc})\n"
-        f"Theme: {theme_desc}; background: {bg_desc}\n"
+        f"Theme: {theme_desc}; look: {settings.look}; background: {bg_desc}\n"
         f"Font: {font_desc}\n"
         f"Auto-render: {auto} (max {settings.max_diagrams} per turn)\n"
         f"Timeout: {settings.timeout_seconds:g}s per diagram\n"
@@ -758,9 +975,10 @@ _TEST_DIAGRAMS: tuple[MermaidDiagram, ...] = (
 )
 
 _USAGE = (
-    "Usage: /mermaid [image|text] [index] | "
+    "Usage: /mermaid [image|text] [index] | open [index] | "
     "test [image|text] | on | off | mode <image|text> | "
     "theme <auto|herdr|dark|default|forest|neutral> | "
+    "look <classic|neo|handDrawn> | "
     "background <color|auto> | status | install [--yes]"
 )
 
@@ -806,6 +1024,17 @@ async def mermaid_command(ctx: PluginCommandActionContext) -> PluginCommandActio
             message=f"Mermaid theme set to `{lowered[1]}` for this session."
         )
 
+    if lowered and lowered[0] == "look":
+        if len(lowered) != 2 or lowered[1] not in _LOOK_BY_KEY:
+            return PluginCommandActionResult(
+                message=escape_markup(f"Usage: /mermaid look <{'|'.join(_LOOKS)}>")
+            )
+        chosen_look = _LOOK_BY_KEY[lowered[1]]
+        _session_overrides()["look"] = chosen_look
+        return PluginCommandActionResult(
+            message=f"Mermaid look set to `{chosen_look}` for this session."
+        )
+
     if lowered and lowered[0] == "background":
         if len(tokens) != 2 or not tokens[1].strip():
             return PluginCommandActionResult(
@@ -823,6 +1052,49 @@ async def mermaid_command(ctx: PluginCommandActionContext) -> PluginCommandActio
             return await _handle_install(confirm=True)
         return PluginCommandActionResult(message=escape_markup("Usage: /mermaid install [--yes]"))
 
+    if lowered and lowered[0] == "open":
+        open_index = 1
+        if len(lowered) == 2 and re.fullmatch(r"[0-9]+", lowered[1]):
+            open_index = int(lowered[1])
+        elif len(lowered) != 1:
+            return PluginCommandActionResult(message=escape_markup("Usage: /mermaid open [index]"))
+
+        diagrams = next(_message_diagrams(reversed(ctx.message_history)), [])
+        target_path: Path | None = None
+        if diagrams:
+            if not 1 <= open_index <= len(diagrams):
+                return PluginCommandActionResult(
+                    message=f"Choose a Mermaid diagram index from 1 to {len(diagrams)}."
+                )
+            images, _, errors = await _render_diagrams(
+                [diagrams[open_index - 1]],
+                replace(settings, mode="image"),
+            )
+            if errors or not images:
+                detail = "; ".join(errors) if errors else "no PNG produced"
+                return PluginCommandActionResult(
+                    message="Mermaid rendering failed: " + escape_markup(detail)
+                )
+            _remember_rendered_images(images)
+            target_path = Path(images[0].source)
+        else:
+            last_images = _last_rendered_images()
+            if not last_images:
+                return PluginCommandActionResult(
+                    message="No rendered Mermaid diagrams available to open."
+                )
+            if not 1 <= open_index <= len(last_images):
+                return PluginCommandActionResult(
+                    message=f"Choose a Mermaid diagram index from 1 to {len(last_images)}."
+                )
+            target_path = Path(last_images[open_index - 1][0])
+
+        view_path = _browser_view_path(target_path)
+        _, status_msg = _open_file(view_path)
+        uri = _file_uri(view_path)
+        link = f"[link={uri}][cyan]{escape_markup(_short_display_path(view_path))}[/cyan][/link]"
+        return PluginCommandActionResult(message=f"{escape_markup(status_msg)} ({link})")
+
     if lowered and lowered[0] == "test":
         test_mode: str | None = None
         if len(lowered) == 2 and lowered[1] in _MODES:
@@ -834,6 +1106,9 @@ async def mermaid_command(ctx: PluginCommandActionContext) -> PluginCommandActio
         effective = replace(settings, mode=test_mode) if test_mode else settings
         images, texts, errors = await _render_diagrams(_TEST_DIAGRAMS, effective)
         parts: list[str] = []
+        if images:
+            _remember_rendered_images(images)
+            parts.append(_format_image_links(images))
         if texts:
             parts.append(escape_markup("\n\n".join(texts)))
         if errors:
@@ -867,6 +1142,9 @@ async def mermaid_command(ctx: PluginCommandActionContext) -> PluginCommandActio
     effective = replace(settings, mode=mode_override) if mode_override else settings
     images, texts, errors = await _render_diagrams(diagrams, effective)
     parts: list[str] = []
+    if images:
+        _remember_rendered_images(images)
+        parts.append(_format_image_links(images))
     if texts:
         parts.append(escape_markup("\n\n".join(texts)))
     if errors:
@@ -883,6 +1161,7 @@ def complete_mermaid(
     prefix = ctx.current_token.casefold()
     if not ctx.completed_tokens:
         options = [
+            ("open", "Open rendered Mermaid diagram in browser"),
             ("test", "Render 3 sample diagrams (flowchart, sequence, state)"),
             ("status", "Show merman-cli status and active settings"),
             ("install", "Preview/install merman-cli"),
@@ -890,6 +1169,7 @@ def complete_mermaid(
             ("off", "Disable auto-render for this session"),
             ("mode", "Set default output mode (image|text)"),
             ("theme", "Set diagram theme"),
+            ("look", "Set diagram look (classic|neo|handDrawn)"),
             ("background", "Set PNG background color"),
             ("image", "Render latest reply as PNG"),
             ("text", "Render latest reply as Unicode text"),
@@ -906,6 +1186,12 @@ def complete_mermaid(
             return [PluginCommandCompletion(value=m) for m in _MODES if m.startswith(prefix)]
         if first == "theme":
             return [PluginCommandCompletion(value=t) for t in _THEMES if t.startswith(prefix)]
+        if first == "look":
+            return [
+                PluginCommandCompletion(value=look)
+                for look in _LOOKS
+                if look.casefold().startswith(prefix)
+            ]
         if first == "background":
             return [
                 PluginCommandCompletion(value=b)
