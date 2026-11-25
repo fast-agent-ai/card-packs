@@ -1155,7 +1155,7 @@ async def mermaid_command(ctx: PluginCommandActionContext) -> PluginCommandActio
     )
 
 
-def complete_mermaid(
+async def complete_mermaid(
     ctx: PluginCommandCompletionContext,
 ) -> list[PluginCommandCompletion]:
     prefix = ctx.current_token.casefold()

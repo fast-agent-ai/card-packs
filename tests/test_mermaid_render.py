@@ -402,7 +402,13 @@ def test_completer(plugin):
         completed_tokens=(),
         agent=SimpleNamespace(message_history=[]),
     )
-    assert [c.value for c in plugin.complete_mermaid(ctx)] == ["install"]
+    from fast_agent.command_actions.loader import load_plugin_command_completion_function
+
+    loaded_completer = load_plugin_command_completion_function(
+        "./mermaid_render.py:complete_mermaid",
+        base_path=PLUGIN,
+    )
+    assert [c.value for c in asyncio.run(loaded_completer(ctx))] == ["install"]
 
     ctx_test = PluginCommandCompletionContext(
         command_name="mermaid",
@@ -411,7 +417,7 @@ def test_completer(plugin):
         completed_tokens=(),
         agent=SimpleNamespace(message_history=[]),
     )
-    assert set(c.value for c in plugin.complete_mermaid(ctx_test)) == {"test", "text"}
+    assert set(c.value for c in asyncio.run(loaded_completer(ctx_test))) == {"test", "text"}
 
     ctx_mode = PluginCommandCompletionContext(
         command_name="mermaid",
@@ -420,7 +426,20 @@ def test_completer(plugin):
         completed_tokens=("mode",),
         agent=SimpleNamespace(message_history=[]),
     )
-    assert [c.value for c in plugin.complete_mermaid(ctx_mode)] == ["image", "text"]
+    assert [c.value for c in asyncio.run(loaded_completer(ctx_mode))] == ["image", "text"]
+
+    ctx_look = PluginCommandCompletionContext(
+        command_name="mermaid",
+        arguments="look ",
+        current_token="",
+        completed_tokens=("look",),
+        agent=SimpleNamespace(message_history=[]),
+    )
+    assert [c.value for c in asyncio.run(loaded_completer(ctx_look))] == [
+        "classic",
+        "neo",
+        "handDrawn",
+    ]
 
     ctx_test_mode = PluginCommandCompletionContext(
         command_name="mermaid",
@@ -429,7 +448,7 @@ def test_completer(plugin):
         completed_tokens=("test",),
         agent=SimpleNamespace(message_history=[]),
     )
-    assert [c.value for c in plugin.complete_mermaid(ctx_test_mode)] == ["image", "text"]
+    assert [c.value for c in asyncio.run(loaded_completer(ctx_test_mode))] == ["image", "text"]
 
     ctx_open = PluginCommandCompletionContext(
         command_name="mermaid",
@@ -438,7 +457,7 @@ def test_completer(plugin):
         completed_tokens=(),
         agent=SimpleNamespace(message_history=[]),
     )
-    assert [c.value for c in plugin.complete_mermaid(ctx_open)] == ["open"]
+    assert [c.value for c in asyncio.run(loaded_completer(ctx_open))] == ["open"]
 
 
 def test_graphic_render_includes_clickable_links_and_open_subcommand(plugin, monkeypatch, tmp_path):

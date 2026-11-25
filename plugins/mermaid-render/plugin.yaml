@@ -6,7 +6,7 @@ description: Render fenced Mermaid diagrams locally with merman-cli (PNG or Unic
 commands:
   mermaid:
     description: Render Mermaid diagrams, configure settings, or install merman-cli
-    input_hint: "[image|text] [index] | test [image|text] | on|off | mode|theme|background | status | install"
+    input_hint: "[image|text] [index] | open [index] | test [image|text] | on|off | mode|theme|look|background | status | install"
     handler: ./mermaid_render.py:mermaid_command
     completer: ./mermaid_render.py:complete_mermaid
 hooks:
