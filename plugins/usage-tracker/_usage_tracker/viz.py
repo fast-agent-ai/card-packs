@@ -421,16 +421,18 @@ def heat_levels(cells: Sequence[Sequence[float]], steps: int = 4) -> list[list[i
 
 
 HEAT_STYLES = ("dim cyan", "cyan", "bright_cyan", "bold bright_white")
+HEAT_GLYPHS = "░▒▓█"
 HEAT_STEPS = len(HEAT_STYLES)
-_HEAT_PLAIN = "░▒▓█"
+_HEAT_PLAIN = HEAT_GLYPHS
 
 
-def heat_cell(level: int, width: int = 1, glyph: str = "█") -> Seg:
+def heat_cell(level: int, width: int = 1, glyph: str | None = None) -> Seg:
     """One heatmap cell for ``level`` in ``0..HEAT_STEPS``."""
     if level <= 0:
         return ("·" * width, "dim")
     level = min(level, HEAT_STEPS)
-    return (glyph * width, HEAT_STYLES[level - 1], _HEAT_PLAIN[level - 1] * width)
+    ch = HEAT_GLYPHS[level - 1] if glyph is None else glyph
+    return (ch * width, HEAT_STYLES[level - 1], _HEAT_PLAIN[level - 1] * width)
 
 
 def range_plot(low: float | None, high: float | None, scale: float, width: int, color: str) -> Line:
