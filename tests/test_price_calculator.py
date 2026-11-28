@@ -1317,9 +1317,9 @@ class PriceCalculatorTests(unittest.TestCase):
     def test_gpt_62_unsupported_tiers_remain_unpriced(self):
         for model in ("gpt-6.2-astra", "gpt-6.2-sol"):
             for provider in ("openai", "responses", "codexresponses", "copilot"):
-                tiers = ("flex", "ultrafast")
+                tiers: tuple[str, ...] = ("flex",)
                 if provider == "copilot":
-                    tiers += ("batch", "fast")
+                    tiers += ("batch", "fast", "ultrafast")
                 for prompt in (272_000, 272_001):
                     for tier in tiers:
                         with self.subTest(
@@ -1335,6 +1335,64 @@ class PriceCalculatorTests(unittest.TestCase):
                             self.assertIsNone(self.plugin._call_cost(turn))
                             price = self.plugin.calculate_price((turn,))
                             self.assertEqual(1, price.unpriced_calls)
+
+    def test_gpt_6_ultrafast_pricing_and_gpt_62_promo_transition(self):
+        for model in ("gpt-6.2-astra", "gpt-6.2-sol"):
+            for prompt in (272_000, 272_001):
+                standard = self.plugin.calculate_price(
+                    (_turn(model, provider="responses", prompt=prompt, output=10_000),)
+                )
+                promo = self.plugin.calculate_price(
+                    (
+                        _turn(
+                            model,
+                            provider="responses",
+                            prompt=prompt,
+                            output=10_000,
+                            service_tier="ultrafast",
+                            timestamp=datetime(
+                                2027, 2, 28, 23, 59, 59, tzinfo=UTC
+                            ).timestamp(),
+                        ),
+                    )
+                )
+                post_promo = self.plugin.calculate_price(
+                    (
+                        _turn(
+                            model,
+                            provider="responses",
+                            prompt=prompt,
+                            output=10_000,
+                            service_tier="ultrafast",
+                            timestamp=datetime(
+                                2027, 3, 1, 8, 0, 0, tzinfo=UTC
+                            ).timestamp(),
+                        ),
+                    )
+                )
+                self.assertEqual(0, promo.unpriced_calls)
+                self.assertEqual(0, post_promo.unpriced_calls)
+                self.assertAlmostEqual(standard.usd * 3, promo.usd)
+                self.assertAlmostEqual(standard.usd * 6, post_promo.usd)
+
+        for model in ("gpt-6-astra", "gpt-6.1-sol"):
+            for prompt in (272_000, 272_001):
+                standard = self.plugin.calculate_price(
+                    (_turn(model, provider="responses", prompt=prompt, output=10_000),)
+                )
+                ultrafast = self.plugin.calculate_price(
+                    (
+                        _turn(
+                            model,
+                            provider="responses",
+                            prompt=prompt,
+                            output=10_000,
+                            service_tier="ultrafast",
+                        ),
+                    )
+                )
+                self.assertEqual(0, ultrafast.unpriced_calls)
+                self.assertAlmostEqual(standard.usd * 6, ultrafast.usd)
 
     def test_gpt_62_sol_preserves_gpt_61_sol_supported_tariffs(self):
         for provider in ("openai", "responses", "codexresponses", "copilot"):

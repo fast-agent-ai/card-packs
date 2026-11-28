@@ -88,9 +88,9 @@
       "repo_url": "https://github.com/fast-agent-ai/card-packs",
       "repo_ref": "main",
       "repo_path": "plugins/price-calculator",
-      "version": "0.3.33",
+      "version": "0.3.34",
       "requires_fast_agent": ">=0.10.2",
-      "path_oid": "c0c56a25d0e6dfe36af3c5d9ac8a0bb4e42f53af"
+      "path_oid": "773801f46babf768a1455a67ccae9674f9dd6de5"
     },
     {
       "name": "llm-perf",
@@ -108,9 +108,9 @@
       "repo_url": "https://github.com/fast-agent-ai/card-packs",
       "repo_ref": "main",
       "repo_path": "plugins/usage-tracker",
-      "version": "0.2.4",
+      "version": "0.2.5",
       "requires_fast_agent": ">=0.10.43",
-      "path_oid": "5fec80e3abb0b07c9a5fac84ca6f40d4fec066cd"
+      "path_oid": "1935069b4f7d0f30db5bfead7bb0a3c915028663"
     },
     {
       "name": "mermaid-render",

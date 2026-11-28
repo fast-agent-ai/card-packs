@@ -1,6 +1,6 @@
 {
   "schema": "fast-agent.pricing/v1",
-  "catalog_version": "2026-11-20.1",
+  "catalog_version": "2026-11-28.1",
   "currency": "USD",
   "unit": "usd_per_million_tokens",
   "rules": [
@@ -240,6 +240,78 @@
       }
     },
     {
+      "id": "gpt-6.2-astra-ultrafast-promo-short",
+      "match": {
+        "model": {"values": ["gpt-6.2-astra"]},
+        "providers": ["codexresponses", "openai", "responses"],
+        "service_tiers": ["ultrafast"]
+      },
+      "effective": {"until": "2027-03-01T08:00:00Z"},
+      "prompt_tokens": {"maximum": 272000},
+      "context": "short",
+      "rates": {
+        "input": "24.00",
+        "cache_read": "1.20",
+        "cache_write": "30.00",
+        "cache_write_12h": "60.00",
+        "output": "120.00"
+      }
+    },
+    {
+      "id": "gpt-6.2-astra-ultrafast-promo-long",
+      "match": {
+        "model": {"values": ["gpt-6.2-astra"]},
+        "providers": ["codexresponses", "openai", "responses"],
+        "service_tiers": ["ultrafast"]
+      },
+      "effective": {"until": "2027-03-01T08:00:00Z"},
+      "prompt_tokens": {"minimum": 272001},
+      "context": "long",
+      "rates": {
+        "input": "48.00",
+        "cache_read": "2.40",
+        "cache_write": "60.00",
+        "cache_write_12h": "120.00",
+        "output": "180.00"
+      }
+    },
+    {
+      "id": "gpt-6.2-astra-ultrafast-short",
+      "match": {
+        "model": {"values": ["gpt-6.2-astra"]},
+        "providers": ["codexresponses", "openai", "responses"],
+        "service_tiers": ["ultrafast"]
+      },
+      "effective": {"from": "2027-03-01T08:00:00Z"},
+      "prompt_tokens": {"maximum": 272000},
+      "context": "short",
+      "rates": {
+        "input": "48.00",
+        "cache_read": "2.40",
+        "cache_write": "60.00",
+        "cache_write_12h": "120.00",
+        "output": "240.00"
+      }
+    },
+    {
+      "id": "gpt-6.2-astra-ultrafast-long",
+      "match": {
+        "model": {"values": ["gpt-6.2-astra"]},
+        "providers": ["codexresponses", "openai", "responses"],
+        "service_tiers": ["ultrafast"]
+      },
+      "effective": {"from": "2027-03-01T08:00:00Z"},
+      "prompt_tokens": {"minimum": 272001},
+      "context": "long",
+      "rates": {
+        "input": "96.00",
+        "cache_read": "4.80",
+        "cache_write": "120.00",
+        "cache_write_12h": "240.00",
+        "output": "360.00"
+      }
+    },
+    {
       "id": "gpt-6.2-sol-standard-short",
       "match": {
         "model": {"values": ["gpt-6.2-sol"]},
@@ -339,6 +411,78 @@
         "cache_write": "10.00",
         "cache_write_12h": "20.00",
         "output": "30.00"
+      }
+    },
+    {
+      "id": "gpt-6.2-sol-ultrafast-promo-short",
+      "match": {
+        "model": {"values": ["gpt-6.2-sol"]},
+        "providers": ["codexresponses", "openai", "responses"],
+        "service_tiers": ["ultrafast"]
+      },
+      "effective": {"until": "2027-03-01T08:00:00Z"},
+      "prompt_tokens": {"maximum": 272000},
+      "context": "short",
+      "rates": {
+        "input": "6.00",
+        "cache_read": "0.30",
+        "cache_write": "7.50",
+        "cache_write_12h": "15.00",
+        "output": "30.00"
+      }
+    },
+    {
+      "id": "gpt-6.2-sol-ultrafast-promo-long",
+      "match": {
+        "model": {"values": ["gpt-6.2-sol"]},
+        "providers": ["codexresponses", "openai", "responses"],
+        "service_tiers": ["ultrafast"]
+      },
+      "effective": {"until": "2027-03-01T08:00:00Z"},
+      "prompt_tokens": {"minimum": 272001},
+      "context": "long",
+      "rates": {
+        "input": "12.00",
+        "cache_read": "0.60",
+        "cache_write": "15.00",
+        "cache_write_12h": "30.00",
+        "output": "45.00"
+      }
+    },
+    {
+      "id": "gpt-6.2-sol-ultrafast-short",
+      "match": {
+        "model": {"values": ["gpt-6.2-sol"]},
+        "providers": ["codexresponses", "openai", "responses"],
+        "service_tiers": ["ultrafast"]
+      },
+      "effective": {"from": "2027-03-01T08:00:00Z"},
+      "prompt_tokens": {"maximum": 272000},
+      "context": "short",
+      "rates": {
+        "input": "12.00",
+        "cache_read": "0.60",
+        "cache_write": "15.00",
+        "cache_write_12h": "30.00",
+        "output": "60.00"
+      }
+    },
+    {
+      "id": "gpt-6.2-sol-ultrafast-long",
+      "match": {
+        "model": {"values": ["gpt-6.2-sol"]},
+        "providers": ["codexresponses", "openai", "responses"],
+        "service_tiers": ["ultrafast"]
+      },
+      "effective": {"from": "2027-03-01T08:00:00Z"},
+      "prompt_tokens": {"minimum": 272001},
+      "context": "long",
+      "rates": {
+        "input": "24.00",
+        "cache_read": "1.20",
+        "cache_write": "30.00",
+        "cache_write_12h": "60.00",
+        "output": "90.00"
       }
     },
     {
@@ -444,6 +588,40 @@
       }
     },
     {
+      "id": "gpt-6-astra-ultrafast-short",
+      "match": {
+        "model": {"values": ["gpt-6-astra"]},
+        "providers": ["codexresponses", "openai", "responses"],
+        "service_tiers": ["ultrafast"]
+      },
+      "prompt_tokens": {"maximum": 272000},
+      "context": "short",
+      "rates": {
+        "input": "60.00",
+        "cache_read": "6.00",
+        "cache_write": "75.00",
+        "cache_write_12h": "150.00",
+        "output": "300.00"
+      }
+    },
+    {
+      "id": "gpt-6-astra-ultrafast-long",
+      "match": {
+        "model": {"values": ["gpt-6-astra"]},
+        "providers": ["codexresponses", "openai", "responses"],
+        "service_tiers": ["ultrafast"]
+      },
+      "prompt_tokens": {"minimum": 272001},
+      "context": "long",
+      "rates": {
+        "input": "120.00",
+        "cache_read": "12.00",
+        "cache_write": "150.00",
+        "cache_write_12h": "300.00",
+        "output": "450.00"
+      }
+    },
+    {
       "id": "gpt-6.1-sol-standard-short",
       "match": {
         "model": {"values": ["gpt-6.1-sol"]},
@@ -543,6 +721,40 @@
         "cache_write": "10.00",
         "cache_write_12h": "20.00",
         "output": "30.00"
+      }
+    },
+    {
+      "id": "gpt-6.1-sol-ultrafast-short",
+      "match": {
+        "model": {"values": ["gpt-6.1-sol"]},
+        "providers": ["codexresponses", "openai", "responses"],
+        "service_tiers": ["ultrafast"]
+      },
+      "prompt_tokens": {"maximum": 272000},
+      "context": "short",
+      "rates": {
+        "input": "12.00",
+        "cache_read": "0.60",
+        "cache_write": "15.00",
+        "cache_write_12h": "30.00",
+        "output": "60.00"
+      }
+    },
+    {
+      "id": "gpt-6.1-sol-ultrafast-long",
+      "match": {
+        "model": {"values": ["gpt-6.1-sol"]},
+        "providers": ["codexresponses", "openai", "responses"],
+        "service_tiers": ["ultrafast"]
+      },
+      "prompt_tokens": {"minimum": 272001},
+      "context": "long",
+      "rates": {
+        "input": "24.00",
+        "cache_read": "1.20",
+        "cache_write": "30.00",
+        "cache_write_12h": "60.00",
+        "output": "90.00"
       }
     },
     {
