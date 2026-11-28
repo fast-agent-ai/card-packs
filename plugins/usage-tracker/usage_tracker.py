@@ -80,14 +80,16 @@ sweep = importlib.import_module(f"{_PACKAGE_NAME}.sweep")
 PLUGIN_NAME: str = models.PLUGIN_NAME
 PLUGIN_VERSION: str = models.PLUGIN_VERSION
 
-_WINDOWS = ("24h", "7d", "30d", "90d", "all")
-_REPORT_MODES = ("share", "models", "rhythm", "perf", "tools")
+_WINDOWS = ("today", "yesterday", "24h", "7d", "30d", "90d", "all")
+_REPORT_MODES = ("today", "share", "models", "rhythm", "perf", "tools")
 _USAGE_SUBCOMMANDS = (*_REPORT_MODES, "remote", "sync", "sweep", "pricing", "reprice", "help")
-_DEFAULT_WINDOW = {"models": "7d"}
+_DEFAULT_WINDOW = {"models": "7d", "today": "today"}
 _MIX_METRICS = ("tokens", "cost", "calls")
 
 _USAGE_HELP = """Usage:
   /stats [7d|30d|90d|all|24h] [--no-cost] [--plain] [--utc|--local] [--model <filter>]
+  /stats today [YYYY-MM-DD|yesterday] [--no-cost] [--group]
+                                                        single-day hourly heatmap & breakdown
   /stats models [7d|4d|30d|...] [--by tokens|cost|calls] [--group] [--totals]
                                                         daily model mix (filled bars)
   /stats rhythm [30d|90d|all]                           calendar and weekday x hour heatmap
@@ -330,6 +332,7 @@ async def complete_stats(
 
     if not completed:
         items = [
+            PluginCommandCompletion("today", detail="Today's hourly heatmap, models, and cost"),
             PluginCommandCompletion("7d", detail="Last 7 days usage card"),
             PluginCommandCompletion("30d", detail="Last 30 days usage card (default)"),
             PluginCommandCompletion("90d", detail="Last 90 days usage card"),
@@ -639,7 +642,7 @@ async def stats_command(ctx: PluginCommandActionContext) -> PluginCommandActionR
         default_window=_DEFAULT_WINDOW.get(mode, "30d"),
         allow_raw=(mode == "tools"),
         allow_metric=(mode == "models"),
-        allow_group=(mode in {"usage", "models", "share"}),
+        allow_group=(mode in {"usage", "today", "models", "share"}),
     )
     if flags.error is not None:
         return _make_result(message=f"{flags.error}\n\n{_USAGE_HELP}")
@@ -705,6 +708,8 @@ async def stats_command(ctx: PluginCommandActionContext) -> PluginCommandActionR
         )
     elif mode == "rhythm":
         card = charts.render_rhythm_card(report, color=use_color)
+    elif mode == "today":
+        card = charts.render_day_card(report, color=use_color, show_cost=flags.show_cost)
     else:
         card = charts.render_usage_card(report, color=use_color, show_cost=flags.show_cost)
     return _format_card_result(card, is_tui=is_tui, color=use_color)

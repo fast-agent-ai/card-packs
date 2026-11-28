@@ -1845,6 +1845,60 @@ class PtcTrackingTests(unittest.TestCase):
         self.assertAlmostEqual(ultra.cost_usd, std.cost_usd * 3)
         self.assertAlmostEqual(ultra.ttft_p50_ms or 0.0, 120.0)
 
+    def test_single_day_window_today_yesterday_and_iso_date(self):
+        day_now = datetime(2026, 11, 28, 16, 30, tzinfo=UTC)
+        prev_day = datetime(2026, 11, 27, 10, 0, tzinfo=UTC)
+        today_am = datetime(2026, 11, 28, 9, 15, tzinfo=UTC)
+        today_pm = datetime(2026, 11, 28, 14, 45, tzinfo=UTC)
+        next_day = datetime(2026, 11, 29, 1, 0, tzinfo=UTC)
+
+        with store.UsageStore(self.db) as usage_store:
+            usage_store.record_turn(
+                session_id="s-prev",
+                attempts=(_attempt("gpt-6.2-sol", provider="responses", prompt=5_000, output=500, timestamp=prev_day.timestamp()),),
+                turn_record=None,
+                catalog=self.catalog,
+            )
+            usage_store.record_turn(
+                session_id="s-today",
+                attempts=(
+                    _attempt("gpt-6.2-sol", provider="responses", prompt=10_000, output=1_000, timestamp=today_am.timestamp()),
+                    _attempt("gpt-6.2-sol", provider="responses", prompt=20_000, output=2_000, timestamp=today_pm.timestamp(), service_tier="ultrafast"),
+                ),
+                turn_record=None,
+                catalog=self.catalog,
+            )
+            usage_store.record_turn(
+                session_id="s-next",
+                attempts=(_attempt("gpt-6.2-sol", provider="responses", prompt=99_000, output=9_000, timestamp=next_day.timestamp()),),
+                turn_record=None,
+                catalog=self.catalog,
+            )
+
+        today_report = store.query_report(self.db, window="today", now=day_now)
+        self.assertEqual(today_report.start_date, "2026-11-28")
+        self.assertEqual(today_report.end_date, "2026-11-28")
+        self.assertEqual(today_report.total_calls, 2)
+        self.assertEqual(today_report.total_tokens, 33_000)
+        self.assertIsNotNone(today_report.previous)
+        assert today_report.previous is not None
+        self.assertEqual(today_report.previous.calls, 1)
+        self.assertEqual(today_report.previous.total_tokens, 5_500)
+        self.assertEqual(len(today_report.hourly), 24)
+        self.assertEqual(today_report.hourly[9].calls, 1)
+        self.assertEqual(today_report.hourly[9].total_tokens, 11_000)
+        self.assertEqual(today_report.hourly[14].calls, 1)
+        self.assertEqual(today_report.hourly[14].total_tokens, 22_000)
+        self.assertEqual(today_report.hourly[0].calls, 0)
+
+        yest_report = store.query_report(self.db, window="yesterday", now=day_now)
+        self.assertEqual(yest_report.start_date, "2026-11-27")
+        self.assertEqual(yest_report.total_calls, 1)
+
+        iso_report = store.query_report(self.db, window="2026-11-28", now=day_now)
+        self.assertEqual(iso_report.start_date, "2026-11-28")
+        self.assertEqual(iso_report.total_calls, 2)
+
 
 # =========================================================================== remotes
 

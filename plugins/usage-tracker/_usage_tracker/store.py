@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, Literal, Self
 from .models import (
     DailyModelPoint,
     DailyUsagePoint,
+    HourlyUsagePoint,
     MachineUsageRow,
     ModelUsageRow,
     PeriodTotals,
@@ -1085,9 +1086,17 @@ class Window:
     label: str
     days: int | None = None
     hours: int | None = None
+    day: date | None = None
+    day_offset: int | None = None
+
+    @property
+    def is_single_day(self) -> bool:
+        return self.day is not None or self.day_offset is not None
 
     @property
     def heatmap_days(self) -> int | None:
+        if self.is_single_day:
+            return 1
         if self.days is not None:
             return self.days
         if self.hours is not None:
@@ -1096,10 +1105,21 @@ class Window:
 
 
 def parse_window(window: str) -> Window:
-    """``7d``/``30d``/``90d``/``<N>d``, ``24h``/``<N>h``, or ``all``."""
+    """``today``, ``yesterday``, ``YYYY-MM-DD``, ``7d``/``30d``/``90d``/``<N>d``, ``24h``/``<N>h``, or ``all``."""
     text = window.strip().casefold()
+    if text == "today":
+        return Window("Today", days=1, day_offset=0)
+    if text == "yesterday":
+        return Window("Yesterday", days=1, day_offset=-1)
     if text in {"all", "all-time", "alltime"}:
         return Window("All time")
+    if len(text) == 10 and text[4] == "-" and text[7] == "-":
+        try:
+            parsed_day = date.fromisoformat(text)
+        except ValueError:
+            pass
+        else:
+            return Window(parsed_day.isoformat(), days=1, day=parsed_day)
     unit = text[-1:]
     number = text[:-1]
     if unit in {"d", "h"} and number.isdigit() and int(number) > 0:
@@ -1107,7 +1127,9 @@ def parse_window(window: str) -> Window:
         if unit == "d":
             return Window(f"Last {count} day{'s' if count != 1 else ''}", days=count)
         return Window(f"Last {count} hour{'s' if count != 1 else ''}", hours=count)
-    raise ValueError(f"Unknown window {window!r}: use 7d, 30d, 90d, <N>d, 24h, or all")
+    raise ValueError(
+        f"Unknown window {window!r}: use today, yesterday, YYYY-MM-DD, 7d, 30d, 90d, <N>d, 24h, or all"
+    )
 
 
 def _timezone(tz_mode: TzMode) -> tuple[tzinfo | None, str]:
@@ -1183,8 +1205,20 @@ def _query_report(
     current_local = current.astimezone(tz) if tz is not None else current.astimezone()
     today = current_local.date()
     start_ms: int | None
-    if spec.days is not None:
-        start_day: date | None = today - timedelta(days=spec.days - 1)
+    upper: int | None = None
+    end_day: date | None = None
+    if spec.is_single_day:
+        target_day = (
+            spec.day
+            if spec.day is not None
+            else today + timedelta(days=spec.day_offset or 0)
+        )
+        start_day = target_day
+        end_day = target_day
+        start_ms = _day_start_ms(target_day, tz)
+        upper = _day_start_ms(target_day + timedelta(days=1), tz)
+    elif spec.days is not None:
+        start_day = today - timedelta(days=spec.days - 1)
         start_ms = _day_start_ms(start_day, tz)
     elif spec.hours is not None:
         start_ms = round(current.timestamp() * 1000) - spec.hours * 3_600_000
@@ -1195,12 +1229,13 @@ def _query_report(
     needle = model_filter.strip().casefold() if model_filter and model_filter.strip() else None
 
     origin = "origin" if _has_origin(connection) else "NULL"
+    time_sql, time_params = _time_where(lower, upper)
     rows = connection.execute(
         "SELECT timestamp_ms, session_id, provider, model, input_tokens, uncached_tokens, "
         "cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens, cost_usd, "
-        f"ttft_ms, gen_ms, is_burst, {origin}, service_tier FROM calls WHERE timestamp_ms >= ? "
+        f"ttft_ms, gen_ms, is_burst, {origin}, service_tier FROM calls WHERE {time_sql} "
         "ORDER BY timestamp_ms",
-        (lower,),
+        time_params,
     ).fetchall()
     if needle is not None:
         rows = [row for row in rows if needle in row[3].casefold()]
@@ -1209,6 +1244,7 @@ def _query_report(
     by_model_tier: dict[tuple[str, str], list[tuple]] = defaultdict(list)
     by_origin: dict[str, list[tuple]] = defaultdict(list)
     daily_calls: dict[date, list[tuple]] = defaultdict(list)
+    hourly_calls: dict[int, list[tuple]] = defaultdict(list)
     daily_model_calls: dict[tuple[date, str], list[tuple]] = defaultdict(list)
     cells = [[0] * len(SLOT_LABELS) for _ in WEEKDAY_LABELS]
     hourly = [[0] * 24 for _ in WEEKDAY_LABELS]
@@ -1220,6 +1256,7 @@ def _query_report(
             by_origin[row[14]].append(row)
         moment = _to_datetime(row[0], tz)
         daily_calls[moment.date()].append(row)
+        hourly_calls[moment.hour].append(row)
         daily_model_calls[(moment.date(), row[3])].append(row)
         cells[moment.weekday()][moment.hour // _SLOT_HOURS] += 1
         hourly[moment.weekday()][moment.hour] += 1
@@ -1245,7 +1282,7 @@ def _query_report(
     )
 
     if start_day is not None:
-        first_day, last_day = start_day, today
+        first_day, last_day = start_day, (end_day if end_day is not None else today)
     elif daily_calls:
         first_day, last_day = min(daily_calls), max(daily_calls)
     else:
@@ -1300,12 +1337,26 @@ def _query_report(
         active, first_day if first_day is not None else today, today
     )
 
+    hourly_points: tuple[HourlyUsagePoint, ...] = ()
+    if spec.is_single_day:
+        hourly_points = tuple(
+            HourlyUsagePoint(
+                hour=hour,
+                calls=len(h_rows),
+                total_tokens=sum(row[4] + row[8] for row in h_rows),
+                cost_usd=sum(row[10] for row in h_rows if row[10] is not None),
+                sessions=len({row[1] for row in h_rows if row[1] is not None}),
+            )
+            for hour in range(24)
+            for h_rows in (hourly_calls.get(hour, []),)
+        )
+
     phases: PhaseBreakdown | None = None
     if needle is None:
         # Turns are not attributed to models, so phase breakdowns are only
         # reported unfiltered.
-        phases = _phase_breakdown(connection, lower)
-    tools, raw_tools, ptc, process_waits = _tool_views_and_ptc(connection, lower, needle)
+        phases = _phase_breakdown(connection, lower, upper)
+    tools, raw_tools, ptc, process_waits = _tool_views_and_ptc(connection, lower, needle, upper)
 
     priced = [row[10] for row in rows if row[10] is not None]
     return UsageReportData(
@@ -1349,6 +1400,7 @@ def _query_report(
         machines=machines if len(sources) > 1 or any(s.path for s in sources) else (),
         machine_filter=machine_filter,
         service_tiers=service_tiers,
+        hourly=hourly_points,
     )
 
 
@@ -1438,12 +1490,23 @@ def _service_tier_row(model: str, service_tier: str, rows: list[tuple]) -> Servi
     )
 
 
-def _phase_breakdown(connection: sqlite3.Connection, lower: int) -> PhaseBreakdown | None:
+def _time_where(
+    lower: int, upper: int | None, column: str = "timestamp_ms"
+) -> tuple[str, tuple[object, ...]]:
+    if upper is None:
+        return f"{column} >= ?", (lower,)
+    return f"{column} >= ? AND {column} < ?", (lower, upper)
+
+
+def _phase_breakdown(
+    connection: sqlite3.Connection, lower: int, upper: int | None = None
+) -> PhaseBreakdown | None:
+    time_sql, time_params = _time_where(lower, upper)
     row = connection.execute(
         "SELECT COUNT(*), TOTAL(wall_ms), TOTAL(wait_ms), TOTAL(stream_ms), "
         "TOTAL(tools_ms), TOTAL(process_ms), TOTAL(other_ms) FROM turns "
-        "WHERE timestamp_ms >= ?",
-        (lower,),
+        f"WHERE {time_sql}",
+        time_params,
     ).fetchone()
     if not row or not row[0]:
         return None
@@ -1468,14 +1531,16 @@ def _raw_tool_rows(
     connection: sqlite3.Connection,
     lower: int,
     needle: str | None,
+    upper: int | None = None,
 ) -> tuple[ToolUsageRow, ...]:
     clause, extra = _model_where(needle)
+    time_sql, time_params = _time_where(lower, upper)
     rows = connection.execute(
         "SELECT tool_name, COUNT(*), TOTAL(duration_ms), MAX(duration_ms), "
         "SUM(is_process_wait), SUM(is_error) FROM tool_runs "
-        f"WHERE timestamp_ms >= ?{clause} "
+        f"WHERE {time_sql}{clause} "
         "GROUP BY tool_name ORDER BY TOTAL(duration_ms) DESC, tool_name",
-        (lower, *extra),
+        (*time_params, *extra),
     ).fetchall()
     return tuple(
         ToolUsageRow(
@@ -1509,13 +1574,14 @@ def _tool_views_and_ptc(
     connection: sqlite3.Connection,
     lower: int,
     needle: str | None,
+    upper: int | None = None,
 ) -> tuple[
     tuple[ToolUsageRow, ...],
     tuple[ToolUsageRow, ...],
     PtcSummary | None,
     ProcessWaitSummary | None,
 ]:
-    raw_tools = _raw_tool_rows(connection, lower, needle)
+    raw_tools = _raw_tool_rows(connection, lower, needle, upper)
     if not raw_tools:
         return (), (), None, None
 
@@ -1563,12 +1629,13 @@ def _tool_views_and_ptc(
         if duration_ms is not None:
             wait_durations.append(float(duration_ms))
 
+    time_sql, time_params = _time_where(lower, upper)
     # Direct non-PTC tool runs: active runs go to top tools; blocking waits go to process_waits.
     direct_active = connection.execute(
         "SELECT tool_name, COUNT(*), TOTAL(duration_ms), MAX(duration_ms), SUM(is_error) "
-        "FROM tool_runs WHERE timestamp_ms >= ? AND tool_name != ? "
+        f"FROM tool_runs WHERE {time_sql} AND tool_name != ? "
         f"AND is_process_wait = 0{clause} GROUP BY tool_name",
-        (lower, PTC_TOOL_NAME, *extra),
+        (*time_params, PTC_TOOL_NAME, *extra),
     ).fetchall()
     for name, runs, total_ms, max_ms, errors in direct_active:
         _add_active(
@@ -1582,8 +1649,8 @@ def _tool_views_and_ptc(
 
     direct_waits = connection.execute(
         "SELECT tool_name, duration_ms FROM tool_runs "
-        f"WHERE timestamp_ms >= ? AND tool_name != ? AND is_process_wait = 1{clause}",
-        (lower, PTC_TOOL_NAME, *extra),
+        f"WHERE {time_sql} AND tool_name != ? AND is_process_wait = 1{clause}",
+        (*time_params, PTC_TOOL_NAME, *extra),
     ).fetchall()
     for name, dur_ms in direct_waits:
         _add_wait(name, float(dur_ms))
@@ -1598,10 +1665,10 @@ def _tool_views_and_ptc(
             "SUM(CASE WHEN error_kind = 'syntax' THEN 1 ELSE 0 END), "
             "SUM(CASE WHEN error_kind = 'typecheck' THEN 1 ELSE 0 END), "
             "SUM(CASE WHEN error_kind = 'runtime' THEN 1 ELSE 0 END) "
-            f"FROM tool_runs WHERE timestamp_ms >= ? AND tool_name = ?{clause} "
+            f"FROM tool_runs WHERE {time_sql} AND tool_name = ?{clause} "
             "GROUP BY COALESCE(model, 'unknown') "
             "ORDER BY COUNT(*) DESC, COALESCE(model, 'unknown')",
-            (lower, PTC_TOOL_NAME, *extra),
+            (*time_params, PTC_TOOL_NAME, *extra),
         ).fetchall()
 
         by_model = tuple(
@@ -1628,10 +1695,10 @@ def _tool_views_and_ptc(
         # Surface 0-nested-call pure-Python cells and opaque legacy cells cleanly.
         special_cells = connection.execute(
             "SELECT has_ptc_meta, COUNT(*), TOTAL(duration_ms), MAX(duration_ms) "
-            f"FROM tool_runs WHERE timestamp_ms >= ? AND tool_name = ? "
+            f"FROM tool_runs WHERE {time_sql} AND tool_name = ? "
             f"AND nested_calls = 0 AND is_error = 0{clause} "
             "GROUP BY has_ptc_meta",
-            (lower, PTC_TOOL_NAME, *extra),
+            (*time_params, PTC_TOOL_NAME, *extra),
         ).fetchall()
         for has_meta, count, total_ms, max_ms in special_cells:
             if not count:
@@ -1647,13 +1714,14 @@ def _tool_views_and_ptc(
 
         # Fetch all nested PTC calls in window alongside parent cell info for attribution.
         p_clause, p_extra = _model_where(needle, column="p.model")
+        p_time_sql, p_time_params = _time_where(lower, upper, column="p.timestamp_ms")
         nested_rows = connection.execute(
             "SELECT p.parent_run_hash, p.tool_name, p.duration_ms, p.is_error, p.is_process_wait, "
             "r.duration_ms, r.nested_calls, r.is_error "
             "FROM ptc_tool_calls p "
             "LEFT JOIN tool_runs r ON r.run_hash = p.parent_run_hash "
-            f"WHERE p.timestamp_ms >= ?{p_clause}",
-            (lower, *p_extra),
+            f"WHERE {p_time_sql}{p_clause}",
+            (*p_time_params, *p_extra),
         ).fetchall()
 
         nested_error_calls = 0

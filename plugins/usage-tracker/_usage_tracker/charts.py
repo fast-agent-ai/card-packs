@@ -53,6 +53,7 @@ __all__ = [
     "CARD_WIDTH",
     "BRAND",
     "render_usage_card",
+    "render_day_card",
     "render_share_card",
     "render_models_card",
     "group_models",
@@ -1328,6 +1329,131 @@ def render_usage_card(
     card = _usage_card(data, color, show_cost, max_models, now)
     if card is None:
         return _empty_usage_card(data, color)
+    return card.render(_after_notice(data.upgrade_notice))
+
+
+def _hourly_heatmap_rows(data: UsageReportData) -> list[Line]:
+    """24-hour token and call heat strips for a single-day report."""
+    points = data.hourly
+    if not points:
+        return [[("no hourly activity", S_DIM)]]
+    by_hour = {point.hour: point for point in points}
+    tok_series = [by_hour[h].total_tokens if h in by_hour else 0 for h in range(24)]
+    call_series = [by_hour[h].calls if h in by_hour else 0 for h in range(24)]
+    tok_levels = viz.heat_levels([tok_series], steps=viz.HEAT_STEPS)[0]
+    call_levels = viz.heat_levels([call_series], steps=viz.HEAT_STEPS)[0]
+
+    tok_row: Line = [("tok  ", S_DIM)]
+    call_row: Line = [("call ", S_DIM)]
+    for h in range(24):
+        tok_row.append(viz.heat_cell(tok_levels[h], 2))
+        call_row.append(viz.heat_cell(call_levels[h], 2))
+
+    ticks = "     " + "".join(f"{h:02d}    " for h in range(0, 24, 3)).rstrip()
+    rows: list[Line] = [tok_row, call_row, [(ticks, S_DIM)]]
+
+    footer = _heat_legend()
+    peak_tokens = max(tok_series)
+    if peak_tokens > 0:
+        peak_h = tok_series.index(peak_tokens)
+        peak_calls = call_series[peak_h]
+        noun = "call" if peak_calls == 1 else "calls"
+        footer += [
+            ("  ·  peak ", S_DIM),
+            (f"{peak_h:02d}:00", S_TOKENS),
+            (f" ({_compact(peak_tokens)} · {_int(peak_calls)} {noun})", S_DIM),
+        ]
+    rows.append(footer)
+    return rows
+
+
+def render_day_card(
+    data: UsageReportData,
+    *,
+    color: bool = True,
+    show_cost: bool = True,
+    max_models: int = 6,
+    now: float | None = None,
+) -> str:
+    """Focused single-day ``/stats today`` (or ``YYYY-MM-DD``) card (68 columns)."""
+    kind = "today" if data.window_label.casefold() == "today" else "day"
+    if data.total_calls <= 0:
+        return _empty_usage_card(data, color, kind)
+
+    card = _Card(color)
+    card.top(_title(kind, data), _filter_badge(data))
+    prev = data.previous
+    if prev is not None:
+        card.row(_cell("▲▼ vs previous day", CONTENT, S_DIM, "right"))
+    else:
+        card.blank()
+
+    if show_cost:
+        cost_text, cost_style = _cost_display(data)
+        second = (cost_text, cost_style, "est. cost")
+        second_delta = _delta(data.total_cost_usd, prev.cost_usd) if prev else ""
+    else:
+        second = (_count(data.total_calls), S_COST_BIG, "llm calls")
+        second_delta = _delta(data.total_calls, prev.calls) if prev else ""
+    kpis = [
+        (_compact(data.total_tokens), S_TOKENS_BIG, "tokens"),
+        second,
+        (_fmt_pct(data.cache_hit_rate), S_CACHE_BIG, "cache hit"),
+        (_int(data.total_sessions), S_SESS_BIG, "sessions"),
+    ]
+    deltas: list[str] = []
+    if prev is not None:
+        deltas = [
+            _delta(data.total_tokens, prev.total_tokens),
+            second_delta,
+            _delta(data.cache_hit_rate, prev.cache_hit_rate, points=True),
+            _delta(data.total_sessions, prev.sessions),
+        ]
+    for line in _kpi_rows(kpis, KPI_WIDTHS, deltas, []):
+        card.row(line)
+    card.blank()
+
+    for line in _anatomy_rows(data):
+        card.row(line)
+    card.blank()
+
+    active_hours = sum(1 for point in data.hourly if point.calls > 0)
+    hour_noun = "hour" if active_hours == 1 else "hours"
+    summary: Line = [
+        (_int(active_hours), ""),
+        (f" active {hour_noun}", S_DIM),
+    ]
+    if show_cost:
+        call_noun = "call" if data.total_calls == 1 else "calls"
+        summary += [("  ·  ", S_DIM), (_int(data.total_calls), ""), (f" {call_noun}", S_DIM)]
+    card.row(summary)
+    if show_cost and data.unpriced_calls > 0:
+        if data.priced_calls <= 0:
+            note = "no pricing data for these models"
+        else:
+            total_calls = data.priced_calls + data.unpriced_calls
+            note = f"~ {_int(data.unpriced_calls)} of {_int(total_calls)} calls unpriced"
+        if data.pricing_version:
+            note += f" · pricing {_clean(data.pricing_version)}"
+        card.row([(note, S_WARN)])
+
+    tz = _clean(data.rhythm.timezone_label).strip() or "UTC"
+    card.divider(f"hourly · {tz}", "tokens and calls by hour")
+    for line in _hourly_heatmap_rows(data):
+        card.row(line)
+
+    legend = _Legend(data, max_models)
+    card.divider("models", f"{len(data.models)} used")
+    _models_section(card, data, show_cost, legend)
+    _service_tiers_models_section(card, data, show_cost, legend)
+
+    if len(data.machines) > 1 or any(m.last_error for m in data.machines):
+        _machines_section(card, data, show_cost, time.time() if now is None else now)
+
+    footer: Line | None = None
+    if show_cost and data.pricing_version and not data.unpriced_calls:
+        footer = [(f"pricing {_clean(data.pricing_version)}", S_DIM)]
+    card.bottom(footer)
     return card.render(_after_notice(data.upgrade_notice))
 
 

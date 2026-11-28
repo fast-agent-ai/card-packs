@@ -1,12 +1,12 @@
 schema_version: 2
 name: usage-tracker
-version: 0.2.6
+version: 0.2.7
 requires_fast_agent: ">=0.10.43"
 description: Track model usage, estimated cost, latency, and tool time across sessions and machines with share-worthy terminal charts.
 commands:
   stats:
-    description: Show usage, model mix, rhythm, perf, and tool cards across machines; sync remotes, sweep sessions, or update pricing
-    input_hint: "[7d|30d|90d|all|models|rhythm|perf|tools|share|remote|sync|sweep <dir>|pricing]"
+    description: Show usage, today/day, model mix, rhythm, perf, and tool cards across machines; sync remotes, sweep sessions, or update pricing
+    input_hint: "[today [YYYY-MM-DD]|7d|30d|90d|all|models|rhythm|perf|tools|share|remote|sync|sweep <dir>|pricing]"
     handler: ./usage_tracker.py:stats_command
     completer: ./usage_tracker.py:complete_stats
   cost:

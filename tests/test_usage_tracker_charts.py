@@ -1068,6 +1068,68 @@ def test_models_and_perf_cards_render_service_tier_breakdown() -> None:
     assert "ultrafast" in perf_plain
 
 
+def test_day_card_renders_hourly_heatmap_models_and_tiers() -> None:
+    from dataclasses import replace
+
+    from _usage_tracker.models import HourlyUsagePoint, PeriodTotals, ServiceTierUsageRow
+
+    base = SCENARIOS["7d"]
+    hourly = tuple(
+        HourlyUsagePoint(
+            hour=h,
+            calls=4 if h == 9 else (9 if h == 14 else (2 if h == 17 else 0)),
+            total_tokens=120_000 if h == 9 else (420_000 if h == 14 else (60_000 if h == 17 else 0)),
+            cost_usd=0.4 if h == 9 else (1.8 if h == 14 else (0.2 if h == 17 else 0.0)),
+            sessions=1 if h in (9, 14, 17) else 0,
+        )
+        for h in range(24)
+    )
+    day_data = replace(
+        base,
+        window_label="Today",
+        start_date="2026-11-28",
+        end_date="2026-11-28",
+        total_calls=15,
+        total_sessions=3,
+        active_days=1,
+        previous=PeriodTotals(total_tokens=400_000, cost_usd=1.80, calls=10, sessions=2, cache_hit_rate=0.72),
+        hourly=hourly,
+        service_tiers=(
+            ServiceTierUsageRow(
+                model="gpt-6.2-sol",
+                service_tier="standard",
+                calls=10,
+                input_tokens=300_000,
+                output_tokens=30_000,
+                cost_usd=0.90,
+                priced_calls=10,
+                unpriced_calls=0,
+            ),
+            ServiceTierUsageRow(
+                model="gpt-6.2-sol",
+                service_tier="ultrafast",
+                calls=5,
+                input_tokens=240_000,
+                output_tokens=30_000,
+                cost_usd=1.50,
+                priced_calls=5,
+                unpriced_calls=0,
+            ),
+        ),
+    )
+    plain = charts.render_day_card(day_data, color=False)
+    _assert_card(plain, charts.render_day_card(day_data, color=True))
+    assert "fast-agent today" in plain
+    assert "hourly ·" in plain
+    assert "peak 14:00" in plain
+    assert "service tiers" in plain
+    assert "ultrafast" in plain
+
+    empty_day = replace(day_data, total_calls=0, models=(), hourly=(), service_tiers=())
+    empty_plain = charts.render_day_card(empty_day, color=False)
+    _assert_card(empty_plain, charts.render_day_card(empty_day, color=True))
+
+
 def test_print_samples_for_visual_inspection(capsys: pytest.CaptureFixture[str]) -> None:
     data = SCENARIOS["rich-30d"]
     samples = [

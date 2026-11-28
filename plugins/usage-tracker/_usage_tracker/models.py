@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 PLUGIN_NAME = "usage-tracker"
-PLUGIN_VERSION = "0.2.6"
+PLUGIN_VERSION = "0.2.7"
 SUPPORTED_PRICING_SCHEMAS = frozenset({"fast-agent.pricing/v1"})
 DEFAULT_PRICING_URL = (
     "https://raw.githubusercontent.com/fast-agent-ai/card-packs/main/"
@@ -63,6 +63,17 @@ class ServiceTierUsageRow:
     @property
     def total_tokens(self) -> int:
         return self.input_tokens + self.output_tokens
+
+
+@dataclass(frozen=True, slots=True)
+class HourlyUsagePoint:
+    """One hour (0..23) of usage on a single-day report."""
+
+    hour: int
+    calls: int
+    total_tokens: int
+    cost_usd: float
+    sessions: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,6 +256,7 @@ class UsageReportData:
     machines: tuple[MachineUsageRow, ...] = ()
     machine_filter: str | None = None
     service_tiers: tuple[ServiceTierUsageRow, ...] = ()
+    hourly: tuple[HourlyUsagePoint, ...] = ()
 
     @property
     def total_tokens(self) -> int:
