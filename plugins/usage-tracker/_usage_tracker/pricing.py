@@ -253,11 +253,20 @@ def _normalized_service_tier(turn: Attempt) -> str:
     raw_usage = turn.raw_usage
     if isinstance(raw_usage, dict) and raw_usage.get("speed") == "fast":
         return "fast"
-    tier = turn.service_tier or turn.requested_service_tier
+    provider = _provider_name(turn)
+    tier = turn.service_tier
+    if (
+        provider == "codexresponses"
+        and tier in (None, "default", "standard")
+        and turn.requested_service_tier not in (None, "default", "standard")
+    ):
+        tier = turn.requested_service_tier
+    elif tier is None:
+        tier = turn.requested_service_tier
     if tier in (None, "default", "standard"):
         return "standard"
     normalized = tier.casefold()
-    if normalized == "priority" and _provider_name(turn) in {
+    if normalized == "priority" and provider in {
         "codexresponses",
         "openai",
         "responses",

@@ -43,6 +43,7 @@ if TYPE_CHECKING:
         ProcessWaitSummary,
         PtcSummary,
         RemoteStatus,
+        ServiceTierUsageRow,
         SweepSummary,
         ToolUsageRow,
         UsageReportData,
@@ -1348,6 +1349,94 @@ def render_share_card(data: UsageReportData, *, show_cost: bool = True) -> str:
 # =============================================================================
 
 
+def _service_tier_rows_to_show(data: UsageReportData) -> tuple[ServiceTierUsageRow, ...]:
+    """Return tier rows for models that have at least one non-standard tier."""
+    non_standard_models = {
+        row.model for row in data.service_tiers if row.service_tier != "standard"
+    }
+    if not non_standard_models:
+        return ()
+    return tuple(row for row in data.service_tiers if row.model in non_standard_models)
+
+
+def _service_tiers_models_section(
+    card: _Card,
+    data: UsageReportData,
+    show_cost: bool,
+    legend: _Legend,
+) -> None:
+    rows = _service_tier_rows_to_show(data)
+    if not rows:
+        return
+    card.divider("service tiers", "models with non-standard tiers")
+    name_w, tier_w, calls_w, tok_w, cost_w = 18, 10, 6, 8, 9
+    header: Line = [*_cell("model", 2 + name_w, S_DIM), (" ", "")]
+    header += [*_cell("tier", tier_w, S_DIM), (" ", "")]
+    header += [*_cell("calls", calls_w, S_DIM, "right"), (" ", "")]
+    header += _cell("tokens", tok_w, S_DIM, "right")
+    if show_cost:
+        header += [(" ", ""), *_cell("cost", cost_w, S_DIM, "right")]
+    card.row(header)
+    limit = 10
+    shown = rows[:limit]
+    for row in shown:
+        line: Line = [legend.swatch(row.model), (" ", "")]
+        line += [*_cell(_display_name(row.model), name_w, ""), (" ", "")]
+        tier_style = S_DIM if row.service_tier == "standard" else S_COST
+        line += [*_cell(row.service_tier, tier_w, tier_style), (" ", "")]
+        line += [*_cell(_int(row.calls), calls_w, "", "right"), (" ", "")]
+        line += _cell(_compact(row.total_tokens), tok_w, S_TOKENS, "right")
+        if show_cost:
+            if row.priced_calls <= 0 and row.cost_usd <= 0:
+                cost_text, cost_style = "n/a", S_DIM
+            else:
+                cost_text = _fmt_cost(row.cost_usd)
+                cost_text, cost_style = (
+                    ("~" + cost_text if row.unpriced_calls else cost_text),
+                    S_COST,
+                )
+            line += [(" ", ""), *_cell(cost_text, cost_w, cost_style, "right")]
+        card.row(line)
+    if len(rows) > limit:
+        card.row([(f"+ {len(rows) - limit} more tier rows", S_DIM)])
+
+
+def _service_tiers_perf_section(
+    card: _Card,
+    data: UsageReportData,
+    colors: dict[str, str],
+) -> None:
+    rows = _service_tier_rows_to_show(data)
+    if not rows:
+        return
+    card.divider("by service tier", "ttft p50 · p90 · tok/s")
+    name_w, tier_w, calls_w, dur_w, tps_w = 16, 10, 6, 7, 7
+    header: Line = [*_cell("model", 2 + name_w, S_DIM), (" ", "")]
+    header += [*_cell("tier", tier_w, S_DIM), (" ", "")]
+    header += [*_cell("calls", calls_w, S_DIM, "right"), (" ", "")]
+    header += [*_cell("p50", dur_w, S_DIM, "right"), (" ", "")]
+    header += [*_cell("p90", dur_w, S_DIM, "right"), (" ", "")]
+    header += _cell("tok/s", tps_w, S_DIM, "right")
+    card.row(header)
+    limit = 10
+    shown = rows[:limit]
+    for index, row in enumerate(shown):
+        chip = colors.get(row.model, viz.C_OTHER)
+        tps = "-" if row.tps is None else _fmt_tps(row.tps).removesuffix(" t/s")
+        has_ttft = row.ttft_p50_ms is not None
+        tier_style = S_DIM if row.service_tier == "standard" else S_COST
+        line: Line = [_swatch(chip, viz.PLAIN_FILLS[index % len(viz.PLAIN_FILLS)]), (" ", "")]
+        line += [*_cell(_display_name(row.model), name_w, ""), (" ", "")]
+        line += [*_cell(row.service_tier, tier_w, tier_style), (" ", "")]
+        line += [*_cell(_int(row.calls), calls_w, "", "right"), (" ", "")]
+        line += [*_cell(_fmt_dur(row.ttft_p50_ms), dur_w, S_CACHE if has_ttft else S_DIM, "right"), (" ", "")]
+        line += [*_cell(_fmt_dur(row.ttft_p90_ms), dur_w, S_DIM, "right"), (" ", "")]
+        line += _cell(tps, tps_w, S_COST if row.tps is not None else S_DIM, "right")
+        card.row(line)
+    if len(rows) > limit:
+        card.row([(f"+ {len(rows) - limit} more tier rows", S_DIM)])
+
+
 def render_models_card(
     data: UsageReportData,
     *,
@@ -1414,6 +1503,7 @@ def render_models_card(
 
     card.divider("models", f"{len(data.models)} used")
     _models_section(card, data, show_cost, legend, mix, show_tokens=totals)
+    _service_tiers_models_section(card, data, show_cost, legend)
     note: Line | None = None
     if show_cost and data.pricing_version and not data.unpriced_calls:
         note = [(f"pricing {_clean(data.pricing_version)}", S_DIM)]
@@ -1860,6 +1950,7 @@ def render_perf_card(data: UsageReportData, *, color: bool = True) -> str:
         card.row(line)
     if len(models) > limit:
         card.row([(f"+ {len(models) - (limit - 1)} more models", S_DIM)])
+    _service_tiers_perf_section(card, data, colors)
 
     if data.tools:
         divider = "top tools · unwrapped" if data.ptc is not None else "top tools · by total time"

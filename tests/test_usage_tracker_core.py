@@ -88,6 +88,7 @@ def _attempt(
     raw_usage=None,
     cost_usd=None,
     service_tier=None,
+    requested_service_tier=None,
 ):
     return pricing.UsageAttempt(
         provider=provider,
@@ -106,6 +107,7 @@ def _attempt(
         raw_usage=raw_usage,
         cost_usd=cost_usd,
         service_tier=service_tier,
+        requested_service_tier=requested_service_tier,
     )
 
 
@@ -1781,6 +1783,67 @@ class PtcTrackingTests(unittest.TestCase):
             raw_names,
             {"Bash", "bash", "github__getPullRequest", "Process", "process", "poll_process"},
         )
+
+    def test_service_tier_breakdown_and_codex_default_echo(self):
+        t0 = NOW.timestamp()
+        attempts = (
+            _attempt(
+                "gpt-6.2-sol",
+                provider="codexresponses",
+                prompt=10_000,
+                output=1_000,
+                duration_ms=2000.0,
+                ttft_ms=500.0,
+                timestamp=t0 - 30,
+                service_tier="default",
+            ),
+            _attempt(
+                "gpt-6.2-sol",
+                provider="codexresponses",
+                prompt=10_000,
+                output=1_000,
+                duration_ms=1000.0,
+                ttft_ms=250.0,
+                timestamp=t0 - 20,
+                requested_service_tier="fast",
+                service_tier="default",
+            ),
+            _attempt(
+                "gpt-6.2-sol",
+                provider="codexresponses",
+                prompt=10_000,
+                output=1_000,
+                duration_ms=500.0,
+                ttft_ms=120.0,
+                timestamp=t0 - 10,
+                requested_service_tier="ultrafast",
+                service_tier="default",
+            ),
+        )
+        with store.UsageStore(self.db) as usage_store:
+            usage_store.record_turn(
+                session_id="s-tiers",
+                attempts=attempts,
+                turn_record=None,
+                catalog=self.catalog,
+            )
+
+        report = store.query_report(self.db, window="7d", now=NOW)
+        by_tier = {(row.model, row.service_tier): row for row in report.service_tiers}
+        self.assertEqual(
+            set(by_tier),
+            {
+                ("gpt-6.2-sol", "standard"),
+                ("gpt-6.2-sol", "fast"),
+                ("gpt-6.2-sol", "ultrafast"),
+            },
+        )
+        std = by_tier[("gpt-6.2-sol", "standard")]
+        fast = by_tier[("gpt-6.2-sol", "fast")]
+        ultra = by_tier[("gpt-6.2-sol", "ultrafast")]
+        self.assertAlmostEqual(fast.cost_usd, std.cost_usd * 2)
+        self.assertAlmostEqual(ultra.cost_usd, std.cost_usd * 3)
+        self.assertAlmostEqual(ultra.ttft_p50_ms or 0.0, 120.0)
 
 
 # =========================================================================== remotes

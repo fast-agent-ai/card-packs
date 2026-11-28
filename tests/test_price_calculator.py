@@ -1310,8 +1310,9 @@ class PriceCalculatorTests(unittest.TestCase):
                             )
                     turn.requested_service_tier = "fast"
                     turn.service_tier = "default"
+                    expected_fallback = standard.usd * (2 if provider == "codexresponses" else 1)
                     self.assertAlmostEqual(
-                        standard.usd, self.plugin.calculate_price((turn,)).usd
+                        expected_fallback, self.plugin.calculate_price((turn,)).usd
                     )
 
     def test_gpt_62_unsupported_tiers_remain_unpriced(self):
@@ -1570,14 +1571,16 @@ class PriceCalculatorTests(unittest.TestCase):
                     )
                     fast = self.plugin.calculate_price((turn,))
                     turn.service_tier = "default"
-                    standard = self.plugin.calculate_price((turn,))
+                    effective = self.plugin.calculate_price((turn,))
                     self.assertEqual(0, fast.unpriced_calls)
-                    self.assertEqual(0, standard.unpriced_calls)
-                    self.assertAlmostEqual(fast.usd / 2, standard.usd)
+                    self.assertEqual(0, effective.unpriced_calls)
+                    expected = fast.usd if provider == "codexresponses" else fast.usd / 2
+                    self.assertAlmostEqual(expected, effective.usd)
 
     def test_astra_cost_display_uses_effective_standard_tier(self):
         turn = _turn(
             "gpt-6-astra",
+            provider="responses",
             prompt=100_000,
             cached=20_000,
             cache_write=10_000,
@@ -1623,6 +1626,7 @@ class PriceCalculatorTests(unittest.TestCase):
         )
         downgraded = _turn(
             "gpt-5.6-sol",
+            provider="responses",
             prompt=100_000,
             output=10_000,
             cached=20_000,

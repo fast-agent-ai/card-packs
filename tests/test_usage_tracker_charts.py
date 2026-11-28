@@ -1004,6 +1004,70 @@ def charts_url() -> str:
     return DEFAULT_PRICING_URL
 
 
+def test_models_and_perf_cards_render_service_tier_breakdown() -> None:
+    from dataclasses import replace
+
+    from _usage_tracker.models import ServiceTierUsageRow
+
+    base = SCENARIOS["7d"]
+    assert "service tiers" not in charts.render_models_card(base, color=False)
+    assert "by service tier" not in charts.render_perf_card(base, color=False)
+
+    with_tiers = replace(
+        base,
+        service_tiers=(
+            ServiceTierUsageRow(
+                model="gpt-6.2-sol",
+                service_tier="standard",
+                calls=10,
+                input_tokens=100_000,
+                output_tokens=10_000,
+                cost_usd=0.30,
+                priced_calls=10,
+                unpriced_calls=0,
+                ttft_p50_ms=650.0,
+                ttft_p90_ms=1100.0,
+                tps=85.0,
+            ),
+            ServiceTierUsageRow(
+                model="gpt-6.2-sol",
+                service_tier="fast",
+                calls=6,
+                input_tokens=60_000,
+                output_tokens=6_000,
+                cost_usd=0.36,
+                priced_calls=6,
+                unpriced_calls=0,
+                ttft_p50_ms=340.0,
+                ttft_p90_ms=520.0,
+                tps=160.0,
+            ),
+            ServiceTierUsageRow(
+                model="gpt-6.2-sol",
+                service_tier="ultrafast",
+                calls=4,
+                input_tokens=40_000,
+                output_tokens=4_000,
+                cost_usd=0.36,
+                priced_calls=4,
+                unpriced_calls=0,
+                ttft_p50_ms=180.0,
+                ttft_p90_ms=260.0,
+                tps=310.0,
+            ),
+        ),
+    )
+    models_plain = charts.render_models_card(with_tiers, color=False)
+    _assert_card(models_plain, charts.render_models_card(with_tiers, color=True))
+    assert "service tiers" in models_plain
+    assert "ultrafast" in models_plain
+
+    perf_plain = charts.render_perf_card(with_tiers, color=False)
+    _assert_card(perf_plain, charts.render_perf_card(with_tiers, color=True))
+    assert "by service tier" in perf_plain
+    assert "ultrafast" in perf_plain
+
+
 def test_print_samples_for_visual_inspection(capsys: pytest.CaptureFixture[str]) -> None:
     data = SCENARIOS["rich-30d"]
     samples = [

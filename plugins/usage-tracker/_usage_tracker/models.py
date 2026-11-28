@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 PLUGIN_NAME = "usage-tracker"
-PLUGIN_VERSION = "0.2.4"
+PLUGIN_VERSION = "0.2.6"
 SUPPORTED_PRICING_SCHEMAS = frozenset({"fast-agent.pricing/v1"})
 DEFAULT_PRICING_URL = (
     "https://raw.githubusercontent.com/fast-agent-ai/card-packs/main/"
@@ -42,6 +42,27 @@ class ModelUsageRow:
         if self.input_tokens <= 0:
             return None
         return self.cache_read_tokens / self.input_tokens
+
+
+@dataclass(frozen=True, slots=True)
+class ServiceTierUsageRow:
+    """Usage and latency for one ``(model, service_tier)`` slice."""
+
+    model: str
+    service_tier: str
+    calls: int
+    input_tokens: int
+    output_tokens: int
+    cost_usd: float
+    priced_calls: int
+    unpriced_calls: int
+    ttft_p50_ms: float | None = None
+    ttft_p90_ms: float | None = None
+    tps: float | None = None
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,6 +244,7 @@ class UsageReportData:
     previous: PeriodTotals | None = None
     machines: tuple[MachineUsageRow, ...] = ()
     machine_filter: str | None = None
+    service_tiers: tuple[ServiceTierUsageRow, ...] = ()
 
     @property
     def total_tokens(self) -> int:

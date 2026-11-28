@@ -30,6 +30,7 @@ from .models import (
     PtcModelRow,
     PtcSummary,
     RhythmHeatmap,
+    ServiceTierUsageRow,
     ToolUsageRow,
     UsageReportData,
 )
@@ -1197,7 +1198,7 @@ def _query_report(
     rows = connection.execute(
         "SELECT timestamp_ms, session_id, provider, model, input_tokens, uncached_tokens, "
         "cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens, cost_usd, "
-        f"ttft_ms, gen_ms, is_burst, {origin} FROM calls WHERE timestamp_ms >= ? "
+        f"ttft_ms, gen_ms, is_burst, {origin}, service_tier FROM calls WHERE timestamp_ms >= ? "
         "ORDER BY timestamp_ms",
         (lower,),
     ).fetchall()
@@ -1205,6 +1206,7 @@ def _query_report(
         rows = [row for row in rows if needle in row[3].casefold()]
 
     by_model: dict[str, list[tuple]] = defaultdict(list)
+    by_model_tier: dict[tuple[str, str], list[tuple]] = defaultdict(list)
     by_origin: dict[str, list[tuple]] = defaultdict(list)
     daily_calls: dict[date, list[tuple]] = defaultdict(list)
     daily_model_calls: dict[tuple[date, str], list[tuple]] = defaultdict(list)
@@ -1212,6 +1214,8 @@ def _query_report(
     hourly = [[0] * 24 for _ in WEEKDAY_LABELS]
     for row in rows:
         by_model[row[3]].append(row)
+        tier = (row[15] or "standard").casefold()
+        by_model_tier[(row[3], tier)].append(row)
         if row[14] is not None:
             by_origin[row[14]].append(row)
         moment = _to_datetime(row[0], tz)
@@ -1223,6 +1227,21 @@ def _query_report(
     models = sorted(
         (_model_row(model, model_rows) for model, model_rows in by_model.items()),
         key=lambda item: (-item.total_tokens, item.model),
+    )
+    model_rank = {item.model: index for index, item in enumerate(models)}
+    tier_order = {"standard": 0, "fast": 1, "ultrafast": 2, "flex": 3, "batch": 4, "priority": 5}
+    service_tiers = tuple(
+        sorted(
+            (
+                _service_tier_row(model, tier, tier_rows)
+                for (model, tier), tier_rows in by_model_tier.items()
+            ),
+            key=lambda item: (
+                model_rank.get(item.model, len(model_rank)),
+                tier_order.get(item.service_tier, 99),
+                item.service_tier,
+            ),
+        )
     )
 
     if start_day is not None:
@@ -1329,6 +1348,7 @@ def _query_report(
         previous=previous,
         machines=machines if len(sources) > 1 or any(s.path for s in sources) else (),
         machine_filter=machine_filter,
+        service_tiers=service_tiers,
     )
 
 
@@ -1393,6 +1413,28 @@ def _model_row(model: str, rows: list[tuple]) -> ModelUsageRow:
         tps=tokens / (gen_ms / 1000) if gen_ms > 0 and tokens > 0 else None,
         streamed_calls=len(streamed),
         burst_calls=sum(row[13] == 1 for row in rows),
+    )
+
+
+def _service_tier_row(model: str, service_tier: str, rows: list[tuple]) -> ServiceTierUsageRow:
+    ttfts = [row[11] for row in rows if row[11] is not None]
+    streamed = [row for row in rows if row[11] is not None and row[13] == 0]
+    decoding = [row for row in streamed if row[12] is not None and row[12] > 0]
+    gen_ms = sum(row[12] for row in decoding)
+    tokens = sum(row[8] for row in decoding)
+    priced = [row[10] for row in rows if row[10] is not None]
+    return ServiceTierUsageRow(
+        model=model,
+        service_tier=service_tier,
+        calls=len(rows),
+        input_tokens=sum(row[4] for row in rows),
+        output_tokens=sum(row[8] for row in rows),
+        cost_usd=sum(priced),
+        priced_calls=len(priced),
+        unpriced_calls=len(rows) - len(priced),
+        ttft_p50_ms=_percentile(ttfts, 0.5),
+        ttft_p90_ms=_percentile(ttfts, 0.9),
+        tps=tokens / (gen_ms / 1000) if gen_ms > 0 and tokens > 0 else None,
     )
 
 
