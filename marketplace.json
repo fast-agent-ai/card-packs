@@ -126,10 +126,12 @@
   "plugin_bundles": [
     {
       "name": "recommended",
-      "description": "Starter plugins: per-turn cost display and prompt editing helpers",
+      "description": "Starter plugins: prompt editing, resource discovery, usage/cost tracking, and Mermaid diagram rendering",
       "plugins": [
-        "price-calculator",
-        "edit-assistant"
+        "edit-assistant",
+        "discover",
+        "usage-tracker",
+        "mermaid-render"
       ]
     }
   ]
