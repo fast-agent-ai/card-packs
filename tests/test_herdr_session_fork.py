@@ -302,6 +302,28 @@ def test_early_exit_reports_warning_with_recent_output(
     assert "error: bad model" in (result.markdown or "")
 
 
+def test_resume_argv_omits_default_workspace_home(plugin, monkeypatch) -> None:
+    monkeypatch.setattr(plugin, "_fast_agent_binary", lambda: "/usr/bin/fast-agent")
+    workspace = Path("/tmp/work space")
+    argv = plugin._resume_argv(
+        workspace=workspace,
+        home=workspace / ".fast-agent",
+        session_id="src-1",
+        model="m1",
+    )
+    assert "--home" not in argv
+    assert argv == [
+        "/usr/bin/fast-agent",
+        "go",
+        "--workspace",
+        "/tmp/work space",
+        "--model",
+        "m1",
+        "--resume",
+        "src-1",
+    ]
+
+
 def test_split_failure_returns_manual_resume_command(
     plugin, monkeypatch: pytest.MonkeyPatch
 ) -> None:

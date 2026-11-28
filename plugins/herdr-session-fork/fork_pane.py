@@ -163,18 +163,19 @@ def _resume_argv(
     session_id: str,
     model: str,
 ) -> list[str]:
-    return [
+    argv = [
         _fast_agent_binary(),
         "go",
         "--workspace",
         str(workspace),
-        "--home",
-        str(home),
-        "--model",
-        model,
-        "--resume",
-        session_id,
     ]
+    # Only pass --home when sessions live outside the workspace's default .fast-agent
+    # directory; passing --home <workspace>/.fast-agent overrides FAST_AGENT_HOME and
+    # hides global plugins in ~/.fast-agent.
+    if home.resolve() != (workspace / ".fast-agent").resolve():
+        argv.extend(["--home", str(home)])
+    argv.extend(["--model", model, "--resume", session_id])
+    return argv
 
 
 def _session_title(session: Any) -> str | None:

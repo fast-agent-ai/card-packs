@@ -68,8 +68,8 @@
       "repo_url": "https://github.com/fast-agent-ai/card-packs",
       "repo_ref": "main",
       "repo_path": "plugins/herdr-session-fork",
-      "version": "0.3.0",
-      "path_oid": "486e583b8b4030babce6a3ac4cd6d679ecdeed9c",
+      "version": "0.3.1",
+      "path_oid": "ea0994dc67eeb2fe1787e5708f17ee155f15cf38",
       "requires_fast_agent": ">=0.7.3"
     },
     {
