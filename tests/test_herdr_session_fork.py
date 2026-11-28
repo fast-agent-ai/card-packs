@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -10,10 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 _PLUGIN_SOURCE = (
-    Path(__file__).resolve().parents[1]
-    / "plugins"
-    / "herdr-session-fork"
-    / "fork_pane.py"
+    Path(__file__).resolve().parents[1] / "plugins" / "herdr-session-fork" / "fork_pane.py"
 )
 
 
@@ -42,9 +40,7 @@ class _Manager:
                 metadata={"title": "Original branch"},
             )
         )
-        self.forked = SimpleNamespace(
-            info=SimpleNamespace(name="fork-session", metadata={})
-        )
+        self.forked = SimpleNamespace(info=SimpleNamespace(name="fork-session", metadata={}))
         self.current_session = self.source
         self.workspace_dir = Path("/tmp/work space")
         self.base_dir = Path("/tmp/home dir/sessions")
@@ -65,28 +61,25 @@ def _context(
     arguments: str = "",
     model: str | None = "provider.current-model?reasoning=high",
     plugin_config: dict[str, object] | None = None,
+    is_tui: bool = True,
 ) -> SimpleNamespace:
-    config = {"direction": "down", "startup_timeout_ms": 0}
+    config: dict[str, object] = {"direction": "down", "startup_timeout_ms": 0}
     if plugin_config is not None:
         config.update(plugin_config)
     return SimpleNamespace(
-        is_tui=True,
+        is_tui=is_tui,
         arguments=arguments,
         agent=SimpleNamespace(config=SimpleNamespace(model=model)),
         context=SimpleNamespace(session_manager=manager),
-        settings=SimpleNamespace(
-            plugins=SimpleNamespace(config={"herdr-session-fork": config})
-        ),
+        settings=SimpleNamespace(plugins=SimpleNamespace(config={"herdr-session-fork": config})),
         session_cwd=Path("/tmp/shell cwd"),
     )
 
 
-def test_run_herdr_accepts_empty_success_output(
-    plugin, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_run_command_accepts_empty_success_output(plugin, monkeypatch: pytest.MonkeyPatch) -> None:
     def run(*_arguments, **_kwargs):
         return subprocess.CompletedProcess(
-            args=["herdr", "pane", "run"],
+            args=["hc", "label"],
             returncode=0,
             stdout="",
             stderr="",
@@ -95,45 +88,26 @@ def test_run_herdr_accepts_empty_success_output(
     monkeypatch.setattr(plugin.subprocess, "run", run)
 
     result = asyncio.run(
-        plugin._run_herdr(
-            "/usr/bin/herdr",
-            "pane",
-            "run",
-            "w1:p2",
-            "fast-agent go",
+        plugin._run_command(
+            "/usr/bin/hc",
+            "label",
+            "t14q",
+            "session=abc",
             expect_json=False,
         )
     )
 
-    assert result is None
+    assert result == ""
 
 
-def test_auto_direction_uses_current_pane_geometry(plugin) -> None:
-    payload = {
-        "result": {
-            "layout": {
-                "panes": [
-                    {
-                        "pane_id": "w1:p1",
-                        "rect": {"width": 160, "height": 40},
-                    },
-                    {
-                        "pane_id": "w1:p2",
-                        "rect": {"width": 70, "height": 40},
-                    },
-                ]
-            }
-        }
-    }
-
-    assert plugin._auto_direction(payload, "w1:p1") == "right"
-    assert plugin._auto_direction(payload, "w1:p2") == "down"
+def test_auto_direction_uses_terminal_cols_and_rows(plugin) -> None:
+    assert plugin._auto_direction({"cols": 176, "rows": 61}) == "right"
+    assert plugin._auto_direction({"cols": 80, "rows": 60}) == "down"
+    assert plugin._auto_direction({}) == "right"
 
 
 def test_windows_resume_command_uses_windows_quoting(plugin, monkeypatch) -> None:
-    monkeypatch.setattr(
-        plugin, "_fast_agent_binary", lambda: r"C:\Program Files\fast-agent.exe"
-    )
+    monkeypatch.setattr(plugin, "_fast_agent_binary", lambda: r"C:\Program Files\fast-agent.exe")
     command = plugin._shell_join(
         [
             plugin._fast_agent_binary(),
@@ -144,294 +118,219 @@ def test_windows_resume_command_uses_windows_quoting(plugin, monkeypatch) -> Non
         windows=True,
     )
 
-    assert (
-        command == '"C:\\Program Files\\fast-agent.exe" go --workspace "C:\\work space"'
-    )
+    assert command == '"C:\\Program Files\\fast-agent.exe" go --workspace "C:\\work space"'
 
 
-@pytest.mark.asyncio
-async def test_forks_current_pane_and_launches_original_session(
+def test_requires_hc_terminal_id(plugin, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("HC_TERMINAL_ID", raising=False)
+    result = asyncio.run(plugin.fork_pane(_context(_Manager())))
+    assert "HC_TERMINAL_ID" in (result.message or "")
+
+
+def test_local_herdr_app_splits_and_focuses_fork_when_configured(
     plugin, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manager = _Manager()
     calls: list[tuple[str, tuple[str, ...], bool]] = []
 
-    async def run_herdr(binary: str, *arguments: str, expect_json: bool = True):
+    async def run_command(binary: str, *arguments: str, expect_json: bool = True):
         calls.append((binary, arguments, expect_json))
-        if arguments[:2] == ("pane", "current"):
-            return {"result": {"pane": {"pane_id": "w1:p1"}}}
-        if arguments[:2] == ("pane", "split"):
-            return {"result": {"pane": {"pane_id": "w1:p2"}}}
-        return {"result": {}} if expect_json else None
+        if binary == "/usr/bin/hc" and arguments[:2] == ("get", "t14q"):
+            return {
+                "address": "t14q",
+                "cols": 180,
+                "rows": 50,
+                "labels": {"herdr.space": "sp1", "herdr.tab": "tb1"},
+                "state": "live",
+            }
+        if binary == "/usr/bin/herdr-app" and arguments == ("ls",):
+            return {
+                "spaces": [
+                    {
+                        "id": "sp1",
+                        "tabs": [
+                            {
+                                "id": "tb1",
+                                "terminals": [{"terminal": "t14q", "pane": "p_orig"}],
+                            }
+                        ],
+                    }
+                ]
+            }
+        if binary == "/usr/bin/herdr-app" and arguments[:2] == ("do", "pane.split"):
+            return {"pane": "p_new", "terminal": "t99"}
+        if binary == "/usr/bin/hc" and arguments[:2] == ("get", "t99"):
+            return {
+                "address": "t99",
+                "state": "live",
+                "status": {"app": "fast-agent"},
+            }
+        return "" if not expect_json else {}
 
-    monkeypatch.setenv("HERDR_ENV", "1")
-    monkeypatch.setattr(plugin, "_herdr_binary", lambda: "/usr/bin/herdr")
-    monkeypatch.setattr(plugin, "_fast_agent_binary", lambda: "/venv/bin/fast-agent")
-    monkeypatch.setattr(plugin, "_run_herdr", run_herdr)
+    monkeypatch.setenv("HC_TERMINAL_ID", "t14q")
+    monkeypatch.setattr(plugin, "_hc_binary", lambda: "/usr/bin/hc")
+    monkeypatch.setattr(plugin, "_herdr_app_binary", lambda: "/usr/bin/herdr-app")
+    monkeypatch.setattr(plugin, "_fast_agent_binary", lambda: "/usr/bin/fast-agent")
+    monkeypatch.setattr(plugin, "_run_command", run_command)
 
-    result = await plugin.fork_pane(_context(manager, arguments='"Alternative branch"'))
-
-    assert manager.title == "Alternative branch"
-    assert manager.current_session is manager.forked
-    assert calls[0] == (
-        "/usr/bin/herdr",
-        ("pane", "current", "--current"),
-        True,
-    )
-    current_metadata = calls[1]
-    assert current_metadata[0] == "/usr/bin/herdr"
-    assert current_metadata[1][:3] == ("pane", "report-metadata", "w1:p1")
-    assert ("--title", "Alternative branch") == current_metadata[1][
-        current_metadata[1].index("--title") : current_metadata[1].index("--title") + 2
-    ]
-    assert ("--display-agent", "Alternative branch") == current_metadata[1][
-        current_metadata[1].index("--display-agent") : current_metadata[1].index(
-            "--display-agent"
-        )
-        + 2
-    ]
-    assert "--agent" in current_metadata[1]
-    assert "session=fork-session" in current_metadata[1]
-    assert current_metadata[2] is False
-
-    assert calls[2] == (
-        "/usr/bin/herdr",
-        (
-            "pane",
-            "split",
-            "--current",
-            "--direction",
-            "down",
-            "--cwd",
-            "/tmp/shell cwd",
-            "--focus",
-        ),
-        True,
-    )
-    original_metadata = calls[3]
-    assert original_metadata[1][:3] == ("pane", "report-metadata", "w1:p2")
-    assert "--agent" not in original_metadata[1]
-    assert "Original branch" in original_metadata[1]
-    assert "session=source-session" in original_metadata[1]
-    assert original_metadata[2] is False
-
-    run_call = calls[4]
-    assert run_call[1][:3] == ("pane", "run", "w1:p2")
-    assert run_call[2] is False
-    command = run_call[1][3]
-    assert "--resume source-session" in command
-    assert "--resume fork-session" not in command
-    assert "--workspace '/tmp/work space'" in command
-    assert "--home '/tmp/home dir'" in command
-    assert "--model 'provider.current-model?reasoning=high'" in command
-    assert (
-        "Current pane forked into session `fork-session` titled `Alternative branch`"
-        in result.markdown
-    )
-
-
-@pytest.mark.asyncio
-async def test_inherited_session_title_follows_the_forked_pane(
-    plugin, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    manager = _Manager()
-    calls: list[tuple[str, tuple[str, ...], bool]] = []
-
-    async def run_herdr(binary: str, *arguments: str, expect_json: bool = True):
-        calls.append((binary, arguments, expect_json))
-        if arguments[:2] == ("pane", "current"):
-            return {"result": {"pane": {"pane_id": "w1:p1"}}}
-        if arguments[:2] == ("pane", "split"):
-            return {"result": {"pane": {"pane_id": "w1:p2"}}}
-        return {"result": {}} if expect_json else None
-
-    monkeypatch.setenv("HERDR_ENV", "1")
-    monkeypatch.setattr(plugin, "_herdr_binary", lambda: "/usr/bin/herdr")
-    monkeypatch.setattr(plugin, "_fast_agent_binary", lambda: "/venv/bin/fast-agent")
-    monkeypatch.setattr(plugin, "_run_herdr", run_herdr)
-
-    result = await plugin.fork_pane(_context(manager))
-
-    assert manager.title is None
-    assert manager.forked.info.metadata["title"] == "Original branch"
-    current_metadata = calls[1][1]
-    assert ("--title", "Original branch") == current_metadata[
-        current_metadata.index("--title") : current_metadata.index("--title") + 2
-    ]
-    assert ("--display-agent", "Original branch") == current_metadata[
-        current_metadata.index("--display-agent") : current_metadata.index(
-            "--display-agent"
-        )
-        + 2
-    ]
-    assert (
-        "Current pane forked into session `fork-session` titled `Original branch`"
-        in result.markdown
-    )
-
-
-@pytest.mark.asyncio
-async def test_supports_ratio_and_keeps_focus_on_fork(
-    plugin, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    manager = _Manager()
-    calls: list[tuple[str, tuple[str, ...], bool]] = []
-
-    async def run_herdr(binary: str, *arguments: str, expect_json: bool = True):
-        calls.append((binary, arguments, expect_json))
-        if arguments[:2] == ("pane", "current"):
-            return {"result": {"pane": {"pane_id": "w1:p1"}}}
-        if arguments[:2] == ("pane", "split"):
-            return {"result": {"pane": {"pane_id": "w1:p2"}}}
-        return {"result": {}} if expect_json else None
-
-    monkeypatch.setenv("HERDR_ENV", "1")
-    monkeypatch.setattr(plugin, "_herdr_binary", lambda: "/usr/bin/herdr")
-    monkeypatch.setattr(plugin, "_fast_agent_binary", lambda: "/venv/bin/fast-agent")
-    monkeypatch.setattr(plugin, "_run_herdr", run_herdr)
-
-    await plugin.fork_pane(
-        _context(
-            manager,
-            plugin_config={"focus": "fork", "ratio": 0.4},
+    result = asyncio.run(
+        plugin.fork_pane(
+            _context(
+                manager,
+                arguments='"Alt branch"',
+                plugin_config={
+                    "direction": "auto",
+                    "focus": "fork",
+                    "startup_timeout_ms": 2000,
+                },
+            )
         )
     )
 
-    split_call = next(call for call in calls if call[1][:2] == ("pane", "split"))
-    assert split_call[1][-3:] == ("--ratio", "0.4", "--no-focus")
+    assert manager.title == "Alt branch"
+    assert "fork-session" in (result.markdown or "")
+    assert "p_new" in (result.markdown or "")
+    assert "t99" in (result.markdown or "")
+    assert "warnings" not in (result.markdown or "").lower()
+
+    split_calls = [
+        c for c in calls if c[0] == "/usr/bin/herdr-app" and c[1][:2] == ("do", "pane.split")
+    ]
+    assert len(split_calls) == 1
+    split_payload = json.loads(split_calls[0][1][2])
+    assert split_payload["direction"] == "right"
+    assert split_payload["pane"] == "p_orig"
+    assert split_payload["argv"] == [
+        "/usr/bin/fast-agent",
+        "go",
+        "--workspace",
+        "/tmp/work space",
+        "--home",
+        "/tmp/home dir",
+        "--model",
+        "provider.current-model?reasoning=high",
+        "--resume",
+        "source-session",
+    ]
+
+    focus_calls = [
+        c for c in calls if c[0] == "/usr/bin/herdr-app" and c[1][:2] == ("do", "pane.focus")
+    ]
+    assert len(focus_calls) == 1
+    assert json.loads(focus_calls[0][1][2]) == {"pane": "p_orig"}
+
+    label_calls = [c for c in calls if c[0] == "/usr/bin/hc" and c[1][0] == "label"]
+    assert ("label", "t14q", "session=fork-session") in [c[1] for c in label_calls]
+    assert ("label", "t99", "session=source-session") in [c[1] for c in label_calls]
 
 
-@pytest.mark.asyncio
-async def test_confirms_child_startup_from_herdr_agent_detection(
-    plugin, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    calls: list[tuple[str, ...]] = []
-
-    async def run_herdr(_binary: str, *arguments: str, expect_json: bool = True):
-        del expect_json
-        calls.append(arguments)
-        return {"result": {"pane": {"agent": "fast-agent"}}}
-
-    monkeypatch.setattr(plugin, "_run_herdr", run_herdr)
-
-    warning = await plugin._confirm_child_startup(
-        "/usr/bin/herdr",
-        pane_id="w1:p2",
-        timeout_ms=1_000,
-    )
-
-    assert warning is None
-    assert calls == [("pane", "get", "w1:p2")]
-
-
-@pytest.mark.asyncio
-async def test_startup_confirmation_failure_does_not_close_running_pane(
-    plugin, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_remote_hc_only_uses_label_adoption(plugin, monkeypatch: pytest.MonkeyPatch) -> None:
     manager = _Manager()
     calls: list[tuple[str, tuple[str, ...], bool]] = []
 
-    async def run_herdr(binary: str, *arguments: str, expect_json: bool = True):
+    async def run_command(binary: str, *arguments: str, expect_json: bool = True):
         calls.append((binary, arguments, expect_json))
-        if arguments[:2] == ("pane", "current"):
-            return {"result": {"pane": {"pane_id": "w1:p1"}}}
-        if arguments[:2] == ("pane", "split"):
-            return {"result": {"pane": {"pane_id": "w1:p2"}}}
-        return {"result": {}} if expect_json else None
+        if arguments[:2] == ("get", "t7"):
+            return {
+                "address": "t7",
+                "cols": 120,
+                "rows": 40,
+                "labels": {"herdr.space": "sp_remote", "herdr.tab": "tb_remote"},
+                "state": "live",
+            }
+        if arguments[0] == "run":
+            return {"address": "t8"}
+        if arguments[:2] == ("get", "t8"):
+            return {
+                "address": "t8",
+                "state": "live",
+                "foreground": {"name": "fast-agent"},
+            }
+        return "" if not expect_json else {}
 
-    async def fail_confirmation(*_arguments, **_kwargs):
-        raise RuntimeError("status unavailable")
+    monkeypatch.setenv("HC_TERMINAL_ID", "t7")
+    monkeypatch.setattr(plugin, "_hc_binary", lambda: "/usr/bin/hc")
+    monkeypatch.setattr(plugin, "_herdr_app_binary", lambda: None)
+    monkeypatch.setattr(plugin, "_fast_agent_binary", lambda: "/usr/bin/fast-agent")
+    monkeypatch.setattr(plugin, "_run_command", run_command)
 
-    monkeypatch.setenv("HERDR_ENV", "1")
-    monkeypatch.setattr(plugin, "_herdr_binary", lambda: "/usr/bin/herdr")
-    monkeypatch.setattr(plugin, "_fast_agent_binary", lambda: "/venv/bin/fast-agent")
-    monkeypatch.setattr(plugin, "_run_herdr", run_herdr)
-    monkeypatch.setattr(plugin, "_confirm_child_startup", fail_confirmation)
-
-    result = await plugin.fork_pane(_context(manager))
-
-    assert not any(call[1][:2] == ("pane", "close") for call in calls)
-    assert "startup confirmation: status unavailable" in result.markdown
-
-
-@pytest.mark.asyncio
-async def test_preflight_failure_does_not_fork(
-    plugin, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    manager = _Manager()
-
-    async def run_herdr(_binary: str, *_arguments: str, expect_json: bool = True):
-        del expect_json
-        raise RuntimeError("not connected")
-
-    monkeypatch.setenv("HERDR_ENV", "1")
-    monkeypatch.setattr(plugin, "_herdr_binary", lambda: "/usr/bin/herdr")
-    monkeypatch.setattr(plugin, "_run_herdr", run_herdr)
-
-    result = await plugin.fork_pane(_context(manager))
-
-    assert manager.current_session is manager.source
-    assert result.message == "Could not connect to Herdr: not connected"
-
-
-@pytest.mark.asyncio
-async def test_launch_failure_keeps_fork_and_closes_created_pane(
-    plugin, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    manager = _Manager()
-    calls: list[tuple[str, tuple[str, ...], bool]] = []
-
-    async def run_herdr(binary: str, *arguments: str, expect_json: bool = True):
-        calls.append((binary, arguments, expect_json))
-        if arguments[:2] == ("pane", "current"):
-            return {"result": {"pane": {"pane_id": "w1:p1"}}}
-        if arguments[:2] == ("pane", "split"):
-            return {"result": {"pane": {"pane_id": "w1:p2"}}}
-        if arguments[:2] == ("pane", "run"):
-            raise RuntimeError("launch failed")
-        return {"result": {}} if expect_json else None
-
-    monkeypatch.setenv("HERDR_ENV", "1")
-    monkeypatch.setattr(plugin, "_herdr_binary", lambda: "/usr/bin/herdr")
-    monkeypatch.setattr(plugin, "_fast_agent_binary", lambda: "/venv/bin/fast-agent")
-    monkeypatch.setattr(plugin, "_run_herdr", run_herdr)
-
-    result = await plugin.fork_pane(_context(manager))
-
-    assert manager.current_session is manager.forked
-    assert calls[-1] == (
-        "/usr/bin/herdr",
-        ("pane", "close", "w1:p2"),
-        True,
+    result = asyncio.run(
+        plugin.fork_pane(_context(manager, plugin_config={"startup_timeout_ms": 2000}))
     )
-    assert "could not open original session `source-session`" in result.markdown
-    assert "--resume source-session" in result.markdown
+
+    assert "Herdr terminal `t8`" in (result.markdown or "")
+    assert "warnings" not in (result.markdown or "").lower()
+
+    run_calls = [c[1] for c in calls if c[1][0] == "run"]
+    assert len(run_calls) == 1
+    args = run_calls[0]
+    assert "--bg" in args
+    assert "--no-parent" in args
+    assert "--keep" in args
+    assert "herdr.space=sp_remote" in args
+    assert "herdr.tab=tb_remote" in args
+    assert "session=source-session" in args
 
 
-@pytest.mark.asyncio
-async def test_missing_model_does_not_fork(
+def test_early_exit_reports_warning_with_recent_output(
     plugin, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manager = _Manager()
-    monkeypatch.setenv("HERDR_ENV", "1")
-    monkeypatch.setattr(plugin, "_herdr_binary", lambda: "/usr/bin/herdr")
 
-    result = await plugin.fork_pane(_context(manager, model=None))
+    async def run_command(binary: str, *arguments: str, expect_json: bool = True):
+        if arguments[:2] == ("get", "t1"):
+            return {"address": "t1", "cols": 100, "rows": 40, "labels": {}, "state": "live"}
+        if arguments[0] == "run":
+            return {"address": "t2"}
+        if arguments[:2] == ("get", "t2"):
+            return {"address": "t2", "state": "finished", "exit_code": 2}
+        if arguments[:2] == ("read", "t2"):
+            return "error: bad model\n"
+        return "" if not expect_json else {}
 
-    assert manager.current_session is manager.source
-    assert result.message == "/fork-pane could not determine the active agent model."
+    monkeypatch.setenv("HC_TERMINAL_ID", "t1")
+    monkeypatch.setattr(plugin, "_hc_binary", lambda: "/usr/bin/hc")
+    monkeypatch.setattr(plugin, "_herdr_app_binary", lambda: None)
+    monkeypatch.setattr(plugin, "_fast_agent_binary", lambda: "/usr/bin/fast-agent")
+    monkeypatch.setattr(plugin, "_run_command", run_command)
 
-
-@pytest.mark.asyncio
-async def test_requires_herdr_before_accessing_session(
-    plugin, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    manager = _Manager()
-    monkeypatch.delenv("HERDR_ENV", raising=False)
-
-    result = await plugin.fork_pane(_context(manager))
-
-    assert manager.current_session is manager.source
-    assert (
-        result.message == "/fork-pane requires fast-agent to be running inside Herdr."
+    result = asyncio.run(
+        plugin.fork_pane(_context(manager, plugin_config={"startup_timeout_ms": 2000}))
     )
+
+    assert "exited early" in (result.markdown or "")
+    assert "error: bad model" in (result.markdown or "")
+
+
+def test_split_failure_returns_manual_resume_command(
+    plugin, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = _Manager()
+
+    async def run_command(binary: str, *arguments: str, expect_json: bool = True):
+        if binary == "/usr/bin/hc" and arguments[:2] == ("get", "t14q"):
+            return {"address": "t14q", "cols": 180, "rows": 50, "labels": {}, "state": "live"}
+        if binary == "/usr/bin/herdr-app" and arguments == ("ls",):
+            return {
+                "spaces": [
+                    {
+                        "id": "sp1",
+                        "tabs": [{"id": "tb1", "terminals": [{"terminal": "t14q", "pane": "p1"}]}],
+                    }
+                ]
+            }
+        if binary == "/usr/bin/herdr-app" and arguments[:2] == ("do", "pane.split"):
+            raise RuntimeError("split failed")
+        return "" if not expect_json else {}
+
+    monkeypatch.setenv("HC_TERMINAL_ID", "t14q")
+    monkeypatch.setattr(plugin, "_hc_binary", lambda: "/usr/bin/hc")
+    monkeypatch.setattr(plugin, "_herdr_app_binary", lambda: "/usr/bin/herdr-app")
+    monkeypatch.setattr(plugin, "_fast_agent_binary", lambda: "/usr/bin/fast-agent")
+    monkeypatch.setattr(plugin, "_run_command", run_command)
+
+    result = asyncio.run(plugin.fork_pane(_context(manager)))
+
+    assert "Resume it manually with:" in (result.markdown or "")
+    assert "--resume source-session" in (result.markdown or "")
+    assert "split failed" in (result.markdown or "")

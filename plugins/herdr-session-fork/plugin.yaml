@@ -1,6 +1,6 @@
 schema_version: 1
 name: herdr-session-fork
-version: 0.2.1
+version: 0.3.0
 requires_fast_agent: ">=0.7.3"
 description: Fork the current fast-agent session and continue the original in a sibling Herdr pane.
 commands:

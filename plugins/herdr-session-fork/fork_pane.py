@@ -6,8 +6,10 @@ import os
 import shlex
 import shutil
 import subprocess
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from fast_agent.command_actions import (
     PluginCommandActionContext,
@@ -24,9 +26,12 @@ def _title(arguments: str) -> str | None:
     return " ".join(parts) or None
 
 
-def _herdr_binary() -> str | None:
-    configured = os.environ.get("HERDR_BIN_PATH", "").strip()
-    return configured or shutil.which("herdr")
+def _hc_binary() -> str | None:
+    return shutil.which("hc")
+
+
+def _herdr_app_binary() -> str | None:
+    return shutil.which("herdr-app")
 
 
 def _fast_agent_binary() -> str:
@@ -42,28 +47,12 @@ def _config(ctx: PluginCommandActionContext) -> dict[str, Any]:
 
 def _direction(ctx: PluginCommandActionContext) -> str:
     direction = _config(ctx).get("direction", "auto")
-    return (
-        direction
-        if isinstance(direction, str) and direction in _VALID_DIRECTIONS
-        else "auto"
-    )
+    return direction if isinstance(direction, str) and direction in _VALID_DIRECTIONS else "auto"
 
 
 def _focus_target(ctx: PluginCommandActionContext) -> str:
     target = _config(ctx).get("focus", "original")
-    return (
-        target
-        if isinstance(target, str) and target in _VALID_FOCUS_TARGETS
-        else "original"
-    )
-
-
-def _split_ratio(ctx: PluginCommandActionContext) -> float | None:
-    ratio = _config(ctx).get("ratio")
-    if isinstance(ratio, int | float) and not isinstance(ratio, bool):
-        value = float(ratio)
-        return value if 0.1 <= value <= 0.9 else None
-    return None
+    return target if isinstance(target, str) and target in _VALID_FOCUS_TARGETS else "original"
 
 
 def _startup_timeout_ms(ctx: PluginCommandActionContext) -> int:
@@ -73,7 +62,7 @@ def _startup_timeout_ms(ctx: PluginCommandActionContext) -> int:
     return 5_000
 
 
-def _decode_response(
+def _decode_json_output(
     command: list[str], result: subprocess.CompletedProcess[str]
 ) -> dict[str, Any]:
     if result.returncode != 0:
@@ -82,22 +71,20 @@ def _decode_response(
     try:
         payload = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
-        raise RuntimeError(
-            f"Herdr returned invalid JSON for {shlex.join(command)}"
-        ) from exc
+        raise RuntimeError(f"Herdr returned invalid JSON for {shlex.join(command)}") from exc
     if not isinstance(payload, dict):
-        raise TypeError(
-            f"Herdr returned an unexpected response for {shlex.join(command)}"
-        )
+        raise TypeError(f"Herdr returned an unexpected response for {shlex.join(command)}")
+    if isinstance(payload.get("error"), str) and payload["error"]:
+        raise RuntimeError(payload["error"])
     return payload
 
 
-async def _run_herdr(
-    herdr: str,
+async def _run_command(
+    binary: str,
     *arguments: str,
     expect_json: bool = True,
-) -> dict[str, Any] | None:
-    command = [herdr, *arguments]
+) -> dict[str, Any] | str | None:
+    command = [binary, *arguments]
     result = await asyncio.to_thread(
         subprocess.run,
         command,
@@ -108,63 +95,58 @@ async def _run_herdr(
     )
     if not expect_json:
         if result.returncode != 0:
-            detail = (
-                result.stderr.strip() or result.stdout.strip() or "unknown Herdr error"
-            )
+            detail = result.stderr.strip() or result.stdout.strip() or "unknown Herdr error"
             raise RuntimeError(detail)
-        return None
-    return _decode_response(command, result)
+        return result.stdout
+    return _decode_json_output(command, result)
 
 
-def _pane_id(payload: dict[str, Any]) -> str:
-    try:
-        pane_id = payload["result"]["pane"]["pane_id"]
-    except (KeyError, TypeError) as exc:
-        raise RuntimeError("Herdr split response did not include a pane ID") from exc
-    if not isinstance(pane_id, str) or not pane_id:
-        raise RuntimeError("Herdr split response included an invalid pane ID")
-    return pane_id
+def _auto_direction(terminal_record: dict[str, Any]) -> str:
+    cols = terminal_record.get("cols")
+    rows = terminal_record.get("rows")
+    if isinstance(cols, int) and isinstance(rows, int) and cols > 0 and rows > 0:
+        return "right" if cols >= rows * 2 else "down"
+    return "right"
 
 
-def _auto_direction(payload: dict[str, Any], pane_id: str) -> str:
-    try:
-        panes = payload["result"]["layout"]["panes"]
-    except (KeyError, TypeError) as exc:
-        raise RuntimeError("Herdr layout response did not include panes") from exc
-    if not isinstance(panes, list):
-        raise TypeError("Herdr layout response included invalid panes")
-    for pane in panes:
-        if not isinstance(pane, dict) or pane.get("pane_id") != pane_id:
-            continue
-        rect = pane.get("rect")
-        if not isinstance(rect, dict):
-            break
-        width = rect.get("width")
-        height = rect.get("height")
-        if (
-            isinstance(width, int)
-            and isinstance(height, int)
-            and width > 0
-            and height > 0
-        ):
-            return "right" if width >= height * 2 else "down"
-        break
-    raise RuntimeError(
-        "Herdr layout response did not include the current pane geometry"
-    )
-
-
-async def _split_direction(
-    herdr: str,
-    ctx: PluginCommandActionContext,
-    pane_id: str,
-) -> str:
+def _split_direction(ctx: PluginCommandActionContext, terminal_record: dict[str, Any]) -> str:
     configured = _direction(ctx)
     if configured != "auto":
         return configured
-    layout = await _run_herdr(herdr, "pane", "layout", "--pane", pane_id)
-    assert layout is not None
-    return _auto_direction(layout, pane_id)
+    return _auto_direction(terminal_record)
+
+
+def _find_pane_for_terminal(ls_payload: dict[str, Any], terminal_id: str) -> str | None:
+    spaces = ls_payload.get("spaces")
+    if not isinstance(spaces, list):
+        return None
+    for space in spaces:
+        if not isinstance(space, dict):
+            continue
+        tabs = space.get("tabs")
+        if not isinstance(tabs, list):
+            continue
+        for tab in tabs:
+            if not isinstance(tab, dict):
+                continue
+            terminals = tab.get("terminals")
+            if not isinstance(terminals, list):
+                continue
+            for entry in terminals:
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("terminal") == terminal_id:
+                    pane = entry.get("pane")
+                    if isinstance(pane, str) and pane:
+                        return pane
+    return None
+
+
+def _terminal_labels(terminal_record: dict[str, Any]) -> dict[str, str]:
+    raw = terminal_record.get("labels")
+    if not isinstance(raw, dict):
+        return {}
+    return {k: v for k, v in raw.items() if isinstance(k, str) and isinstance(v, str) and v}
 
 
 def _shell_join(arguments: list[str], *, windows: bool | None = None) -> str:
@@ -174,27 +156,25 @@ def _shell_join(arguments: list[str], *, windows: bool | None = None) -> str:
     return shlex.join(arguments)
 
 
-def _resume_command(
+def _resume_argv(
     *,
     workspace: Path,
     home: Path,
     session_id: str,
     model: str,
-) -> str:
-    return _shell_join(
-        [
-            _fast_agent_binary(),
-            "go",
-            "--workspace",
-            str(workspace),
-            "--home",
-            str(home),
-            "--model",
-            model,
-            "--resume",
-            session_id,
-        ]
-    )
+) -> list[str]:
+    return [
+        _fast_agent_binary(),
+        "go",
+        "--workspace",
+        str(workspace),
+        "--home",
+        str(home),
+        "--model",
+        model,
+        "--resume",
+        session_id,
+    ]
 
 
 def _session_title(session: Any) -> str | None:
@@ -205,83 +185,67 @@ def _session_title(session: Any) -> str | None:
     return title.strip() if isinstance(title, str) and title.strip() else None
 
 
-async def _report_session_presentation(
-    herdr: str,
-    *,
-    pane_id: str,
-    session_id: str,
-    title: str | None,
-    guard_agent: bool,
-) -> None:
-    arguments = [
-        "pane",
-        "report-metadata",
-        pane_id,
-        "--source",
-        "herdr:fast-agent:fork-pane",
-    ]
-    if guard_agent:
-        arguments.extend(["--agent", "fast-agent"])
-    arguments.extend(["--token", f"session={session_id}"])
-    if title is not None:
-        arguments.extend(["--title", title, "--display-agent", title])
-    else:
-        arguments.extend(["--title", session_id])
-    await _run_herdr(herdr, *arguments, expect_json=False)
+def _is_fast_agent_running(record: dict[str, Any]) -> bool:
+    status = record.get("status")
+    if isinstance(status, dict) and status.get("app") == "fast-agent":
+        return True
+    foreground = record.get("foreground")
+    if isinstance(foreground, dict) and foreground.get("name") == "fast-agent":
+        return True
+    return False
 
 
-def _pane_agent(payload: dict[str, Any]) -> str | None:
-    try:
-        agent = payload["result"]["pane"].get("agent")
-    except (KeyError, TypeError, AttributeError):
+def _normalize_output(text: str | None) -> str | None:
+    if not isinstance(text, str):
         return None
-    return agent if isinstance(agent, str) else None
-
-
-def _pane_output(payload: dict[str, Any]) -> str | None:
-    try:
-        output = payload["result"]["output"]
-    except (KeyError, TypeError):
-        return None
-    if not isinstance(output, str):
-        return None
-    normalized = " / ".join(
-        line.strip() for line in output.splitlines() if line.strip()
-    )
+    normalized = " / ".join(line.strip() for line in text.splitlines() if line.strip())
     return normalized[-400:] or None
 
 
+async def _read_recent_output(hc: str, terminal_id: str) -> str | None:
+    try:
+        output = await _run_command(hc, "read", terminal_id, "--lines", "20", expect_json=False)
+    except (RuntimeError, OSError, subprocess.TimeoutExpired, TypeError):
+        return None
+    return _normalize_output(output if isinstance(output, str) else None)
+
+
 async def _confirm_child_startup(
-    herdr: str,
+    hc: str,
     *,
-    pane_id: str,
+    terminal_id: str,
     timeout_ms: int,
 ) -> str | None:
     if timeout_ms == 0:
         return None
     deadline = asyncio.get_running_loop().time() + (timeout_ms / 1_000)
     while True:
-        pane = await _run_herdr(herdr, "pane", "get", pane_id)
-        assert pane is not None
-        if _pane_agent(pane) == "fast-agent":
+        record = await _run_command(hc, "get", terminal_id, "--json")
+        assert isinstance(record, dict)
+        if _is_fast_agent_running(record):
             return None
+        state = record.get("state")
+        if isinstance(state, str) and state != "live":
+            exit_code = record.get("exit_code")
+            detail = await _read_recent_output(hc, terminal_id)
+            suffix = f"; recent output: {detail}" if detail else ""
+            return f"fast-agent exited early (state={state}, exit_code={exit_code}){suffix}"
         if asyncio.get_running_loop().time() >= deadline:
             break
         await asyncio.sleep(0.1)
 
-    output = await _run_herdr(
-        herdr,
-        "pane",
-        "read",
-        pane_id,
-        "--source",
-        "recent-unwrapped",
-        "--lines",
-        "20",
-    )
-    detail = _pane_output(output) if output is not None else None
+    detail = await _read_recent_output(hc, terminal_id)
     suffix = f"; recent output: {detail}" if detail else ""
     return f"fast-agent startup was not confirmed within {timeout_ms}ms{suffix}"
+
+
+async def _label_session(hc: str, terminal_id: str, session_id: str) -> None:
+    await _run_command(hc, "label", terminal_id, f"session={session_id}", expect_json=False)
+
+
+async def _rename_pane(herdr_app: str, pane_id: str, name: str) -> None:
+    payload = json.dumps({"pane": pane_id, "name": name})
+    await _run_command(herdr_app, "do", "pane.rename", payload, expect_json=False)
 
 
 async def fork_pane(ctx: PluginCommandActionContext) -> PluginCommandActionResult:
@@ -289,15 +253,16 @@ async def fork_pane(ctx: PluginCommandActionContext) -> PluginCommandActionResul
         return PluginCommandActionResult(
             message="/fork-pane is only available in the interactive fast-agent TUI."
         )
-    if os.environ.get("HERDR_ENV") != "1":
+    terminal_id = os.environ.get("HC_TERMINAL_ID", "").strip()
+    if not terminal_id:
         return PluginCommandActionResult(
-            message="/fork-pane requires fast-agent to be running inside Herdr."
+            message="/fork-pane requires fast-agent to be running inside Herdr (HC_TERMINAL_ID is not set)."
         )
 
-    herdr = _herdr_binary()
-    if herdr is None:
+    hc = _hc_binary()
+    if hc is None:
         return PluginCommandActionResult(
-            message="Could not locate the Herdr executable."
+            message="Could not locate the `hc` (herdr-core) executable."
         )
 
     context = ctx.context
@@ -312,9 +277,7 @@ async def fork_pane(ctx: PluginCommandActionContext) -> PluginCommandActionResul
 
     source = manager.current_session
     if source is None:
-        return PluginCommandActionResult(
-            message="No active session is available to fork."
-        )
+        return PluginCommandActionResult(message="No active session is available to fork.")
     model = ctx.agent.config.model
     if not model:
         return PluginCommandActionResult(
@@ -322,125 +285,173 @@ async def fork_pane(ctx: PluginCommandActionContext) -> PluginCommandActionResul
         )
 
     try:
-        current = await _run_herdr(herdr, "pane", "current", "--current")
-        assert current is not None
-        current_pane_id = _pane_id(current)
-        direction = await _split_direction(herdr, ctx, current_pane_id)
+        current_record = await _run_command(hc, "get", terminal_id, "--json")
+        assert isinstance(current_record, dict)
     except (RuntimeError, OSError, subprocess.TimeoutExpired, TypeError) as exc:
-        return PluginCommandActionResult(message=f"Could not connect to Herdr: {exc}")
+        return PluginCommandActionResult(message=f"Could not connect to herdr-core: {exc}")
 
+    herdr_app = _herdr_app_binary()
+    current_pane_id: str | None = None
+    if herdr_app is not None:
+        try:
+            ls_payload = await _run_command(herdr_app, "ls")
+            if isinstance(ls_payload, dict):
+                current_pane_id = _find_pane_for_terminal(ls_payload, terminal_id)
+        except (RuntimeError, OSError, subprocess.TimeoutExpired, TypeError):
+            current_pane_id = None
+
+    direction = _split_direction(ctx, current_record)
     source_id = source.info.name
     source_title = _session_title(source)
     forked = manager.fork_current_session(title=title)
     if forked is None:
-        return PluginCommandActionResult(
-            message="No active session is available to fork."
-        )
+        return PluginCommandActionResult(message="No active session is available to fork.")
     forked_title = _session_title(forked)
 
     workspace = manager.workspace_dir
     home = manager.base_dir.parent
-    command = _resume_command(
+    argv = _resume_argv(
         workspace=workspace,
         home=home,
         session_id=source_id,
         model=model,
     )
-    presentation_warnings: list[str] = []
-    try:
-        await _report_session_presentation(
-            herdr,
-            pane_id=current_pane_id,
-            session_id=forked.info.name,
-            title=forked_title,
-            guard_agent=True,
-        )
-    except (RuntimeError, OSError, subprocess.TimeoutExpired, TypeError) as exc:
-        presentation_warnings.append(f"fork pane metadata: {exc}")
+    manual_command = _shell_join(argv)
+    warnings: list[str] = []
 
-    pane_id: str | None = None
     try:
-        split_arguments = [
-            "pane",
-            "split",
-            "--current",
-            "--direction",
-            direction,
-            "--cwd",
-            str(ctx.session_cwd or workspace),
-        ]
-        ratio = _split_ratio(ctx)
-        if ratio is not None:
-            split_arguments.extend(["--ratio", str(ratio)])
-        split_arguments.append(
-            "--focus" if _focus_target(ctx) == "original" else "--no-focus"
-        )
-        split = await _run_herdr(
-            herdr,
-            *split_arguments,
-        )
-        assert split is not None
-        pane_id = _pane_id(split)
+        await _label_session(hc, terminal_id, forked.info.name)
+    except (RuntimeError, OSError, subprocess.TimeoutExpired, TypeError) as exc:
+        warnings.append(f"fork terminal label: {exc}")
+
+    if herdr_app is not None and current_pane_id is not None and forked_title is not None:
         try:
-            await _report_session_presentation(
-                herdr,
-                pane_id=pane_id,
-                session_id=source_id,
-                title=source_title,
-                guard_agent=False,
-            )
+            await _rename_pane(herdr_app, current_pane_id, forked_title)
         except (RuntimeError, OSError, subprocess.TimeoutExpired, TypeError) as exc:
-            presentation_warnings.append(f"original pane metadata: {exc}")
-        await _run_herdr(
-            herdr,
-            "pane",
-            "run",
-            pane_id,
-            command,
-            expect_json=False,
-        )
+            warnings.append(f"fork pane rename: {exc}")
+
+    new_pane_id: str | None = None
+    new_terminal_id: str | None = None
+    try:
+        if herdr_app is not None and current_pane_id is not None:
+            split_args = json.dumps(
+                {
+                    "direction": direction,
+                    "pane": current_pane_id,
+                    "argv": argv,
+                }
+            )
+            split = await _run_command(herdr_app, "do", "pane.split", split_args)
+            assert isinstance(split, dict)
+            raw_pane = split.get("pane")
+            raw_terminal = split.get("terminal")
+            if not isinstance(raw_pane, str) or not raw_pane:
+                raise RuntimeError("herdr-app pane.split did not return a pane ID")
+            if not isinstance(raw_terminal, str) or not raw_terminal:
+                raise RuntimeError("herdr-app pane.split did not return a terminal ID")
+            new_pane_id = raw_pane
+            new_terminal_id = raw_terminal
+
+            if _focus_target(ctx) == "fork":
+                try:
+                    await _run_command(
+                        herdr_app,
+                        "do",
+                        "pane.focus",
+                        json.dumps({"pane": current_pane_id}),
+                        expect_json=False,
+                    )
+                except (RuntimeError, OSError, subprocess.TimeoutExpired, TypeError) as exc:
+                    warnings.append(f"focus fork pane: {exc}")
+
+            try:
+                await _label_session(hc, new_terminal_id, source_id)
+            except (RuntimeError, OSError, subprocess.TimeoutExpired, TypeError) as exc:
+                warnings.append(f"original terminal label: {exc}")
+
+            if source_title is not None:
+                try:
+                    await _rename_pane(herdr_app, new_pane_id, source_title)
+                except (RuntimeError, OSError, subprocess.TimeoutExpired, TypeError) as exc:
+                    warnings.append(f"original pane rename: {exc}")
+        else:
+            labels = _terminal_labels(current_record)
+            run_args = [
+                "run",
+                "--bg",
+                "--no-parent",
+                "--keep",
+                "--json",
+                "--cwd",
+                str(ctx.session_cwd or workspace),
+                "--label",
+                f"session={source_id}",
+            ]
+            if "herdr.space" in labels:
+                run_args.extend(["--label", f"herdr.space={labels['herdr.space']}"])
+            if "herdr.tab" in labels:
+                run_args.extend(["--label", f"herdr.tab={labels['herdr.tab']}"])
+            run_args.append("--")
+            run_args.extend(argv)
+
+            launched = await _run_command(hc, *run_args)
+            assert isinstance(launched, dict)
+            raw_terminal = launched.get("address")
+            if not isinstance(raw_terminal, str) or not raw_terminal:
+                raise RuntimeError("hc run did not return a terminal address")
+            new_terminal_id = raw_terminal
+
         try:
             startup_warning = await _confirm_child_startup(
-                herdr,
-                pane_id=pane_id,
+                hc,
+                terminal_id=new_terminal_id,
                 timeout_ms=_startup_timeout_ms(ctx),
             )
             if startup_warning is not None:
-                presentation_warnings.append(startup_warning)
+                warnings.append(startup_warning)
         except (RuntimeError, OSError, subprocess.TimeoutExpired, TypeError) as exc:
-            presentation_warnings.append(f"startup confirmation: {exc}")
+            warnings.append(f"startup confirmation: {exc}")
     except (RuntimeError, OSError, subprocess.TimeoutExpired, TypeError) as exc:
         cleanup_notice = ""
-        if pane_id is not None:
+        if herdr_app is not None and new_pane_id is not None:
             try:
-                await _run_herdr(herdr, "pane", "close", pane_id)
-            except (
-                RuntimeError,
-                OSError,
-                subprocess.TimeoutExpired,
-                TypeError,
-            ) as cleanup_exc:
+                await _run_command(
+                    herdr_app,
+                    "do",
+                    "pane.close",
+                    json.dumps({"pane": new_pane_id}),
+                    expect_json=False,
+                )
+            except (RuntimeError, OSError, subprocess.TimeoutExpired, TypeError) as cleanup_exc:
                 cleanup_notice = (
-                    f"\n\nCould not close created Herdr pane `{pane_id}`: {cleanup_exc}"
+                    f"\n\nCould not close created Herdr pane `{new_pane_id}`: {cleanup_exc}"
+                )
+        elif new_terminal_id is not None:
+            try:
+                await _run_command(hc, "kill", new_terminal_id, expect_json=False)
+            except (RuntimeError, OSError, subprocess.TimeoutExpired, TypeError) as cleanup_exc:
+                cleanup_notice = (
+                    f"\n\nCould not kill created Herdr terminal `{new_terminal_id}`: {cleanup_exc}"
                 )
         return PluginCommandActionResult(
             markdown=(
                 f"Forked the current pane into session `{forked.info.name}`, but could not "
                 f"open original session `{source_id}` in Herdr: {exc}\n\n"
-                f"Resume it manually with:\n\n```sh\n{command}\n```{cleanup_notice}"
+                f"Resume it manually with:\n\n```sh\n{manual_command}\n```{cleanup_notice}"
             )
         )
 
     title_notice = f" titled `{forked_title}`" if forked_title is not None else ""
-    presentation_notice = (
-        f" Herdr metadata warnings: {'; '.join(presentation_warnings)}"
-        if presentation_warnings
-        else ""
+    location = (
+        f"Herdr pane `{new_pane_id}` (`{new_terminal_id}`)"
+        if new_pane_id is not None
+        else f"Herdr terminal `{new_terminal_id}`"
     )
+    warning_notice = f" Herdr warnings: {'; '.join(warnings)}" if warnings else ""
     return PluginCommandActionResult(
         markdown=(
             f"Current pane forked into session `{forked.info.name}`{title_notice}. "
-            f"Opened original session `{source_id}` in Herdr pane `{pane_id}`."
-            f"{presentation_notice}"
+            f"Opened original session `{source_id}` in {location}."
+            f"{warning_notice}"
         )
     )
